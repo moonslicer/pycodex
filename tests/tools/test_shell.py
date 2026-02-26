@@ -46,12 +46,10 @@ def test_shell_tool_invalid_timeout_ms_returns_error(tmp_path: Path) -> None:
     assert result == "[ERROR] Invalid arguments: 'timeout_ms' must be a positive integer"
 
 
-def test_shell_tool_timeout_seconds_alias_works(tmp_path: Path) -> None:
+def test_shell_tool_timeout_seconds_is_rejected(tmp_path: Path) -> None:
     result = asyncio.run(ShellTool().handle({"command": "echo hi", "timeout_seconds": 1}, tmp_path))
-    payload = json.loads(result)
 
-    assert payload["metadata"]["exit_code"] == 0
-    assert "stdout:\nhi\n" in payload["output"]
+    assert result == "[ERROR] Invalid arguments: 'timeout_seconds' is unsupported; use 'timeout_ms'"
 
 
 def test_shell_tool_truncates_large_output(tmp_path: Path) -> None:

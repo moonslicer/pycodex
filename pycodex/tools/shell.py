@@ -36,11 +36,6 @@ class ShellTool:
                             "minimum": 1,
                             "description": "Optional command timeout in milliseconds.",
                         },
-                        "timeout_seconds": {
-                            "type": "integer",
-                            "minimum": 1,
-                            "description": "Legacy alias for timeout in seconds.",
-                        },
                     },
                     "required": ["command"],
                     "additionalProperties": False,
@@ -101,21 +96,13 @@ class ShellTool:
 
 def _resolve_timeout_ms(args: dict[str, Any]) -> int | str:
     timeout_ms = args.get("timeout_ms")
-    timeout_seconds = args.get("timeout_seconds")
+    if "timeout_seconds" in args:
+        return "[ERROR] Invalid arguments: 'timeout_seconds' is unsupported; use 'timeout_ms'"
 
     if timeout_ms is not None:
         if not isinstance(timeout_ms, int) or isinstance(timeout_ms, bool) or timeout_ms <= 0:
             return "[ERROR] Invalid arguments: 'timeout_ms' must be a positive integer"
         return timeout_ms
-
-    if timeout_seconds is not None:
-        if (
-            not isinstance(timeout_seconds, int)
-            or isinstance(timeout_seconds, bool)
-            or timeout_seconds <= 0
-        ):
-            return "[ERROR] Invalid arguments: 'timeout_seconds' must be a positive integer"
-        return timeout_seconds * 1000
 
     return DEFAULT_TIMEOUT_MS
 
