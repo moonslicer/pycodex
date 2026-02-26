@@ -22,14 +22,14 @@ def test_load_config_missing_toml_uses_defaults_and_env(monkeypatch) -> None:
 
     config = load_config(config_path=Path("does-not-exist.toml"))
     assert config.model == "gpt-4.1-mini"
-    assert config.api_key == "test-key"
+    assert config.api_key == "test-key"  # pragma: allowlist secret
 
 
 def test_load_config_precedence_defaults_then_toml_then_env(tmp_path: Path, monkeypatch) -> None:
     config_file = tmp_path / "pycodex.toml"
     config_file.write_text(
         'model = "toml-model"\n'
-        'api_key = "toml-key"\n'
+        'api_key = "toml-key"\n'  # pragma: allowlist secret
         'api_base_url = "https://toml.example"\n'
         f'cwd = "{tmp_path}"\n',
         encoding="utf-8",
@@ -41,7 +41,7 @@ def test_load_config_precedence_defaults_then_toml_then_env(tmp_path: Path, monk
 
     config = load_config(config_path=config_file)
     assert config.model == "env-model"
-    assert config.api_key == "env-key"
+    assert config.api_key == "env-key"  # pragma: allowlist secret
     assert config.api_base_url == "https://env.example"
     assert config.cwd == tmp_path
 

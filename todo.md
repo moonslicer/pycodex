@@ -62,7 +62,7 @@ Build a runnable `python -m pycodex "<prompt>"` flow that:
   - Implement `Config` + loader from env/optional `pycodex.toml`.
   - Verify: `python3 -c "from pycodex.core.config import load_config; print(type(load_config()).__name__)"`
 
-- [ ] T2: `core/session.py`
+- [x] T2: `core/session.py`
   - Implement `Session.append_user_message`, `append_tool_result`, `to_prompt`.
   - Depends on: T1
   - Verify: `python3 -c "from pycodex.core.session import Session; s=Session(); s.append_user_message('hi'); print(len(s.to_prompt()))"`

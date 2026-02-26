@@ -104,4 +104,3 @@ It runs on push and pull request with:
 - Mypy strict
 - Full pytest suite
 - Agent harness tests
-

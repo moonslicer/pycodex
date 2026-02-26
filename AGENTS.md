@@ -1,171 +1,106 @@
 # AGENTS.md
 
-This file defines repo-level behavior for coding work in this project.
+This file defines repo-level operating rules for coding agents.
 
-## 1. Objectives
+## 1) Rule Priority
+- Precedence: system/developer instructions > root `AGENTS.md` > subdirectory `AGENTS.md`.
+- If a module has its own `AGENTS.md`, read it before editing that module.
+- Known module-level files:
+  - `pycodex/core/AGENTS.md` — agent loop, session, model client rules
+  - `pycodex/tools/AGENTS.md` — tool protocol, error format, mutating semantics
+  - `pycodex/approval/AGENTS.md` — approval store, stateless policy rules
+  - `pycodex/cli/AGENTS.md` — rendering separation, no business logic in CLI
+
+## 2) Core Outcome
 - Deliver correct, maintainable changes with minimal complexity.
-- Communicate clearly: assumptions, risks, trade-offs, and next steps.
-- Prioritize execution over excessive process, while preserving safety.
+- Prefer execution over process unless safety or quality would be reduced.
+- Design around clear module boundaries, explicit contracts, and separation of concerns.
+- Define and validate service contracts (API-first) before implementation details.
+- Favor small experiments with explicit validation criteria before broad implementation.
 
-## 2. Engineering Principles
-- **KISS:** Prefer the simplest solution that satisfies requirements.
-- **YAGNI:** Do not add speculative features.
-- **DRY:** Remove repeated logic when it improves clarity.
-- **SOLID:** Apply where it materially improves maintainability.
-- **Service Boundaries:** Design around clear module/service boundaries and explicit contracts; extract independent services only when justified.
+## 3) Definitions
+- **Non-trivial task:** changes service/API/event contracts, spans modules, or changes agent behavior (prompt, routing, policy, orchestration).
+- **Behavior/contract change:** any user-visible behavior, public API, schema, event shape, decision policy, or persisted data shape change.
+- **Mechanical change:** formatting, rename/move, comment/docs-only, dependency bump without behavior change.
+- **Risky branch:** any broad refactor or policy change where rollback may be needed (cross-module rewrites, approval/sandbox behavior changes, data/model shape changes).
+- **Oversize task:** estimated >600 changed lines (additions + deletions) for behavior/contract work.
+- **Relevant harness tests:** targeted `tests/agent_harness/` scenarios for the changed behavior surface, plus `test_smoke.py`. If scope is unclear or change is cross-cutting, run the full `tests/agent_harness/` suite.
 
-When proposing non-trivial designs, call out how these principles apply and any intentional trade-offs.
+## 4) Standard Workflow
+1. Understand current behavior and constraints.
+2. Plan smallest safe change with acceptance criteria.
+3. Implement in focused units.
+4. Verify with matching quality gates.
+5. Report what changed, evidence, and residual risks.
+- If blocked, try one alternative, then report blocker with options.
+- Max two attempts on the same failure.
 
-## 3. Architecture Principles
-- **API-first:** Define and validate service contracts before implementation details.
-- **Separation of concerns:** Keep UX/presentation, domain logic, API surface, and database modeling isolated behind clear interfaces.
-- **Independent testability:** Each component must be testable and verifiable in isolation, then in composition.
-- **Composable services:** Prefer small, focused components that can be assembled into larger workflows.
-- **Experimentation-first:** Favor low-risk experiments/prototypes with explicit validation criteria before broad rollout.
-
-## 4. Standard Workflow
-1. **Understand:** Read relevant code, constraints, and current behavior.
-2. **Plan:** Define scope, success criteria, and a small implementation path.
-3. **Implement:** Make focused changes in logical units.
-4. **Verify:** Run quality checks and fix root causes of failures.
-5. **Report:** Summarize what changed, why, and any residual risks.
-
-For architectural decisions, provide at least two viable options with a recommendation.
-For milestone execution policy and stop/ask boundaries, follow §11 and §12.
-
-## 5. AI-First Operating Model
-- **AGENTS is a map, not a dump:** Keep this file short and directive. Put operational detail in:
-  - `docs/ai/system-map.md` for architecture map and contracts
-  - `docs/ai/harness.md` for evaluation workflows and fixtures
-  - `docs/ai/memory.md` for durable decisions and postmortems
-- **Repo is the source of truth:** If a decision affects implementation, tests, or operations, record it in-repo in the same change.
-- **Non-trivial tasks require explicit acceptance criteria:** Define what "done" means before implementation.
-- **Agent changes require harness evidence:** Any change to prompts, tool routing, orchestration, or policy must run the relevant harness tests and report results.
-- **Checkpoint before risky branches:** Before broad refactors or policy changes, create a small checkpoint (commit or patch) so work can be resumed safely.
-- **Continuous hygiene loop:** At least weekly, review and prune stale instructions, fold recurring issues into docs/tests, and remove redundant guidance.
-
-### Definitions (Trigger Terms)
-- **Non-trivial task:** Any change that modifies service/API/event contracts, spans multiple modules, or changes agent behavior (prompts, routing, policy, orchestration).
-- **Risky branch:** Any broad refactor or policy change where rollback may be needed (cross-module rewrites, approval/sandbox behavior changes, data/model shape changes).
-- **Relevant harness tests:** Targeted `tests/agent_harness/` scenarios that cover the changed behavior surface, plus `tests/agent_harness/test_smoke.py`. If scope is unclear or change is cross-cutting, run the full `tests/agent_harness/` suite.
-
-## 6. Tool and Execution Rules
-- Prefer parallel **read-only** operations when independent.
-- Run dependent or mutating operations sequentially.
-- Use least-privilege queries/commands to reduce noise.
-- If a tool fails, capture the failure briefly, retry once if reasonable, then continue with a conservative fallback.
-
-## 7. Safety Rules
-- Never run destructive actions (delete/reset/force-push) without explicit user approval.
+## 5) Safety and Autonomy
+- Never run destructive actions (delete/reset/force-push) without explicit approval.
 - Do not revert user changes you did not create.
-- If you detect unexpected workspace changes that affect the task, pause and ask how to proceed.
-- If requirements are ambiguous, state assumptions and ask only the minimum clarifying questions needed.
+- If unexpected workspace changes affect the task, pause and ask.
+- Proceed without asking for normal file edits and standard quality commands.
+- Ask only when requirements are ambiguous enough to change architecture.
 
-`§7` defines hard safety constraints. `§12` defines autonomy defaults.
+## 6) Quality Gates
+Run the smallest gate set that matches scope:
+- **Feature work (default):** `ruff check . --fix`, `ruff format .`, targeted `pytest`, and `mypy --strict` for touched public type surfaces.
+- **Agent behavior/policy/orchestration changes:** `pytest tests/agent_harness/test_smoke.py -v` plus targeted harness scenarios.
+- **Pre-merge hard gate:** `ruff check . --fix`, `ruff format .`, `mypy --strict pycodex/`, `pytest tests/ -v`, and `pytest tests/agent_harness/ -v` when relevant.
 
-## 8. Python Standards
-- Python 3.11+ with type hints on public APIs.
-- Use `pathlib.Path` for path handling.
-- Keep imports ordered: stdlib, third-party, local.
-- Use async patterns for I/O-heavy paths; avoid blocking calls in async contexts.
-- Pydantic v2 conventions:
-  - `model_validate()` over `parse_obj()`
-  - `model_dump()` over `.dict()`
-  - `ConfigDict` over inner `Config`
+### Test Requirements
+- For each new/modified public contract, behavior-significant path, or bug fix, add/update tests in the same change.
+- Place tests under `tests/` mirroring package structure (e.g., `pycodex/core/config.py` → `tests/core/test_config.py`).
+- Bug fixes require a regression test when deterministic reproduction is feasible; otherwise document why and add closest deterministic assertion.
+- Prefer high-signal deterministic tests; remove or replace flaky/low-signal tests in the same change.
 
-## 9. Quality Gates
-Run the smallest gate set that matches the current scope, then expand only as needed:
-- **Bootstrap / initial scaffolding:** `ruff format .`, `ruff check .`
-- **Feature work (default):** `ruff check . --fix`, `ruff format .`, targeted `pytest` for touched modules, and `mypy --strict` for touched packages when public type surfaces changed
-- **Agent behavior/policy/orchestration changes:** `pytest tests/agent_harness/test_smoke.py -v` plus targeted harness scenarios for the changed behavior (required during feature work)
-- **Milestone completion / pre-merge hard gate:** `ruff check . --fix`, `ruff format .`, `mypy --strict pycodex/`, `pytest tests/ -v`, plus `pytest tests/agent_harness/ -v` when relevant
-- Add or update component-level tests when introducing new service boundaries or contracts.
+### Test Strategy
+- **Unit (default):** Cover pure logic, data validation, contract invariants, error paths. Mock only external boundaries (network, filesystem, subprocess, clock) — never mock internal domain logic.
+- **Integration (boundary-focused):** Add when a change crosses module boundaries. Use in-process fakes/test doubles. Assert typed outputs, events, and side effects — not free-form model text.
+- **E2E (critical flows only):** Maintain a small set (3-8) for critical paths covering approval-required actions, tool failure/timeout handling, and at least one multi-step flow.
+- **AI verifiability:** Agent-behavior tests must be reproducible — fixed seeds, controlled time, stable fixture inputs, no live network dependency. Validate behavior contracts (tool selected, argument shape, approval path, emitted events), not wording style. Store scenario fixtures under `tests/agent_harness/fixtures/`.
 
-### Object-Level Test Rule (Mandatory)
-- For every new or modified public contract, behaviorally significant path, or bug-fix path, add or update pytest tests in the same change.
-- Private/internal refactors with no behavior or contract change do not require object-by-object test additions; keep or improve existing coverage around touched behavior.
-- Tests must be placed under `tests/` mirroring package structure (e.g., `pycodex/core/config.py` -> `tests/core/test_config.py`).
-- Iterative exploration is allowed, but required tests must be present before checkpoint/PR/milestone handoff.
-- If test execution is blocked by missing tooling, still write the tests and report the blocker explicitly before continuing.
+## 7) Anti-Slop Guardrails
+- Default target for behavior/contract work: <=600 changed lines.
+- If estimated >600 lines, split into independently verifiable tasks before coding when practical.
+- Oversize exceptions allowed only with written rationale:
+  - Why splitting is unsafe or impractical.
+  - Why change is mechanical/low-risk or must remain atomic.
+  - Rollback plan.
+- For non-trivial milestone work, track decomposition in `todo.md` with one behavior/contract change per task and explicit acceptance criteria.
+- Do not mark task/milestone complete if acceptance criteria or required tests are missing.
 
-### Risk-Based Test Strategy (Mandatory)
-- Optimize for regression detection and fast diagnosis, not coverage percentage targets.
-- Prefer fewer high-signal tests over many low-signal tests; avoid adding tests that only mirror implementation details.
+## 8) Milestones (When Applicable)
+- `engineering-plan.md` is canonical for milestone/build tasks.
+- Work one milestone at a time.
+- Milestone completion requires:
+  1. Required quality gates pass.
+  2. Milestone verification command produces expected output.
+- At completion, stop and report:
+  1. Milestone name and files changed.
+  2. Gate results (pass/fail).
+  3. Verification command output.
+  4. Proposed next milestone.
+- Wait for explicit approval before starting the next milestone.
 
-#### Unit Tests (Default)
-- Unit tests are the default and should cover pure logic, data validation, contract invariants, and error paths.
-- Mock only external boundaries (network, filesystem, subprocess, clock); avoid mocking internal domain logic.
-- Keep unit tests deterministic and fast enough to run frequently during development.
+## 9) Coding Defaults (Python)
+- Python 3.11+.
+- Type hints on public APIs.
+- `pathlib.Path` for path handling.
+- Import order: stdlib, third-party, local.
+- Avoid blocking calls in async contexts.
+- Pydantic v2: `model_validate()`, `model_dump()`, `ConfigDict`.
 
-#### Integration Tests (Boundary-Focused)
-- Add integration tests when a change crosses module boundaries (agent loop <-> tools, approval policy <-> store, CLI <-> core wiring).
-- Use in-process fakes/test doubles to validate interface contracts and sequencing behavior.
-- Assert typed outputs, events, decisions, and side effects; do not assert full free-form model text.
+## 10) Documentation Placement
+- Keep this file short and directive.
+- Put architecture/contracts in `docs/ai/system-map.md`.
+- Put harness workflows in `docs/ai/harness.md`.
+- Put durable decisions/postmortems in `docs/ai/memory.md`.
 
-#### End-to-End Tests (Critical Flows Only)
-- Maintain a small set of E2E scenarios for critical paths (target: 3-8 core flows).
-- E2E tests must cover approval-required actions, tool failure/timeout handling, and at least one multi-step flow.
-- Use smoke E2E checks on feature work and full E2E runs at milestone/pre-merge gates when relevant.
-
-#### AI Verifiability Requirements
-- Agent-behavior tests must be reproducible: fixed seeds where applicable, controlled time, stable fixture inputs, no live network dependency.
-- Prefer model/tool fakes in tests; live-provider calls are optional and must not be the only verification path.
-- Validate behavior contracts (tool selected, argument shape, approval path, emitted events, failure handling), not wording style.
-- Store scenario fixtures under `tests/agent_harness/fixtures/` with explicit must/must-not expectations.
-
-#### Regression Policy
-- Every bug fix must include a regression test that fails before the fix and passes after it when feasible; if not feasible, document why and provide the closest deterministic reproduction/assertion.
-- If a test is flaky or low-signal, either fix it immediately or remove/replace it in the same change with rationale in the report.
-- Snapshot tests are allowed only for stable, intentional contracts (schemas/events), not for large volatile prose outputs.
-
-If blocked after two attempts on the same failure, report the blocker with diagnosis and options.
-
-## 10. Output Conventions
-- Keep responses concise and actionable.
-- Use backticks for commands/paths.
-- Use fenced code blocks with language tags for multi-line snippets.
-- Use UTF-8 (no BOM) for new/modified files.
-
-## 11. Milestone Workflow (When Applicable)
-- `engineering-plan.md` is the canonical build roadmap for milestone/build tasks.
-- If a task does **not** map to a milestone, follow `§4` and report progress by logical checkpoints.
-- For milestone/build tasks, read `engineering-plan.md` first and work **one milestone at a time**.
-- A milestone is complete when:
-  1. All required quality gates for that milestone/scope pass (§9)
-  2. The milestone's verification command from `engineering-plan.md` produces the expected output
-- At milestone completion, **stop and report**:
-  - Milestone name and files created/modified
-  - Quality gate results (pass/fail per gate)
-  - Verification command output
-  - Proposed next milestone — wait for approval before starting
-- If blocked: try one alternative approach, then surface the blocker with diagnosis and options. Max 2 attempts on the same failure.
-
-## 12. Autonomy and Persistence
-Proceed without asking for:
-- Creating, reading, or modifying files within the project
-- Running quality gates (`ruff`, `mypy`, `pytest`)
-- Running read-only shell commands (`git status`, `git log`, `ls`, etc.)
-
-Stop and ask before:
-- Any destructive operation (delete, reset, force-push) per `§7`
-- Starting the next milestone from `engineering-plan.md` when operating under `§11` (always wait for explicit approval after reporting current milestone completion)
-- Ambiguous requirements where two interpretations would lead to different architectures
-
-When blocked: follow the max-attempt and reporting rule in §11.
-
-## 13. Living Document Rule
+## 11) Living Document Rule
 When you discover a pattern that caused repeated errors, confusion, or rework (same issue appears in 2+ tasks or 2+ times within 7 days):
-1. Fix the immediate issue
-2. At the end of your report, append a **"Proposed AGENTS.md update:"** block with the exact text to add and which file/section it belongs to
-3. Do not write the update — wait for user approval
+1. Fix the immediate issue.
+2. At the end of your report, append a **"Proposed AGENTS.md update:"** block with the exact text to add and which file/section it belongs to.
+3. Do not write the update — wait for user approval.
 
 This applies to both this file and any subdirectory `AGENTS.md` files.
-
-## 14. Subdirectory AGENTS.md Files
-Each major module has its own `AGENTS.md` with module-specific rules that layer on top of this file. When working in a module, read its `AGENTS.md` first:
-- Instruction precedence: system/developer instructions > root `AGENTS.md` > subdirectory `AGENTS.md`.
-- Subdirectory rules specialize this file and do not replace it unless explicitly stated.
-- `pycodex/core/AGENTS.md` — agent loop, session, model client rules
-- `pycodex/tools/AGENTS.md` — tool protocol, error format, mutating semantics
-- `pycodex/approval/AGENTS.md` — approval store, stateless policy rules
-- `pycodex/cli/AGENTS.md` — rendering separation, no business logic in CLI

@@ -20,3 +20,4 @@ venv/
 # Local config/state
 pycodex.toml
 .claude/settings.local.json
+.envrc
