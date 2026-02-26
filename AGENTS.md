@@ -97,7 +97,26 @@ Run the smallest gate set that matches scope:
 - Put harness workflows in `docs/ai/harness.md`.
 - Put durable decisions/postmortems in `docs/ai/memory.md`.
 
-## 11) Living Document Rule
+## 11) Parallel Task Isolation (Required)
+Applies when user requests parallelized work (for example: "start subagents", "build-tasks T4/T5").
+
+- Plan-first gate: provide a per-task plan and wait for explicit user approval before making edits.
+- One task, one branch, one worktree:
+  - Branch name format: `codex/<task-id>` (example: `codex/t4`).
+  - Create a dedicated worktree per parallel task.
+  - Never run two parallel tasks in the same worktree.
+- Change isolation:
+  - A subagent may edit only files needed for its assigned task.
+  - If overlap with another active task is required, stop and ask for sequencing.
+- Commit isolation:
+  - Do not mix multiple tasks in one commit.
+  - Use task-scoped commits (example subject: `T4: implement shell tool`).
+- Integration:
+  - Integrate task branches individually (merge/cherry-pick per task).
+  - Report per task: branch, commit SHA, files changed, tests run.
+- If pre-existing mixed changes are detected, pause and ask whether to split or stash before continuing.
+
+## 12) Living Document Rule
 When you discover a pattern that caused repeated errors, confusion, or rework (same issue appears in 2+ tasks or 2+ times within 7 days):
 1. Fix the immediate issue.
 2. At the end of your report, append a **"Proposed AGENTS.md update:"** block with the exact text to add and which file/section it belongs to.
