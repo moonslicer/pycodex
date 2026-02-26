@@ -7,6 +7,8 @@ from typing import Literal, TypedDict
 
 from pycodex.core.config import Config
 
+MAX_TOOL_RESULT_CHARS = 200_000
+
 
 class UserMessageItem(TypedDict):
     """Prompt item emitted when a user sends input."""
@@ -53,7 +55,10 @@ class Session:
 
     def append_tool_result(self, call_id: str, result: str) -> None:
         """Append a tool result to the conversation history."""
-        self._history.append({"role": "tool", "tool_call_id": call_id, "content": result})
+        content = result
+        if len(content) > MAX_TOOL_RESULT_CHARS:
+            content = f"{content[:MAX_TOOL_RESULT_CHARS]}\n...[truncated by session history cap]"
+        self._history.append({"role": "tool", "tool_call_id": call_id, "content": content})
 
     def to_prompt(self) -> list[PromptItem]:
         """Return a detached copy of history for model input payloads."""
