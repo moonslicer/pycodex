@@ -47,6 +47,15 @@ class ReadFileTool:
                                 f"Defaults to {DEFAULT_LIMIT}, max {MAX_LIMIT}."
                             ),
                         },
+                        "response_format": {
+                            "type": "string",
+                            "enum": ["text", "json"],
+                            "description": (
+                                "Optional output format. "
+                                "'text' (default) returns line content only; "
+                                "'json' returns output plus paging metadata."
+                            ),
+                        },
                     },
                     "required": ["file_path"],
                     "additionalProperties": False,
@@ -76,6 +85,10 @@ class ReadFileTool:
         if limit > MAX_LIMIT:
             return f"[ERROR] Invalid arguments: 'limit' must be <= {MAX_LIMIT}"
 
+        response_format = args.get("response_format", "text")
+        if response_format not in {"text", "json"}:
+            return "[ERROR] Invalid arguments: 'response_format' must be 'text' or 'json'"
+
         prepared = await asyncio.to_thread(_resolve_path_and_size, file_path, cwd)
         if isinstance(prepared, str):
             return prepared
@@ -95,6 +108,8 @@ class ReadFileTool:
         if total_seen == 0:
             if offset > 1:
                 return "[ERROR] offset exceeds file length"
+            if response_format == "text":
+                return "(empty file)"
             return json.dumps(
                 {
                     "output": "(empty file)",
@@ -115,6 +130,9 @@ class ReadFileTool:
             return "[ERROR] offset exceeds file length"
 
         output_text, truncated = _format_window(window)
+        if response_format == "text":
+            return output_text
+
         payload = {
             "output": output_text,
             "metadata": {
