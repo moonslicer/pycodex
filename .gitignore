@@ -21,3 +21,8 @@ venv/
 pycodex.toml
 .claude/settings.local.json
 .envrc
+
+# Local secrets
+.env
+.env.*
+!.env.example

@@ -110,7 +110,8 @@ Applies when user requests parallelized work (for example: "start subagents", "b
   - If overlap with another active task is required, stop and ask for sequencing.
 - Commit isolation:
   - Do not mix multiple tasks in one commit.
-  - Use task-scoped commits (example subject: `T4: implement shell tool`).
+  - Use conventional commit subjects with scope (examples: `feat(tools): implement shell tool`, `fix(core): handle offset bounds`).
+  - Do not include transient task IDs (for example `T4`, `T5`) in commit titles; if needed, place them in the commit body or PR description.
 - Integration:
   - Integrate task branches individually (merge/cherry-pick per task).
   - Report per task: branch, commit SHA, files changed, tests run.
