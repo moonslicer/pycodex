@@ -1,0 +1,48 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "pycodex"
+version = "0.1.0"
+description = "Agentic Python project baseline."
+requires-python = ">=3.11"
+
+[tool.ruff]
+target-version = "py311"
+line-length = 100
+src = ["pycodex", "tests"]
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "UP", "B", "ASYNC", "SIM", "RUF", "C4"]
+ignore = ["E501"]
+fixable = ["ALL"]
+
+[tool.ruff.lint.per-file-ignores]
+"tests/**/*.py" = ["ARG001"]
+
+[tool.ruff.format]
+quote-style = "double"
+indent-style = "space"
+
+[tool.mypy]
+python_version = "3.11"
+files = ["pycodex"]
+strict = true
+show_error_codes = true
+warn_unused_ignores = true
+warn_redundant_casts = true
+no_implicit_reexport = true
+
+[tool.pytest.ini_options]
+minversion = "8.0"
+testpaths = ["tests"]
+pythonpath = ["."]
+addopts = "-ra --strict-config --strict-markers"
+xfail_strict = true
+markers = [
+  "unit: fast isolated tests",
+  "integration: module-boundary tests",
+  "e2e: critical full-flow tests",
+  "agent_harness: AI behavior contract tests",
+]
