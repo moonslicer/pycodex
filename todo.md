@@ -67,7 +67,7 @@ Build a runnable `python -m pycodex "<prompt>"` flow that:
   - Depends on: T1
   - Verify: `python3 -c "from pycodex.core.session import Session; s=Session(); s.append_user_message('hi'); print(len(s.to_prompt()))"`
 
-- [ ] T3: `tools/base.py`
+- [x] T3: `tools/base.py`
   - Implement `ToolHandler` protocol, `ToolRegistry`, `ToolRouter`.
   - Verify: `python3 -c "from pycodex.tools.base import ToolRegistry; print(ToolRegistry().tool_specs())"`
 
