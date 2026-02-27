@@ -136,17 +136,17 @@ Extend `python -m pycodex "<prompt>"` with:
   - Depends on: T2
   - Verify: `pytest tests/tools/test_orchestrator.py -v`
 
-- [ ] T10: `tests/tools/test_write_file.py`
+- [x] T10: `tests/tools/test_write_file.py`
   - Unit tests: success write + correct bytes_written, atomic rename (tmp file cleaned up), workspace escape rejected, missing parent dir created, existing file overwritten.
   - Depends on: T3
   - Verify: `pytest tests/tools/test_write_file.py -v`
 
-- [ ] T11: `tests/tools/test_list_dir.py`
+- [x] T11: `tests/tools/test_list_dir.py`
   - Unit tests: basic listing, depth=1 limit, offset/limit pagination, dir `/` suffix, symlink `@` suffix, "… N more entries" message, nonexistent path → ToolError.
   - Depends on: T4
   - Verify: `pytest tests/tools/test_list_dir.py -v`
 
-- [ ] T12: `tests/tools/test_grep_files.py`
+- [x] T12: `tests/tools/test_grep_files.py`
   - Unit tests with subprocess mocking: matches found, exit 1 = empty (no error), limit truncation sets `truncated=True`, `include` glob passed through, rg fallback to grep, timeout → ToolError.
   - Depends on: T5
   - Verify: `pytest tests/tools/test_grep_files.py -v`
