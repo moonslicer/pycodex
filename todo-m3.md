@@ -99,7 +99,7 @@ __main__.py            renderer: text mode or JSONL mode (--json flag)
     - `ProtocolEvent` union rejects unknown `type` value.
   - Verify: `pytest tests/protocol/test_events.py -v`
 
-- [ ] T2: `core/event_adapter.py` — stateful internal→protocol mapper + ID strategy
+- [x] T2: `core/event_adapter.py` — stateful internal→protocol mapper + ID strategy
   - Class `EventAdapter`:
     - Constructor: `thread_id: str = field(default_factory=lambda: str(uuid4()))`, `_turn_counter: int = 0`, `_item_counter: int = 0`, `_inflight: dict[str, str]` (call_id → item_id).
     - `on_agent_event(event: AgentEvent) -> list[ProtocolEvent]`: synchronous, returns ordered list of protocol events produced.
