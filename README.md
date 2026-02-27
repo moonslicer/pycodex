@@ -14,6 +14,7 @@ python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
 pip install ruff mypy pytest pytest-asyncio pydantic pre-commit
+pip install openai
 ```
 
 ## Build / Install

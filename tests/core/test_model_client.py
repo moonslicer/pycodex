@@ -93,7 +93,7 @@ def test_model_client_maps_events_to_typed_dataclasses() -> None:
                         "item": {
                             "type": "function_call",
                             "name": "read_file",
-                            "arguments": "{\"file_path\":\"README.md\"}",
+                            "arguments": '{"file_path":"README.md"}',
                             "call_id": "call_1",
                         },
                     },
@@ -115,7 +115,7 @@ def test_model_client_maps_events_to_typed_dataclasses() -> None:
             item={
                 "type": "function_call",
                 "name": "read_file",
-                "arguments": "{\"file_path\":\"README.md\"}",
+                "arguments": '{"file_path":"README.md"}',
                 "call_id": "call_1",
             }
         ),
@@ -126,6 +126,36 @@ def test_model_client_maps_events_to_typed_dataclasses() -> None:
     assert responses.calls[0]["stream"] is True
     assert isinstance(responses.calls[0]["input"], list)
     assert isinstance(responses.calls[0]["tools"], list)
+
+
+def test_model_client_converts_tool_messages_to_function_call_output() -> None:
+    responses = _FakeResponses(
+        streams=[_FakeStream(events=[{"type": "response.completed", "response": {"id": "resp_1"}}])]
+    )
+    client = ModelClient(
+        config=Config(model="gpt-test"),
+        openai_factory=lambda _config: _FakeOpenAIClient(responses=responses),
+    )
+
+    async def _run() -> list[Any]:
+        events: list[Any] = []
+        async for event in client.stream(
+            messages=[
+                {"role": "user", "content": "hello"},
+                {"role": "tool", "tool_call_id": "call_1", "content": '{"ok":true}'},
+            ],
+            tools=[],
+        ):
+            events.append(event)
+        return events
+
+    events = asyncio.run(_run())
+
+    assert events == [Completed(response_id="resp_1")]
+    assert responses.calls[0]["input"] == [
+        {"role": "user", "content": "hello"},
+        {"type": "function_call_output", "call_id": "call_1", "output": '{"ok":true}'},
+    ]
 
 
 def test_model_client_retries_once_on_transient_stream_failure() -> None:
@@ -185,6 +215,62 @@ def test_model_client_does_not_retry_non_transient_stream_failure() -> None:
     assert len(responses.calls) == 1
 
 
+def test_model_client_does_not_retry_after_partial_stream_output() -> None:
+    responses = _FakeResponses(
+        streams=[
+            _FakeStream(
+                events=[{"type": "response.output_text.delta", "delta": "partial"}],
+                error=_TransientError("connection dropped mid-stream"),
+            ),
+            _FakeStream(
+                events=[{"type": "response.completed", "response": {"id": "should_not_run"}}]
+            ),
+        ]
+    )
+    client = ModelClient(
+        config=Config(model="gpt-test"),
+        openai_factory=lambda _config: _FakeOpenAIClient(responses=responses),
+    )
+
+    with pytest.raises(
+        ModelClientStreamError,
+        match="Model stream failed after 1 attempt\\(s\\): connection dropped mid-stream",
+    ):
+        asyncio.run(_collect_events(client))
+
+    assert len(responses.calls) == 1
+
+
+def test_model_client_raises_on_response_failed_event() -> None:
+    responses = _FakeResponses(
+        streams=[
+            _FakeStream(
+                events=[
+                    {
+                        "type": "response.failed",
+                        "error": {
+                            "code": "invalid_request_error",
+                            "message": "tool output schema mismatch",
+                        },
+                    }
+                ]
+            )
+        ]
+    )
+    client = ModelClient(
+        config=Config(model="gpt-test"),
+        openai_factory=lambda _config: _FakeOpenAIClient(responses=responses),
+    )
+
+    with pytest.raises(
+        ModelClientStreamError,
+        match="Model stream event failed: invalid_request_error: tool output schema mismatch",
+    ):
+        asyncio.run(_collect_events(client))
+
+    assert len(responses.calls) == 1
+
+
 def test_response_event_dataclasses_are_constructible() -> None:
     delta = OutputTextDelta(delta="x")
     item_done = OutputItemDone(item={"type": "message"})
@@ -193,4 +279,3 @@ def test_response_event_dataclasses_are_constructible() -> None:
     assert delta.type == "output_text_delta"
     assert item_done.type == "output_item_done"
     assert completed.type == "completed"
-

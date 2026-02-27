@@ -83,14 +83,20 @@ class ModelClient:
     ) -> AsyncIterator[ResponseEvent]:
         """Stream model output as typed events with a single transient retry."""
         for attempt in range(1, _MAX_STREAM_ATTEMPTS + 1):
+            emitted_any = False
             try:
                 async for event in self._stream_once(messages=messages, tools=tools):
+                    emitted_any = True
                     yield event
                 return
             except ModelClientSetupError:
                 raise
+            except ModelClientStreamError:
+                raise
             except Exception as exc:  # pragma: no cover - defensive boundary
-                is_retryable = attempt < _MAX_STREAM_ATTEMPTS and _is_transient_error(exc)
+                is_retryable = (
+                    attempt < _MAX_STREAM_ATTEMPTS and not emitted_any and _is_transient_error(exc)
+                )
                 if is_retryable:
                     continue
                 message = _describe_exception(exc)
@@ -109,9 +115,10 @@ class ModelClient:
         if responses is None or not hasattr(responses, "create"):
             raise ModelClientSetupError("OpenAI client is missing responses.create")
 
+        input_items = _convert_prompt_to_responses_input(messages)
         stream = await responses.create(
             model=self._config.model,
-            input=messages,
+            input=input_items,
             tools=tools,
             stream=True,
         )
@@ -162,6 +169,10 @@ def _default_openai_factory(config: Config) -> Any:
 
 def _map_response_event(raw_event: Any) -> ResponseEvent | None:
     event_type = _to_optional_str(_event_get(raw_event, "type"))
+    if event_type in {"response.failed", "response.error", "error"}:
+        message = _extract_stream_error_message(raw_event)
+        raise ModelClientStreamError(f"Model stream event failed: {message}")
+
     if event_type == "response.output_text.delta":
         delta = _to_optional_str(_event_get(raw_event, "delta")) or ""
         return OutputTextDelta(
@@ -182,6 +193,37 @@ def _map_response_event(raw_event: Any) -> ResponseEvent | None:
         return Completed(response_id=response_id)
 
     return None
+
+
+def _convert_prompt_to_responses_input(messages: list[PromptItem]) -> list[dict[str, Any]]:
+    input_items: list[dict[str, Any]] = []
+    for message in messages:
+        payload = dict(message)
+        role = _to_optional_str(payload.get("role"))
+        content = payload.get("content", "")
+
+        if role == "tool":
+            call_id = _to_optional_str(payload.get("tool_call_id"))
+            if call_id is None:
+                continue
+            input_items.append(
+                {
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": str(content),
+                }
+            )
+            continue
+
+        if role in {"user", "assistant", "system"}:
+            input_items.append(
+                {
+                    "role": role,
+                    "content": str(content),
+                }
+            )
+
+    return input_items
 
 
 def _event_get(container: Any, key: str) -> Any:
@@ -221,6 +263,26 @@ def _to_optional_int(value: Any) -> int | None:
     if isinstance(value, int) and not isinstance(value, bool):
         return value
     return None
+
+
+def _extract_stream_error_message(raw_event: Any) -> str:
+    error = _event_get(raw_event, "error")
+    if error is not None:
+        message = _to_optional_str(_event_get(error, "message"))
+        code = _to_optional_str(_event_get(error, "code"))
+        if message and code:
+            return f"{code}: {message}"
+        if message:
+            return message
+        if code:
+            return code
+        return str(error)
+
+    fallback = _to_optional_str(_event_get(raw_event, "message"))
+    if fallback:
+        return fallback
+
+    return "unknown stream failure"
 
 
 def _is_transient_error(exc: Exception) -> bool:
