@@ -67,3 +67,36 @@ def test_main_runs_turn_and_prints_output(
     assert exit_code == 0
     captured = capsys.readouterr()
     assert captured.out.strip() == "final-answer"
+
+
+def test_main_returns_error_code_and_stderr_on_runtime_failure(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = Config(
+        model="test-model",
+        api_key="test-key",
+        cwd=tmp_path,
+    )
+
+    async def failing_run_turn(
+        *,
+        session: Session,
+        model_client: Any,
+        tool_router: Any,
+        cwd: Path,
+        user_input: str,
+    ) -> str:
+        _ = session, model_client, tool_router, cwd, user_input
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(main_module, "load_config", lambda: config)
+    monkeypatch.setattr(main_module, "run_turn", failing_run_turn)
+
+    exit_code = main_module.main(["hello from cli"])
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip() == "[ERROR] boom"

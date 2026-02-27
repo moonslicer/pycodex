@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import sys
 from collections.abc import Sequence
 
 from pycodex.core.agent import run_turn
@@ -46,7 +47,12 @@ async def _run_prompt(prompt: str) -> str:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
-    final_text = asyncio.run(_run_prompt(args.prompt))
+    try:
+        final_text = asyncio.run(_run_prompt(args.prompt))
+    except Exception as exc:
+        message = str(exc).strip() or type(exc).__name__
+        print(f"[ERROR] {message}", file=sys.stderr)
+        return 1
     print(final_text)
     return 0
 
