@@ -4,6 +4,7 @@ import asyncio
 from pathlib import Path
 from typing import Any
 
+import pycodex.tools.orchestrator as orchestrator_module
 import pytest
 from pycodex.approval.policy import ApprovalPolicy, ApprovalStore, ReviewDecision
 from pycodex.tools.base import ToolError, ToolResult
@@ -48,6 +49,25 @@ class _PathKeyMutatingTool(_MutatingTool):
     def approval_key(self, args: dict[str, Any], cwd: Path) -> str:
         _ = args, cwd
         return "/tmp/example.txt"
+
+
+class _RaisingApprovalKeyMutatingTool(_MutatingTool):
+    name = "raising_approval_key"
+
+    def approval_key(self, args: dict[str, Any], cwd: Path) -> str:
+        _ = args, cwd
+        raise RuntimeError("boom")
+
+
+class _PromptLockProbeMutatingTool(_MutatingTool):
+    def __init__(self, lock: asyncio.Lock) -> None:
+        super().__init__()
+        self._lock = lock
+
+    async def handle(self, args: dict[str, Any], cwd: Path) -> ToolResult:
+        await asyncio.wait_for(self._lock.acquire(), timeout=0.2)
+        self._lock.release()
+        return await super().handle(args, cwd)
 
 
 async def test_execute_with_approval_read_only_bypasses_prompt(tmp_path: Path) -> None:
@@ -285,6 +305,34 @@ async def test_execute_with_approval_uses_tool_specific_approval_key(tmp_path: P
     assert tool.calls == 1
 
 
+async def test_execute_with_approval_normalizes_approval_key_provider_exceptions(
+    tmp_path: Path,
+) -> None:
+    tool = _RaisingApprovalKeyMutatingTool()
+    store = ApprovalStore()
+    ask_count = 0
+
+    async def ask_user_fn(_tool: Any, _args: dict[str, Any]) -> ReviewDecision:
+        nonlocal ask_count
+        ask_count += 1
+        return ReviewDecision.APPROVED
+
+    outcome = await execute_with_approval(
+        tool=tool,
+        args={"x": 1},
+        cwd=tmp_path,
+        policy=ApprovalPolicy.ON_REQUEST,
+        store=store,
+        ask_user_fn=ask_user_fn,
+    )
+
+    assert isinstance(outcome, ToolError)
+    assert outcome.code == "approval_key_error"
+    assert "Failed to build approval key for tool 'raising_approval_key'" in outcome.message
+    assert ask_count == 0
+    assert tool.calls == 0
+
+
 async def test_execute_with_approval_concurrent_shared_key_prompts_once(tmp_path: Path) -> None:
     tool = _MutatingTool()
     store = ApprovalStore()
@@ -329,3 +377,195 @@ async def test_execute_with_approval_concurrent_shared_key_prompts_once(tmp_path
     assert isinstance(second, ToolResult)
     assert ask_count == 1
     assert tool.calls == 2
+
+
+async def test_execute_with_approval_prompt_callback_can_reenter_store_lock(
+    tmp_path: Path,
+) -> None:
+    tool = _MutatingTool()
+    store = ApprovalStore()
+
+    async def ask_user_fn(_tool: Any, _args: dict[str, Any]) -> ReviewDecision:
+        await asyncio.wait_for(store.prompt_lock.acquire(), timeout=0.2)
+        store.prompt_lock.release()
+        return ReviewDecision.APPROVED
+
+    outcome = await execute_with_approval(
+        tool=tool,
+        args={"x": 1},
+        cwd=tmp_path,
+        policy=ApprovalPolicy.ON_REQUEST,
+        store=store,
+        ask_user_fn=ask_user_fn,
+    )
+
+    assert isinstance(outcome, ToolResult)
+    assert tool.calls == 1
+
+
+async def test_execute_with_approval_prompt_owner_cancellation_wakes_waiters(
+    tmp_path: Path,
+) -> None:
+    tool = _MutatingTool()
+    store = ApprovalStore()
+    ask_count = 0
+    first_prompt_entered = asyncio.Event()
+
+    async def ask_user_fn(_tool: Any, _args: dict[str, Any]) -> ReviewDecision:
+        nonlocal ask_count
+        ask_count += 1
+        if ask_count == 1:
+            first_prompt_entered.set()
+            await asyncio.Event().wait()
+        return ReviewDecision.APPROVED
+
+    first_task = asyncio.create_task(
+        execute_with_approval(
+            tool=tool,
+            args={"x": 1},
+            cwd=tmp_path,
+            policy=ApprovalPolicy.ON_REQUEST,
+            store=store,
+            ask_user_fn=ask_user_fn,
+        )
+    )
+    await first_prompt_entered.wait()
+    second_task = asyncio.create_task(
+        execute_with_approval(
+            tool=tool,
+            args={"x": 1},
+            cwd=tmp_path,
+            policy=ApprovalPolicy.ON_REQUEST,
+            store=store,
+            ask_user_fn=ask_user_fn,
+        )
+    )
+    await asyncio.sleep(0)
+
+    first_task.cancel()
+    with pytest.raises(asyncio.CancelledError):
+        await first_task
+
+    second_result = await asyncio.wait_for(second_task, timeout=0.5)
+
+    assert isinstance(second_result, ToolResult)
+    assert ask_count == 2
+    assert tool.calls == 1
+
+
+async def test_execute_with_approval_cached_waiter_path_runs_outside_prompt_lock(
+    tmp_path: Path,
+) -> None:
+    store = ApprovalStore()
+    tool = _PromptLockProbeMutatingTool(store.prompt_lock)
+    first_prompt_entered = asyncio.Event()
+    release_first_prompt = asyncio.Event()
+    ask_count = 0
+
+    async def ask_user_fn(_tool: Any, _args: dict[str, Any]) -> ReviewDecision:
+        nonlocal ask_count
+        ask_count += 1
+        if ask_count == 1:
+            first_prompt_entered.set()
+            await release_first_prompt.wait()
+        return ReviewDecision.APPROVED_FOR_SESSION
+
+    task_one = asyncio.create_task(
+        execute_with_approval(
+            tool=tool,
+            args={"x": 1},
+            cwd=tmp_path,
+            policy=ApprovalPolicy.ON_REQUEST,
+            store=store,
+            ask_user_fn=ask_user_fn,
+        )
+    )
+    await first_prompt_entered.wait()
+    task_two = asyncio.create_task(
+        execute_with_approval(
+            tool=tool,
+            args={"x": 1},
+            cwd=tmp_path,
+            policy=ApprovalPolicy.ON_REQUEST,
+            store=store,
+            ask_user_fn=ask_user_fn,
+        )
+    )
+    release_first_prompt.set()
+
+    first, second = await asyncio.gather(task_one, task_two)
+
+    assert isinstance(first, ToolResult)
+    assert isinstance(second, ToolResult)
+    assert ask_count == 1
+    assert tool.calls == 2
+
+
+async def test_execute_with_approval_prompt_owner_cancelled_during_finalize_wakes_waiters(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    tool = _MutatingTool()
+    store = ApprovalStore()
+    ask_count = 0
+    first_prompt_entered = asyncio.Event()
+    release_first_prompt = asyncio.Event()
+    finalize_started = asyncio.Event()
+    release_finalize = asyncio.Event()
+    original_finalize = orchestrator_module._finalize_pending_prompt
+
+    async def wrapped_finalize(
+        *,
+        store: ApprovalStore,
+        key: object,
+        decision: ReviewDecision | None,
+    ) -> None:
+        finalize_started.set()
+        await release_finalize.wait()
+        await original_finalize(store=store, key=key, decision=decision)
+
+    monkeypatch.setattr(orchestrator_module, "_finalize_pending_prompt", wrapped_finalize)
+
+    async def ask_user_fn(_tool: Any, _args: dict[str, Any]) -> ReviewDecision:
+        nonlocal ask_count
+        ask_count += 1
+        if ask_count == 1:
+            first_prompt_entered.set()
+            await release_first_prompt.wait()
+        return ReviewDecision.APPROVED_FOR_SESSION
+
+    first_task = asyncio.create_task(
+        execute_with_approval(
+            tool=tool,
+            args={"x": 1},
+            cwd=tmp_path,
+            policy=ApprovalPolicy.ON_REQUEST,
+            store=store,
+            ask_user_fn=ask_user_fn,
+        )
+    )
+    await first_prompt_entered.wait()
+    second_task = asyncio.create_task(
+        execute_with_approval(
+            tool=tool,
+            args={"x": 1},
+            cwd=tmp_path,
+            policy=ApprovalPolicy.ON_REQUEST,
+            store=store,
+            ask_user_fn=ask_user_fn,
+        )
+    )
+    release_first_prompt.set()
+    await finalize_started.wait()
+
+    first_task.cancel()
+    release_finalize.set()
+
+    with pytest.raises(asyncio.CancelledError):
+        await first_task
+
+    second_result = await asyncio.wait_for(second_task, timeout=0.5)
+
+    assert isinstance(second_result, ToolResult)
+    assert ask_count == 1
+    assert tool.calls == 1

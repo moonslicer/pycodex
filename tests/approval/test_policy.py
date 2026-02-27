@@ -56,3 +56,15 @@ def test_approval_store_exposes_prompt_lock() -> None:
     store = ApprovalStore()
 
     assert isinstance(store.prompt_lock, asyncio.Lock)
+
+
+def test_approval_store_pending_prompt_round_trip_is_key_normalized() -> None:
+    store = ApprovalStore()
+    key1 = {"tool": "shell", "args": {"command": "ls"}}
+    key2 = {"args": {"command": "ls"}, "tool": "shell"}
+
+    created = store.create_pending_prompt(key1)
+
+    assert store.get_pending_prompt(key2) is created
+    assert store.clear_pending_prompt(key2) is created
+    assert store.get_pending_prompt(key1) is None
