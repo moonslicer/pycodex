@@ -73,7 +73,7 @@ Extend `python -m pycodex "<prompt>"` with:
 
 ## TODO Tasks (Dependency-Flexible DAG)
 
-- [ ] T1: `approval/policy.py`
+- [x] T1: `approval/policy.py`
   - Implement `ApprovalPolicy` enum, `ReviewDecision` enum, `ApprovalStore` with JSON-key cache + `prompt_lock`.
   - `APPROVED_FOR_SESSION` cached; `APPROVED` not cached.
   - Verify: `python3 -c "from pycodex.approval.policy import ApprovalPolicy, ReviewDecision, ApprovalStore; s=ApprovalStore(); s.put({'tool':'shell','cmd':'ls'}, ReviewDecision.APPROVED_FOR_SESSION); print(s.get({'cmd':'ls','tool':'shell'}))"`
@@ -84,19 +84,19 @@ Extend `python -m pycodex "<prompt>"` with:
   - Depends on: T1
   - Verify: `python3 -c "from pycodex.tools.orchestrator import execute_with_approval, ToolAborted, OrchestratorConfig; print('ok')"`
 
-- [ ] T3: `tools/write_file.py`
+- [x] T3: `tools/write_file.py`
   - Atomic workspace-contained file writer. Approval key = resolved abs path.
   - Args: `file_path`, `content`. Returns `ToolResult(body={"path":…,"bytes_written":…})`.
   - `is_mutating() = True`.
   - Verify: `python3 -c "import asyncio; from pathlib import Path; from pycodex.tools.write_file import WriteFileTool; import tempfile, os; d=tempfile.mkdtemp(); r=asyncio.run(WriteFileTool().handle({'file_path':'t.txt','content':'hi'}, Path(d))); print(r)"`
 
-- [ ] T4: `tools/list_dir.py`
+- [x] T4: `tools/list_dir.py`
   - Paginated, depth-limited tree listing. `is_mutating() = False`.
   - Args: `dir_path`, `offset=1`, `limit=25`, `depth=2`. Returns `ToolResult(body=str)`.
   - Dir `/` suffix, symlink `@` suffix, 2-space indent per depth, "… N more entries" pagination.
   - Verify: `python3 -c "import asyncio; from pathlib import Path; from pycodex.tools.list_dir import ListDirTool; print(asyncio.run(ListDirTool().handle({'dir_path':'.'}, Path('.'))))"`
 
-- [ ] T5: `tools/grep_files.py`
+- [x] T5: `tools/grep_files.py`
   - rg/grep content search returning file paths sorted by mtime. `is_mutating() = False`.
   - Args: `pattern`, `path=None`, `include=None`, `limit=100`. Max limit 2000.
   - rg command: `rg --files-with-matches --sortr=modified --regexp <pattern> [--glob <include>] -- <path>`
@@ -118,7 +118,7 @@ Extend `python -m pycodex "<prompt>"` with:
   - Depends on: T1, T2, T3, T4, T5, T6
   - Verify: `python3 -m pycodex --help` (shows `--approval`)
 
-- [ ] T8: `tests/approval/test_policy.py`
+- [x] T8: `tests/approval/test_policy.py`
   - Unit tests: `ApprovalStore` get/put, key normalization (dict order independence), `APPROVED_FOR_SESSION` cached, `APPROVED` not cached, `prompt_lock` is asyncio.Lock.
   - Depends on: T1
   - Verify: `pytest tests/approval/test_policy.py -v`
