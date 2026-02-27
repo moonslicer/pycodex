@@ -95,9 +95,7 @@ async def execute_with_approval(
             decision = await ask_user_fn(tool, args)
         finally:
             # Always clear and publish pending state, even when the owner task is cancelled.
-            await asyncio.shield(
-                _finalize_pending_prompt(store=store, key=key, decision=decision)
-            )
+            await asyncio.shield(_finalize_pending_prompt(store=store, key=key, decision=decision))
 
         assert decision is not None
 

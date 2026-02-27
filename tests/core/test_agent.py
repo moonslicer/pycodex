@@ -304,9 +304,7 @@ def test_run_turn_aborts_immediately_when_tool_aborted(tmp_path: Path) -> None:
             ]
         ]
     )
-    router = _AbortingToolRouter(
-        specs=[{"type": "function", "function": {"name": "write_file"}}]
-    )
+    router = _AbortingToolRouter(specs=[{"type": "function", "function": {"name": "write_file"}}])
     emitted: list[AgentEvent] = []
 
     async def on_event(event: AgentEvent) -> None:
