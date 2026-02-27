@@ -3,11 +3,12 @@
 from __future__ import annotations
 
 import asyncio
-import json
 import time
 from asyncio.subprocess import PIPE
 from pathlib import Path
 from typing import Any
+
+from pycodex.tools.base import ToolError, ToolOutcome, ToolResult
 
 DEFAULT_TIMEOUT_MS = 10_000
 MAX_OUTPUT_BYTES = 1_048_576
@@ -46,13 +47,16 @@ class ShellTool:
     async def is_mutating(self, args: dict[str, Any]) -> bool:
         return True
 
-    async def handle(self, args: dict[str, Any], cwd: Path) -> str:
+    async def handle(self, args: dict[str, Any], cwd: Path) -> ToolOutcome:
         command = args.get("command")
         if not isinstance(command, str) or not command.strip():
-            return "[ERROR] Invalid arguments: 'command' must be a non-empty string"
+            return ToolError(
+                message="Invalid arguments: 'command' must be a non-empty string",
+                code="invalid_arguments",
+            )
 
         timeout_ms = _resolve_timeout_ms(args)
-        if isinstance(timeout_ms, str):
+        if isinstance(timeout_ms, ToolError):
             return timeout_ms
 
         started_at = time.perf_counter()
@@ -66,7 +70,7 @@ class ShellTool:
                 stderr=PIPE,
             )
         except OSError as exc:
-            return f"[ERROR] Failed to start command: {exc}"
+            return ToolError(message=f"Failed to start command: {exc}", code="start_failed")
 
         try:
             stdout_bytes, stderr_bytes = await asyncio.wait_for(
@@ -76,7 +80,10 @@ class ShellTool:
         except TimeoutError:
             process.kill()
             await process.communicate()
-            return f"[ERROR] Command timed out after {timeout_ms}ms"
+            return ToolError(
+                message=f"Command timed out after {timeout_ms}ms",
+                code="timeout",
+            )
 
         duration_seconds = round(time.perf_counter() - started_at, 1)
         output_text = _build_output_text(
@@ -90,17 +97,23 @@ class ShellTool:
                 "duration_seconds": duration_seconds,
             },
         }
-        return json.dumps(payload, ensure_ascii=True)
+        return ToolResult(body=payload)
 
 
-def _resolve_timeout_ms(args: dict[str, Any]) -> int | str:
+def _resolve_timeout_ms(args: dict[str, Any]) -> int | ToolError:
     timeout_ms = args.get("timeout_ms")
     if "timeout_seconds" in args:
-        return "[ERROR] Invalid arguments: 'timeout_seconds' is unsupported; use 'timeout_ms'"
+        return ToolError(
+            message="Invalid arguments: 'timeout_seconds' is unsupported; use 'timeout_ms'",
+            code="invalid_arguments",
+        )
 
     if timeout_ms is not None:
         if not isinstance(timeout_ms, int) or isinstance(timeout_ms, bool) or timeout_ms <= 0:
-            return "[ERROR] Invalid arguments: 'timeout_ms' must be a positive integer"
+            return ToolError(
+                message="Invalid arguments: 'timeout_ms' must be a positive integer",
+                code="invalid_arguments",
+            )
         return timeout_ms
 
     return DEFAULT_TIMEOUT_MS

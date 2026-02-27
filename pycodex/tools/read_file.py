@@ -3,9 +3,10 @@
 from __future__ import annotations
 
 import asyncio
-import json
 from pathlib import Path
 from typing import Any
+
+from pycodex.tools.base import ToolError, ToolOutcome, ToolResult
 
 DEFAULT_LIMIT = 200
 MAX_LIMIT = 2_000
@@ -73,30 +74,45 @@ class ReadFileTool:
     async def is_mutating(self, args: dict[str, Any]) -> bool:
         return False
 
-    async def handle(self, args: dict[str, Any], cwd: Path) -> str:
+    async def handle(self, args: dict[str, Any], cwd: Path) -> ToolOutcome:
         file_path = args.get("file_path")
         if not isinstance(file_path, str) or not file_path.strip():
-            return "[ERROR] Invalid arguments: 'file_path' must be a non-empty string"
+            return ToolError(
+                message="Invalid arguments: 'file_path' must be a non-empty string",
+                code="invalid_arguments",
+            )
 
         offset = args.get("offset", 1)
         if not isinstance(offset, int) or isinstance(offset, bool) or offset <= 0:
-            return "[ERROR] Invalid arguments: 'offset' must be a positive integer (1-indexed)"
+            return ToolError(
+                message="Invalid arguments: 'offset' must be a positive integer (1-indexed)",
+                code="invalid_arguments",
+            )
 
         raw_limit = args.get("limit")
         if raw_limit is not None and (
             not isinstance(raw_limit, int) or isinstance(raw_limit, bool) or raw_limit <= 0
         ):
-            return "[ERROR] Invalid arguments: 'limit' must be a positive integer"
+            return ToolError(
+                message="Invalid arguments: 'limit' must be a positive integer",
+                code="invalid_arguments",
+            )
         limit = DEFAULT_LIMIT if raw_limit is None else raw_limit
         if limit > MAX_LIMIT:
-            return f"[ERROR] Invalid arguments: 'limit' must be <= {MAX_LIMIT}"
+            return ToolError(
+                message=f"Invalid arguments: 'limit' must be <= {MAX_LIMIT}",
+                code="invalid_arguments",
+            )
 
         response_format = args.get("response_format", "text")
         if response_format not in {"text", "json"}:
-            return "[ERROR] Invalid arguments: 'response_format' must be 'text' or 'json'"
+            return ToolError(
+                message="Invalid arguments: 'response_format' must be 'text' or 'json'",
+                code="invalid_arguments",
+            )
 
         prepared = await asyncio.to_thread(_resolve_path_and_size, file_path, cwd)
-        if isinstance(prepared, str):
+        if isinstance(prepared, ToolError):
             return prepared
         path, file_size_bytes = prepared
 
@@ -109,15 +125,15 @@ class ReadFileTool:
                     limit,
                 )
             except OSError as exc:
-                return f"[ERROR] Failed to read file: {exc}"
+                return ToolError(message=f"Failed to read file: {exc}", code="read_failed")
 
         if total_seen == 0:
             if offset > 1:
-                return "[ERROR] offset exceeds file length"
+                return ToolError(message="offset exceeds file length", code="offset_out_of_range")
             if response_format == "text":
-                return "(empty file)"
-            return json.dumps(
-                {
+                return ToolResult(body="(empty file)")
+            return ToolResult(
+                body={
                     "output": "(empty file)",
                     "metadata": {
                         "offset": offset,
@@ -128,16 +144,15 @@ class ReadFileTool:
                         "file_size_bytes": file_size_bytes,
                         "truncated": False,
                     },
-                },
-                ensure_ascii=True,
+                }
             )
 
         if offset > total_seen and not window:
-            return "[ERROR] offset exceeds file length"
+            return ToolError(message="offset exceeds file length", code="offset_out_of_range")
 
         output_text, truncated = _format_window(window)
         if response_format == "text":
-            return output_text
+            return ToolResult(body=output_text)
 
         payload = {
             "output": output_text,
@@ -151,7 +166,7 @@ class ReadFileTool:
                 "truncated": truncated,
             },
         }
-        return json.dumps(payload, ensure_ascii=True)
+        return ToolResult(body=payload)
 
 
 def _read_window(path: Path, offset: int, limit: int) -> tuple[list[tuple[int, str]], int, bool]:
@@ -176,7 +191,7 @@ def _read_window(path: Path, offset: int, limit: int) -> tuple[list[tuple[int, s
     return window, total_seen, has_more
 
 
-def _resolve_path_and_size(file_path: str, cwd: Path) -> tuple[Path, int] | str:
+def _resolve_path_and_size(file_path: str, cwd: Path) -> tuple[Path, int] | ToolError:
     path = Path(file_path)
     if not path.is_absolute():
         path = cwd / path
@@ -184,17 +199,20 @@ def _resolve_path_and_size(file_path: str, cwd: Path) -> tuple[Path, int] | str:
     cwd_root = cwd.resolve()
     resolved_path = path.resolve(strict=False)
     if not resolved_path.is_relative_to(cwd_root):
-        return f"[ERROR] Access denied outside workspace: {resolved_path}"
+        return ToolError(
+            message=f"Access denied outside workspace: {resolved_path}",
+            code="access_denied",
+        )
 
     if not resolved_path.exists():
-        return f"[ERROR] File not found: {resolved_path}"
+        return ToolError(message=f"File not found: {resolved_path}", code="not_found")
     if not resolved_path.is_file():
-        return f"[ERROR] Not a file: {resolved_path}"
+        return ToolError(message=f"Not a file: {resolved_path}", code="not_a_file")
 
     try:
         file_size_bytes = resolved_path.stat().st_size
     except OSError as exc:
-        return f"[ERROR] Failed to read file: {exc}"
+        return ToolError(message=f"Failed to read file: {exc}", code="read_failed")
 
     return resolved_path, file_size_bytes
 

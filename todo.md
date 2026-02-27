@@ -109,7 +109,7 @@ Build a runnable `python -m pycodex "<prompt>"` flow that:
   - Depends on: T8
   - Verify: `pytest tests/ -m "not e2e and not agent_harness" -q` and `pytest tests/ -m e2e -v`
 
-- [ ] T9: Structured tool result/error protocol
+- [x] T9: Structured tool result/error protocol
   - Replace string-only `[ERROR] ...` tool failures with structured `ToolResult`/`ToolError` in `tools/base.py`.
   - Keep model/session-facing tool output as JSON string payloads for Milestone 1 compatibility.
   - Update `tools/shell.py`, `tools/read_file.py`, and tool base tests to assert structured success/error payloads.

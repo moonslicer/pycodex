@@ -5,7 +5,7 @@ from __future__ import annotations
 import json
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol
+from typing import Any, Protocol, TypeAlias
 
 
 class ToolHandler(Protocol):
@@ -19,8 +19,26 @@ class ToolHandler(Protocol):
     async def is_mutating(self, args: dict[str, Any]) -> bool:
         """Return whether this call mutates state."""
 
-    async def handle(self, args: dict[str, Any], cwd: Path) -> str:
-        """Execute tool logic and return string result."""
+    async def handle(self, args: dict[str, Any], cwd: Path) -> ToolOutcome:
+        """Execute tool logic and return a typed outcome."""
+
+
+@dataclass(slots=True, frozen=True)
+class ToolResult:
+    """Structured successful tool output."""
+
+    body: Any
+
+
+@dataclass(slots=True, frozen=True)
+class ToolError:
+    """Structured tool failure payload."""
+
+    message: str
+    code: str | None = None
+
+
+ToolOutcome: TypeAlias = ToolResult | ToolError
 
 
 class ToolRegistry:
@@ -45,12 +63,29 @@ class ToolRegistry:
         """Dispatch a tool call by name and return tool output text."""
         handler = self.get(name)
         if handler is None:
-            return f"[ERROR] Unknown tool: {name}"
+            return serialize_tool_outcome(
+                ToolError(message=f"Unknown tool: {name}", code="unknown")
+            )
 
         try:
-            return await handler.handle(args, cwd)
+            outcome = await handler.handle(args, cwd)
         except Exception as exc:  # pragma: no cover - defensive boundary
-            return f"[ERROR] Tool '{name}' failed ({type(exc).__name__})"
+            return serialize_tool_outcome(
+                ToolError(
+                    message=f"Tool '{name}' failed ({type(exc).__name__})",
+                    code="handler_exception",
+                )
+            )
+
+        if not isinstance(outcome, (ToolResult, ToolError)):
+            return serialize_tool_outcome(
+                ToolError(
+                    message=f"Tool '{name}' returned unsupported outcome type",
+                    code="invalid_outcome",
+                )
+            )
+
+        return serialize_tool_outcome(outcome)
 
 
 @dataclass(slots=True)
@@ -81,21 +116,47 @@ class ToolRouter:
     ) -> str:
         """Dispatch a tool call payload from the model."""
         parsed_args = self._parse_arguments(arguments)
-        if isinstance(parsed_args, str):
-            return parsed_args
+        if isinstance(parsed_args, ToolError):
+            return serialize_tool_outcome(parsed_args)
         return await self._registry.dispatch(name=name, args=parsed_args, cwd=cwd)
 
     @staticmethod
-    def _parse_arguments(arguments: str | dict[str, Any]) -> dict[str, Any] | str:
+    def _parse_arguments(arguments: str | dict[str, Any]) -> dict[str, Any] | ToolError:
         if isinstance(arguments, dict):
             return arguments
 
         try:
             decoded = json.loads(arguments)
         except json.JSONDecodeError as exc:
-            return f"[ERROR] Invalid tool arguments JSON: {exc.msg}"
+            return ToolError(
+                message=f"Invalid tool arguments JSON: {exc.msg}",
+                code="invalid_arguments_json",
+            )
 
         if not isinstance(decoded, dict):
-            return "[ERROR] Invalid tool arguments JSON: expected object"
+            return ToolError(
+                message="Invalid tool arguments JSON: expected object",
+                code="invalid_arguments_json",
+            )
 
         return decoded
+
+
+def serialize_tool_outcome(outcome: ToolOutcome) -> str:
+    """Encode a typed tool outcome into the model/session-facing JSON string."""
+    if isinstance(outcome, ToolResult):
+        payload: dict[str, Any] = {
+            "body": outcome.body,
+            "success": True,
+        }
+    else:
+        payload = {
+            "body": outcome.message,
+            "success": False,
+            "error": {
+                "message": outcome.message,
+                "code": outcome.code,
+            },
+        }
+
+    return json.dumps(payload, ensure_ascii=True)
