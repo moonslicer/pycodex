@@ -27,7 +27,10 @@ class OrchestratorConfig:
 
 
 class ToolAborted(Exception):
-    """Raised when the user aborts the active tool execution."""
+    """Raised when the user aborts tool execution for the active turn.
+
+    The caller must treat this as terminal for the current turn.
+    """
 
     def __init__(self, tool_name: str) -> None:
         super().__init__(f"Tool execution aborted by user: {tool_name}")
@@ -43,7 +46,11 @@ async def execute_with_approval(
     store: ApprovalStore,
     ask_user_fn: AskUserFn,
 ) -> ToolOutcome:
-    """Execute a tool call with approval handling for mutating operations."""
+    """Execute a tool call with approval handling for mutating operations.
+
+    `ReviewDecision.ABORT` raises `ToolAborted` so upstream callers can stop
+    the active turn immediately.
+    """
     if not await tool.is_mutating(args):
         return await tool.handle(args, cwd)
 
@@ -100,6 +107,7 @@ async def execute_with_approval(
         assert decision is not None
 
         if decision == ReviewDecision.ABORT:
+            # ABORT is a terminal control-flow signal for the active turn.
             raise ToolAborted(tool.name)
 
         if decision == ReviewDecision.DENIED:

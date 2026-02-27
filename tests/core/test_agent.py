@@ -341,6 +341,64 @@ def test_run_turn_aborts_immediately_when_tool_aborted(tmp_path: Path) -> None:
     ]
 
 
+def test_run_turn_abort_stops_remaining_tool_calls_in_same_turn(tmp_path: Path) -> None:
+    session = Session()
+    model_client = _FakeModelClient(
+        turns=[
+            [
+                OutputItemDone(
+                    item={
+                        "type": "function_call",
+                        "name": "write_file",
+                        "arguments": '{"file_path":"x.txt","content":"hi"}',
+                        "call_id": "call_abort_first",
+                    }
+                ),
+                OutputItemDone(
+                    item={
+                        "type": "function_call",
+                        "name": "shell",
+                        "arguments": '{"command":"echo should-not-run"}',
+                        "call_id": "call_after_abort",
+                    }
+                ),
+                Completed(response_id="resp_tools"),
+            ]
+        ]
+    )
+    router = _AbortingToolRouter(
+        specs=[
+            {"type": "function", "function": {"name": "write_file"}},
+            {"type": "function", "function": {"name": "shell"}},
+        ]
+    )
+    emitted: list[AgentEvent] = []
+
+    async def on_event(event: AgentEvent) -> None:
+        emitted.append(event)
+
+    result = asyncio.run(
+        run_turn(
+            session=session,
+            model_client=model_client,
+            tool_router=router,
+            cwd=tmp_path,
+            user_input="write then shell",
+            on_event=on_event,
+        )
+    )
+
+    assert result == "Aborted by user."
+    assert len(router.dispatch_calls) == 1
+    assert router.dispatch_calls[0]["name"] == "write_file"
+    assert [event.type for event in emitted] == [
+        "turn_started",
+        "tool_call_dispatched",
+        "turn_completed",
+    ]
+    assert len(model_client.calls) == 1
+
+
 def test_run_turn_uses_done_item_text_when_no_text_deltas(tmp_path: Path) -> None:
     session = Session()
     model_client = _FakeModelClient(

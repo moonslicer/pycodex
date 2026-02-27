@@ -144,6 +144,8 @@ class Agent:
                         cwd=self.cwd,
                     )
                 except ToolAborted:
+                    # ABORT is terminal for this turn: return immediately
+                    # without dispatching additional tool calls.
                     abort_text = "Aborted by user."
                     _log.info("turn aborted by user during tool %r", tool_call.name)
                     await self._emit(TurnCompleted(final_text=abort_text))

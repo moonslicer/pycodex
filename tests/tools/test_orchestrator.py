@@ -9,6 +9,7 @@ import pytest
 from pycodex.approval.policy import ApprovalPolicy, ApprovalStore, ReviewDecision
 from pycodex.tools.base import ToolError, ToolResult
 from pycodex.tools.orchestrator import ToolAborted, execute_with_approval
+from pycodex.tools.shell import ShellTool
 
 pytestmark = pytest.mark.unit
 
@@ -57,6 +58,13 @@ class _RaisingApprovalKeyMutatingTool(_MutatingTool):
     def approval_key(self, args: dict[str, Any], cwd: Path) -> str:
         _ = args, cwd
         raise RuntimeError("boom")
+
+
+class _CanonicalShellKeyMutatingTool(_MutatingTool):
+    name = "shell"
+
+    def approval_key(self, args: dict[str, Any], cwd: Path) -> dict[str, Any] | ToolError:
+        return ShellTool().approval_key(args, cwd)
 
 
 class _PromptLockProbeMutatingTool(_MutatingTool):
@@ -303,6 +311,84 @@ async def test_execute_with_approval_uses_tool_specific_approval_key(tmp_path: P
     assert isinstance(outcome, ToolResult)
     assert ask_count == 0
     assert tool.calls == 1
+
+
+async def test_execute_with_approval_canonicalizes_shell_wrapper_approval_key(
+    tmp_path: Path,
+) -> None:
+    tool = _CanonicalShellKeyMutatingTool()
+    store = ApprovalStore()
+    ask_count = 0
+
+    async def ask_user_fn(_tool: Any, _args: dict[str, Any]) -> ReviewDecision:
+        nonlocal ask_count
+        ask_count += 1
+        return ReviewDecision.APPROVED_FOR_SESSION
+
+    first_args = {"command": 'bash -lc "ls -la"'}
+    second_args = {"command": '/bin/bash -lc "ls   -la"'}
+
+    first = await execute_with_approval(
+        tool=tool,
+        args=first_args,
+        cwd=tmp_path,
+        policy=ApprovalPolicy.ON_REQUEST,
+        store=store,
+        ask_user_fn=ask_user_fn,
+    )
+    second = await execute_with_approval(
+        tool=tool,
+        args=second_args,
+        cwd=tmp_path,
+        policy=ApprovalPolicy.ON_REQUEST,
+        store=store,
+        ask_user_fn=ask_user_fn,
+    )
+
+    assert isinstance(first, ToolResult)
+    assert isinstance(second, ToolResult)
+    assert ask_count == 1
+    assert tool.calls == 2
+    assert tool.approval_key(first_args, tmp_path) == tool.approval_key(second_args, tmp_path)
+
+
+async def test_execute_with_approval_keeps_shell_semantic_variants_separate(
+    tmp_path: Path,
+) -> None:
+    tool = _CanonicalShellKeyMutatingTool()
+    store = ApprovalStore()
+    ask_count = 0
+
+    async def ask_user_fn(_tool: Any, _args: dict[str, Any]) -> ReviewDecision:
+        nonlocal ask_count
+        ask_count += 1
+        return ReviewDecision.APPROVED_FOR_SESSION
+
+    first_args = {"command": 'bash -lc "echo $HOME"'}
+    second_args = {"command": "bash -lc \"echo '$HOME'\""}
+
+    first = await execute_with_approval(
+        tool=tool,
+        args=first_args,
+        cwd=tmp_path,
+        policy=ApprovalPolicy.ON_REQUEST,
+        store=store,
+        ask_user_fn=ask_user_fn,
+    )
+    second = await execute_with_approval(
+        tool=tool,
+        args=second_args,
+        cwd=tmp_path,
+        policy=ApprovalPolicy.ON_REQUEST,
+        store=store,
+        ask_user_fn=ask_user_fn,
+    )
+
+    assert isinstance(first, ToolResult)
+    assert isinstance(second, ToolResult)
+    assert ask_count == 2
+    assert tool.calls == 2
+    assert tool.approval_key(first_args, tmp_path) != tool.approval_key(second_args, tmp_path)
 
 
 async def test_execute_with_approval_normalizes_approval_key_provider_exceptions(

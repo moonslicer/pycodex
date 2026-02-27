@@ -151,7 +151,7 @@ Extend `python -m pycodex "<prompt>"` with:
   - Depends on: T5
   - Verify: `pytest tests/tools/test_grep_files.py -v`
 
-- [ ] T13: Approval semantics hardening (`ABORT` + decision-key canonicalization)
+- [x] T13: Approval semantics hardening (`ABORT` + decision-key canonicalization)
   - Resolve and enforce a single `ABORT` contract end-to-end:
     - User choosing `ABORT` must stop the active turn immediately (no further model/tool work in that turn).
     - Align implementation and docs across `tools/orchestrator.py`, `tools/base.py`, `core/agent.py`, and this TODO.

@@ -60,7 +60,12 @@ class ToolRegistry:
         return [handler.tool_spec() for handler in self._tools.values()]
 
     async def dispatch(self, name: str, args: dict[str, Any], cwd: Path) -> str:
-        """Dispatch a tool call by name and return tool output text."""
+        """Dispatch a tool call by name and return tool output text.
+
+        Raises:
+            ToolAborted: when the user aborts approval; callers should stop the
+                active turn instead of converting this into a normal tool error.
+        """
         handler = self.get(name)
         if handler is None:
             return serialize_tool_outcome(
@@ -80,6 +85,7 @@ class ToolRegistry:
                     ask_user_fn=self._orchestrator.ask_user_fn,
                 )
         except ToolAborted:
+            # Preserve abort as control-flow so the agent can terminate the turn.
             raise
         except Exception as exc:  # pragma: no cover - defensive boundary
             return serialize_tool_outcome(
