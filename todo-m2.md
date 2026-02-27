@@ -110,7 +110,7 @@ Extend `python -m pycodex "<prompt>"` with:
   - Depends on: T2
   - Verify: `python3 -c "from pycodex.tools.base import ToolRegistry; r=ToolRegistry(); print(r.tool_specs())"`
 
-- [ ] T7: `__main__.py` (modify)
+- [x] T7: `__main__.py` (modify)
   - Add `--approval {never,on-failure,on-request,unless-trusted}` arg (default: `never`).
   - Build `ApprovalStore` + non-interactive `ask_user_fn` via `asyncio.to_thread(input, prompt)`.
   - Register `WriteFileTool`, `ListDirTool`, `GrepFilesTool` in `_build_tool_router()`.

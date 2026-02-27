@@ -23,6 +23,7 @@ def test_main_help_exits_with_usage(capsys: pytest.CaptureFixture[str]) -> None:
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
     assert "usage:" in captured.out
+    assert "--approval" in captured.out
     assert "prompt" in captured.out
 
 
@@ -112,3 +113,27 @@ def test_main_returns_error_code_and_stderr_on_runtime_failure(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err.strip() == "[ERROR] boom"
+
+
+def test_main_passes_approval_policy_to_run_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    seen: dict[str, object] = {}
+
+    async def fake_run_prompt(prompt: str, *, approval_policy: main_module.ApprovalPolicy) -> str:
+        seen["prompt"] = prompt
+        seen["approval_policy"] = approval_policy
+        return "final-answer"
+
+    monkeypatch.setattr(main_module, "_run_prompt", fake_run_prompt)
+
+    exit_code = main_module.main(["--approval", "on-request", "hello from cli"])
+
+    assert exit_code == 0
+    assert seen == {
+        "prompt": "hello from cli",
+        "approval_policy": main_module.ApprovalPolicy.ON_REQUEST,
+    }
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "final-answer"
