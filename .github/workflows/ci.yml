@@ -9,6 +9,28 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
+  secret-scan:
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout (full history for secret scan)
+        uses: actions/checkout@v4
+        with:
+          fetch-depth: 0
+
+      - name: Guard local absolute paths
+        run: |
+          if git grep -nE \
+            '(/Users/[[:alnum:]_.-]+|/home/[[:alnum:]_.-]+|[A-Za-z]:\\Users\\[[:alnum:]_.-]+)' \
+            -- . ":(exclude)*.png" ":(exclude)*.jpg" ":(exclude)*.svg"; then
+            echo "Found local absolute paths in tracked content. Redact before merge."
+            exit 1
+          fi
+
+      - name: Secret scan (gitleaks)
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+
   lint:
     runs-on: ubuntu-latest
     steps:
@@ -32,7 +54,7 @@ jobs:
         run: ruff format . --check
 
   typecheck-and-unit:
-    needs: lint
+    needs: [secret-scan, lint]
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -76,11 +98,9 @@ jobs:
 
       - name: Dependency audit
         run: pip-audit
-        continue-on-error: true
 
       - name: Security scan (bandit)
         run: bandit -r pycodex/ -ll -q
-        continue-on-error: true
 
       - name: E2E (PR to main only)
         if: github.event_name == 'pull_request' && github.base_ref == 'main'

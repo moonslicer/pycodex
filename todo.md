@@ -71,13 +71,13 @@ Build a runnable `python -m pycodex "<prompt>"` flow that:
   - Implement `ToolHandler` protocol, `ToolRegistry`, `ToolRouter`.
   - Verify: `python3 -c "from pycodex.tools.base import ToolRegistry; print(ToolRegistry().tool_specs())"`
 
-- [ ] T4: `tools/shell.py`
+- [x] T4: `tools/shell.py`
   - Async subprocess tool with timeout + formatted output.
   - Return `[ERROR] ...` on failure.
   - Depends on: T3
   - Verify: `python3 -c "import asyncio; from pathlib import Path; from pycodex.tools.shell import ShellTool; print(asyncio.run(ShellTool().handle({'command':'echo hi'}, Path('.'))))"`
 
-- [ ] T5: `tools/read_file.py`
+- [x] T5: `tools/read_file.py`
   - Read file with line numbers + optional offset/limit.
   - Return `[ERROR] ...` on failures.
   - Depends on: T3

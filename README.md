@@ -99,6 +99,8 @@ GitHub Actions workflow:
 
 It runs on push and pull request with:
 
+- Gitleaks secret scan (full git history)
+- Absolute-path guard (`/Users/*`, `/home/*`, `C:\Users\*`)
 - Ruff lint
 - Ruff format check
 - Mypy strict
