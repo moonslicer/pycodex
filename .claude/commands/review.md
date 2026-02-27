@@ -45,6 +45,12 @@ For each new class or function:
 3. **TODO tracking**: Any `TODO`/`FIXME` comments not tracked in `todo.md` → CONCERN
 4. **Naming clarity**: Public names that are ambiguous or inconsistent with existing conventions → CONCERN
 5. **Error handling**: Overly broad `except Exception` or silent `except: pass` → CONCERN
+6. **Unnecessary type coercion**: e.g. `str(path)` where `Path` is accepted natively → CONCERN
+7. **Module-level concurrency primitives**: `asyncio.Semaphore()`, `threading.Lock()` etc. created at import time — prefer lazy init inside a function → CONCERN
+8. **Unused sentinel variables**: `_ = arg` to silence linters instead of redesigning the interface → CONCERN
+9. **String-based dispatch on typed unions**: `getattr(obj, "type") == "foo"` when `isinstance(obj, FooClass)` is available → CONCERN
+10. **Multi-accumulator precedence logic**: two parallel lists with `if list_a: return list_a else: return list_b` — consolidate into one → CONCERN
+11. **Missing module docstrings**: any `.py` file without a top-level docstring → CONCERN
 
 Each finding: report `CONCERN — file:line — description`
 
