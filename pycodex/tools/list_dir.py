@@ -118,7 +118,15 @@ class ListDirTool:
             return ToolResult(body="(empty directory)")
 
         start_index = offset - 1
-        if start_index >= total_entries and not capped:
+        if not window:
+            if capped:
+                return ToolError(
+                    message=(
+                        f"offset exceeds enumerated entries: directory has "
+                        f"{MAX_TOTAL_ENTRIES}+ entries. Use a narrower path or smaller depth."
+                    ),
+                    code="offset_beyond_cap",
+                )
             return ToolError(
                 message="offset exceeds directory entry count", code="offset_out_of_range"
             )

@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 from pathlib import Path
+from typing import Any
 
 from pycodex.tools.base import ToolError, ToolResult
 from pycodex.tools.list_dir import ListDirTool
@@ -105,3 +106,22 @@ async def test_list_dir_tool_offset_out_of_range(tmp_path: Path) -> None:
     result = await ListDirTool().handle({"dir_path": ".", "offset": 100}, tmp_path)
     assert isinstance(result, ToolError)
     assert result.code == "offset_out_of_range"
+
+
+async def test_list_dir_tool_offset_beyond_cap_returns_dedicated_error(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    # Simulate a capped traversal by lowering MAX_TOTAL_ENTRIES so that
+    # offset lands past what was counted, triggering the offset_beyond_cap path.
+    import pycodex.tools.list_dir as list_dir_mod
+
+    (tmp_path / "a.txt").write_text("x")
+    (tmp_path / "b.txt").write_text("x")
+    (tmp_path / "c.txt").write_text("x")
+
+    monkeypatch.setattr(list_dir_mod, "MAX_TOTAL_ENTRIES", 2)
+
+    result = await ListDirTool().handle({"dir_path": ".", "offset": 10}, tmp_path)
+    assert isinstance(result, ToolError)
+    assert result.code == "offset_beyond_cap"
+    assert "narrower path" in result.message
