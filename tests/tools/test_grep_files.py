@@ -235,9 +235,7 @@ async def test_grep_files_tool_rejects_path_outside_workspace(tmp_path: Path) ->
 
 
 async def test_grep_files_tool_rejects_nonexistent_path(tmp_path: Path) -> None:
-    result = await GrepFilesTool().handle(
-        {"pattern": "x", "path": "nonexistent_dir_xyz"}, tmp_path
-    )
+    result = await GrepFilesTool().handle({"pattern": "x", "path": "nonexistent_dir_xyz"}, tmp_path)
     _expect_error(result, code="not_found")
 
 

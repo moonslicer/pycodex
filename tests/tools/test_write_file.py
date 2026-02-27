@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 
 from pycodex.tools.base import ToolError, ToolResult
@@ -39,7 +40,7 @@ async def test_write_file_tool_uses_atomic_tmp_path_and_cleans_it_up(tmp_path: P
     _expect_result(result)
 
     # Temp file uses .{name}.{pid}.tmp pattern — none should remain after success
-    remaining_tmps = list(tmp_path.glob(".notes.txt.*.tmp"))
+    remaining_tmps = await asyncio.to_thread(lambda: list(tmp_path.glob(".notes.txt.*.tmp")))
     assert remaining_tmps == [], f"Unexpected temp files: {remaining_tmps}"
     assert (tmp_path / "notes.txt").read_text(encoding="utf-8") == "abc"
 
