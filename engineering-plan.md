@@ -145,164 +145,67 @@ All 8 planned files were created with the following implementations and notable 
 
 ---
 
-#### Design notes (informed by M1 + Codex source)
-
-- **`ToolOutcome` is already the return type** — `handle()` returns `ToolResult | ToolError`. Orchestrator operates on `ToolOutcome` internally; `serialize_tool_outcome()` at the registry boundary is unchanged.
-- **`is_mutating()` is already on all tools** — `ShellTool` returns `True`, `ReadFileTool` returns `False`. New tools just set the right value; no protocol changes needed.
-- **Agent loop is unchanged** — orchestrator is injected at the `ToolRouter`/`ToolRegistry` layer. `core/agent.py` does not change.
-- **`ask_user_fn` injected from `__main__.py`** — The non-interactive implementation uses `asyncio.to_thread(input, prompt)` (never blocking `input()`) to keep the event loop healthy.
-- **Approval cache key = `json.dumps(key, sort_keys=True)`** — Codex serializes approval keys to JSON strings. For shell/write_file, the key is the full args dict; for `write_file` specifically, the key is the **absolute resolved file path** (matching Codex's `apply_patch` per-file caching pattern). This lets the user approve editing one file without approving edits to another.
-- **`ApprovalStore.prompt_lock`** — asyncio lock serializes concurrent `ask_user_fn` calls so two simultaneous mutating tool calls don't interleave prompts in the terminal.
-- **`DENIED` vs `ABORT`** — `DENIED` returns a `ToolError(code="denied")` to the model; the agent continues the turn normally (model can try something else). `ABORT` raises `ToolAborted`, caught by the agent loop, which emits a `TurnCompleted` with an abort message and stops.
-- **`ApprovalPolicy.ON_FAILURE`** — auto-approve the first attempt; only prompt if execution fails (e.g. sandbox denial). This is Codex's retry-with-escalation pattern. For M2 (no sandbox yet) this behaves identically to `NEVER`; the escalation path is wired up properly in M5.
-- **`write_file` → atomic write** — write to a `.tmp` sibling then `os.replace()`. Matches Codex's `std::fs::write` semantics; parent dirs created with `parents=True` if needed. Workspace-containment path check same as `read_file.py`.
-- **`list_dir` → paginated, depth-limited tree** — Codex uses `offset`/`limit`/`depth` args (defaults: offset=1, limit=25, depth=2). Output is sorted by name; dirs get `/` suffix, symlinks get `@` suffix. Matches Codex's `list_dir.rs` exactly.
-- **`grep_files` → `rg` first, `grep -rn` fallback** — Codex uses `rg --files-with-matches --sortr=modified --regexp <pattern> --glob <include>` with a 30s timeout. Returns file paths sorted by modification time (most recent first). Result limit: default 100, max 2000. Exit code 1 = no matches (not an error).
+**Status**: **Complete (implementation + tests)**. Milestone tracker and report archived at `archive/todo-m2.md`.
 
 ---
 
-#### Files to create / update
+#### What shipped
 
-1. **`approval/policy.py`** — Approval types and caching
-   ```python
-   class ApprovalPolicy(str, Enum):
-       NEVER          = "never"           # Auto-approve everything; errors returned to model
-       ON_FAILURE     = "on-failure"      # Auto-approve; prompt only if execution fails
-       ON_REQUEST     = "on-request"      # Prompt for all mutating ops (default interactive)
-       UNLESS_TRUSTED = "unless-trusted"  # Prompt unless command is known-safe read-only
+1. **Approval store + policy (`approval/policy.py`)**
+   - `ApprovalPolicy` + `ReviewDecision` enums implemented.
+   - Deterministic key normalization via JSON serialization.
+   - Pending-prompt coordination (`_pending_prompts` + `prompt_lock`) prevents duplicate concurrent prompts for the same approval key.
+   - `APPROVED_FOR_SESSION` is cached; non-session decisions do not evict existing session approvals.
 
-   class ReviewDecision(str, Enum):
-       APPROVED             = "approved"              # One-time approval
-       APPROVED_FOR_SESSION = "approved_for_session"  # Cache for rest of session
-       DENIED               = "denied"                # Reject; model can retry differently
-       ABORT                = "abort"                 # Stop the turn immediately
+2. **Approval orchestrator (`tools/orchestrator.py`)**
+   - Read-only bypass via `tool.is_mutating(args)`.
+   - Policy behavior implemented for `never`, `on-failure`, `on-request`, `unless-trusted` (with M2 caveat below).
+   - `DENIED` returns `ToolError(code="denied")`.
+   - `ABORT` raises `ToolAborted` (terminal turn control flow).
+   - Per-key prompt ownership/waiting behavior supports concurrent calls safely.
 
-   class ApprovalStore:
-       _cache: dict[str, ReviewDecision]
-       prompt_lock: asyncio.Lock   # Serialize concurrent approval prompts
+3. **Tooling surface**
+   - New tools implemented and registered: `write_file`, `list_dir`, `grep_files`.
+   - `write_file`: workspace containment + atomic write.
+   - `list_dir`: sorted, depth-limited, paginated tree output.
+   - `grep_files`: `rg` first, `grep` fallback, limit/truncation controls.
 
-       def get(self, key: object) -> ReviewDecision | None:
-           return self._cache.get(json.dumps(key, sort_keys=True))
+4. **Registry + agent integration**
+   - `ToolRegistry` routes through orchestrator when configured.
+   - `ToolAborted` intentionally propagates from registry to agent.
+   - `core/agent.py` handles abort by emitting `TurnCompleted` and terminating the active turn immediately.
 
-       def put(self, key: object, decision: ReviewDecision) -> None:
-           self._cache[json.dumps(key, sort_keys=True)] = decision
-   ```
-   - For `write_file`: cache key = resolved absolute path (not full args dict), so per-file approval decisions are independent
-   - For `shell`: cache key = full args dict (tool_name + command string)
-   - Reference: `codex-rs/protocol/src/approvals.rs`, `codex-rs/core/src/tools/sandboxing.rs`
+5. **CLI wiring (`__main__.py`)**
+   - `--approval {never,on-failure,on-request,unless-trusted}` added.
+   - `ask_user_fn` injected and implemented with `asyncio.to_thread(input, ...)`.
+   - Default router includes `shell`, `read_file`, `write_file`, `list_dir`, `grep_files`.
 
-2. **`tools/orchestrator.py`** — Approval → execute flow
-   ```python
-   AskUserFn = Callable[[ToolHandler, dict[str, Any]], Awaitable[ReviewDecision]]
-
-   class ToolAborted(Exception):
-       def __init__(self, tool_name: str) -> None: ...
-
-   async def execute_with_approval(
-       tool: ToolHandler,
-       args: dict[str, Any],
-       cwd: Path,
-       policy: ApprovalPolicy,
-       store: ApprovalStore,
-       ask_user_fn: AskUserFn,
-   ) -> ToolOutcome:
-       if not await tool.is_mutating(args):
-           return await tool.handle(args, cwd)           # Read-only — skip approval
-
-       key = _approval_key(tool, args)                   # Tool-specific key construction
-       cached = store.get(key)
-       if cached == ReviewDecision.APPROVED_FOR_SESSION:
-           return await tool.handle(args, cwd)           # Previously approved for session
-
-       if policy in (ApprovalPolicy.NEVER, ApprovalPolicy.ON_FAILURE):
-           return await tool.handle(args, cwd)           # Auto-approve modes
-
-       async with store.prompt_lock:                     # Serialize concurrent prompts
-           decision = await ask_user_fn(tool, args)      # Non-blocking via asyncio.to_thread
-
-       store.put(key, decision)
-
-       if decision == ReviewDecision.ABORT:
-           raise ToolAborted(tool.name)                  # Agent loop catches → stops turn
-       if decision == ReviewDecision.DENIED:
-           return ToolError(message="Operation denied by user.", code="denied")
-       return await tool.handle(args, cwd)               # APPROVED or APPROVED_FOR_SESSION
-   ```
-   - Slotted inside `ToolRegistry.dispatch()` via an optional `OrchestratorConfig` dataclass — agent loop unchanged
-   - Reference: `codex-rs/core/src/tools/orchestrator.rs`
-
-3. **`tools/write_file.py`** — File writing
-   - Args: `file_path: str`, `content: str`
-   - Workspace-containment check (same pattern as `read_file.py`)
-   - Atomic write: `path.with_suffix('.tmp')` → write → `os.replace(tmp, path)`
-   - Creates parent directories if needed (`path.parent.mkdir(parents=True, exist_ok=True)`)
-   - Returns `ToolResult(body={"path": str, "bytes_written": int})`
-   - `is_mutating() = True`; approval key = resolved absolute path (not full args)
-   - Later milestone: evolve to unified-diff patch via `apply_patch`
-   - Reference: `codex-rs/core/src/tools/handlers/apply_patch.rs` + `codex-rs/apply-patch/src/lib.rs`
-
-4. **`tools/list_dir.py`** — Directory listing
-   - Args: `dir_path: str`, `offset: int = 1` (1-indexed), `limit: int = 25`, `depth: int = 2`
-   - Sorted by name; directories suffixed `/`, symlinks suffixed `@`
-   - Tree-indented output (2 spaces per depth level)
-   - Pagination: include "… N more entries" message when truncated
-   - Entry display truncated at 500 chars
-   - Returns `ToolResult(body=str)` — plain text listing
-   - `is_mutating() = False`
-   - Reference: `codex-rs/core/src/tools/handlers/list_dir.rs`
-
-5. **`tools/grep_files.py`** — Content search
-   - Args: `pattern: str`, `path: str | None`, `include: str | None` (glob), `limit: int = 100`
-   - Max limit: 2000; results sorted by modification time (most recent first)
-   - Command: `rg --files-with-matches --sortr=modified --regexp <pattern> [--glob <include>] -- <path>`
-   - Timeout: 30s; exit code 1 = no matches (return empty list, not error)
-   - Falls back to `grep -rl <pattern> <path>` if `rg` not found
-   - Returns `ToolResult(body={"matches": [str], "truncated": bool})`
-   - `is_mutating() = False`
-   - Reference: `codex-rs/core/src/tools/handlers/grep_files.rs`
-
-6. **`__main__.py`** — Add `--approval` flag
-   - `--approval {never,on-failure,on-request,unless-trusted}` (default: `never`)
-   - Build `ApprovalStore`, wire non-interactive `ask_user_fn` using `asyncio.to_thread(input, prompt)`
-   - Pass `OrchestratorConfig(policy, store, ask_user_fn)` into `ToolRegistry` before constructing the agent
+6. **Approval-key contracts (post-hardening)**
+   - `write_file`: approval key is resolved absolute target path.
+   - `shell`: conservative canonicalization for wrapper-equivalent forms (`/bin/bash -lc` vs `bash -lc`), with semantically sensitive inline shell forms preserved as distinct keys.
 
 ---
 
-#### What does NOT change
+#### Milestone 2 contract decisions to preserve
 
-- `core/agent.py` — untouched; `ToolAborted` is caught at the `ToolRegistry.dispatch()` level and converted to a `ToolError` before reaching the agent, or propagated up if ABORT
-- `core/model_client.py`, `core/session.py`, `core/config.py` — no changes
-- `tools/base.py`, `tools/shell.py`, `tools/read_file.py` — no changes; orchestrator wraps transparently
-
----
-
-#### Risk areas
-
-| Risk | Mitigation |
-|---|---|
-| Blocking `input()` stalls event loop | Use `asyncio.to_thread(input, prompt)` |
-| Concurrent mutating calls interleave prompts | `ApprovalStore.prompt_lock` serializes `ask_user_fn` calls |
-| Cache key collisions on dict arg order | `json.dumps(key, sort_keys=True)` — order-independent |
-| `ABORT` silently drops the turn | Raise `ToolAborted`; agent loop catches and emits abort message |
-| `write_file` escapes workspace | Same `cwd`-containment check as `read_file.py` |
-| `grep_files` `rg` not installed | Detect via `shutil.which("rg")`; fall back to `grep -rl` |
-| `ON_FAILURE` escalation not wired yet | Correct in M2 (behaves as `NEVER`); sandbox retry added in M5 |
+- `ABORT` is terminal control flow for the active turn; never downgrade it to a normal tool error continuation path.
+- `DENIED` is non-terminal and returned to the model as structured tool error.
+- Approval behavior is stateful only through `ApprovalStore`.
+- `ON_FAILURE` escalation retry is deferred to Milestone 5 sandbox work; in M2 it behaves like auto-approve first attempt.
 
 ---
 
-#### Done criteria
+#### Verification snapshot (latest local run)
 
-- `python -m pycodex --approval on-request "create a hello.py file that prints hello world"` prompts before writing
-- `python -m pycodex --approval never "create a hello.py file"` writes without prompting
-- `APPROVED_FOR_SESSION` skips prompt on second identical call within same session
-- `DENIED` returns a clean error to the model; turn continues
-- `ABORT` stops the turn with a clear message
-- `list_dir` and `grep_files` never prompt (read-only)
-- All quality gates pass (`ruff`, `mypy --strict`, `pytest`)
+- `ruff check . --fix` — pass
+- `ruff format .` — pass
+- `mypy --strict pycodex/` — pass
+- `pytest tests/ -v` — pass (`141 passed`, `1 skipped` live OpenAI e2e)
 
-**Test it**: `python -m pycodex --approval on-request "create a hello.py file that prints hello world"`
+**Manual milestone verification caveat**:
+- `python -m pycodex --approval on-request "create a file called test.txt with 'hello'"` requires local runtime setup (`openai` package + reachable endpoint) and may be blocked by environment.
 
-**Key learning**: Approval flow, per-resource session caching, mutating vs read-only distinction, async-safe user prompting, `rg`/`grep` subprocess pattern.
+**Key learning**: approval flow design, concurrent prompt dedupe, per-resource vs per-command key strategies, and clear terminal/non-terminal review decisions.
 
 ---
 
@@ -310,95 +213,59 @@ All 8 planned files were created with the following implementations and notable 
 
 **Goal**: Structured event protocol for programmatic use (like `codex exec --json`).
 
-**Files to create**:
+**Status**: **Planned (next milestone)**.
 
-1. **`protocol/events.py`** — All event types as Pydantic models
-   ```python
-   class ThreadEvent(BaseModel):
-       type: str
+Current baseline before M3:
+- `core/agent.py` already emits internal dataclass lifecycle callbacks (`turn_started`, `tool_call_dispatched`, `tool_result_received`, `turn_completed`).
+- `core/model_client.py` already emits typed stream events used by the agent (`OutputTextDelta`, `OutputItemDone`, `Completed`).
+- There is no canonical protocol module yet (`pycodex/protocol/events.py` missing).
+- There is no `--json` CLI mode yet; current entrypoint is `pycodex/__main__.py` (not `cli/app.py`).
 
-   class ThreadStartedEvent(ThreadEvent):
-       type: Literal["thread.started"] = "thread.started"
-       thread_id: str
+#### Milestone 3 execution plan (updated for current repo structure)
 
-   class ItemStartedEvent(ThreadEvent):
-       type: Literal["item.started"] = "item.started"
-       item: ThreadItem
+1. **Create canonical protocol models in `protocol/events.py`**
+   - Define Pydantic models for thread/turn/item lifecycle events:
+     - `thread.started`
+     - `turn.started`, `turn.completed`
+     - `item.started`, `item.updated`, `item.completed`
+   - Define discriminated `ThreadItem` details for:
+     - assistant message lifecycle
+     - tool-call lifecycle
+     - tool-result lifecycle
+   - Include stable IDs (`thread_id`, `turn_id`, `item_id`, `tool_call_id` where applicable).
 
-   class ThreadItem(BaseModel):
-       id: str
-       details: ThreadItemDetails  # discriminated union
+2. **Adapt `core/agent.py` to emit protocol events**
+   - Keep current behavioral ordering, but emit protocol events instead of ad-hoc internal-only dataclasses (or provide a compatibility adapter during migration).
+   - Preserve existing ABORT semantics (`ToolAborted` => terminal `turn.completed`).
+   - Ensure tool calls continue to execute only from completed tool-call output items.
 
-   class AgentMessageItem(BaseModel):
-       type: Literal["agent_message"] = "agent_message"
-       content: str
-       status: str  # "in_progress" | "completed"
+3. **Add JSONL mode in current entrypoint (`pycodex/__main__.py`)**
+   - Add `--json` flag.
+   - In JSON mode, stream one serialized protocol event per line to stdout.
+   - Preserve existing text mode behavior and error handling.
 
-   class CommandExecutionItem(BaseModel):
-       type: Literal["command_execution"] = "command_execution"
-       command: str
-       output: str | None
-       exit_code: int | None
-       status: str
-   ```
-   - Reference: `codex-rs/exec/src/exec_events.rs` — `ThreadEvent`, `ThreadItem`, `ThreadItemDetails` enums
+4. **Expand model-client stream typing only as needed**
+   - Add `OutputItemAdded` only if required to support item-start semantics cleanly.
+   - Keep raw SDK dicts encapsulated inside `model_client.py`.
 
-2. **Update `core/agent.py`** — Emit events at each lifecycle point
-   - `thread.started` at session init
-   - `turn.started` before model call
-   - `item.started/updated/completed` for tool calls and agent messages
-   - `turn.completed` with usage stats
+5. **Add deterministic tests (contract-first)**
+   - Unit tests for protocol model validation/serialization.
+   - Agent integration tests for ordered lifecycle events:
+     - no-tool turn
+     - tool-call turn with follow-up iteration
+     - abort turn path (terminal completion)
+   - CLI tests for `--json` output shape and line-delimited validity.
 
-3. **`cli/app.py`** — Add `--json` flag
-   - JSON mode: emit JSONL to stdout (one event per line)
-   - Text mode: print human-readable output (default)
+#### Milestone 3 done criteria
 
-#### Milestone 3 Implementation Checklist (Richer Item Event Handling)
+- `--json` emits valid JSONL protocol events for both text-only and tool-call flows.
+- Event stream has stable IDs and deterministic ordering in tests.
+- ABORT semantics remain unchanged under protocol/JSON mode.
+- Quality gates pass for touched scope (`ruff`, targeted `pytest`, `mypy --strict` on touched packages).
 
-Use this checklist when implementing M3 so event handling scope is explicit:
+**Test it**: `python -m pycodex --json "what is 2+2" | python -c "import sys,json; [print(json.loads(l)['type']) for l in sys.stdin]"`
 
-1. **Expand model stream event surface in `core/model_client.py`**
-   - Add typed events for item lifecycle and richer stream payloads:
-     - `OutputItemAdded`
-     - `OutputItemDone` (already present; keep as the completion trigger for tool-call execution)
-     - `OutputTextDelta` (already present)
-     - `Completed` (already present)
-   - Keep dataclass-only event outputs (no raw dict events crossing module boundaries).
-
-2. **Define canonical thread/item event schemas in `protocol/events.py`**
-   - Add `ThreadEvent` + `ThreadItem` discriminated unions for:
-     - agent message items (started/updated/completed)
-     - tool call items (started/completed)
-   - Include stable ids (`thread_id`, `turn_id`, `item_id`, `tool_call_id` where relevant).
-
-3. **Map model events to lifecycle events in `core/agent.py`**
-   - Emit `item.started` when an output item is added.
-   - Emit `item.updated` on text deltas for active assistant items.
-   - Emit `item.completed` when an output item is done.
-   - Execute tool calls only from completed tool-call items, then emit tool result completion events.
-   - Emit `turn.started`/`turn.completed` around each sampling request loop.
-
-4. **Wire JSONL emission in `cli/app.py`**
-   - `--json` mode prints serialized `ThreadEvent` records, one line per event.
-   - Preserve current human-readable mode behavior when `--json` is not set.
-
-5. **Add deterministic verification tests**
-   - Unit tests for event mapping and schema validation.
-   - Agent integration test asserting ordered lifecycle sequence for:
-     - a no-tool turn
-     - a tool-call turn with follow-up model iteration
-   - Assert contract fields and ids, not prose text content.
-
-#### Milestone 3 Done Criteria
-
-- `--json` emits valid JSONL lifecycle events for text + tool-call flows.
-- Tool calls are sourced from completed output items and represented as explicit item lifecycle events.
-- Event stream is reproducible/deterministic in tests (no live network dependency).
-- Quality gates pass for touched modules (`ruff`, targeted `pytest`, `mypy --strict` on touched packages).
-
-**Test it**: `python -m pycodex --json "what OS am I running?" | python -c "import sys,json; [print(json.loads(l)['type']) for l in sys.stdin]"`
-
-**Key learning**: Event-driven architecture, separation of core engine from presentation.
+**Key learning target**: standardized event contracts and clean separation between core lifecycle events and presentation/output mode.
 
 ---
 
@@ -525,7 +392,7 @@ Use this checklist when implementing M3 so event handling scope is explicit:
 | Language | Rust + TypeScript | Python only |
 | Model API | Custom client, WebSocket + SSE | OpenAI Python SDK |
 | Sandboxing | Seatbelt, seccomp+bubblewrap, restricted tokens | Path validation + optional sandbox-exec/firejail |
-| Tool parallelism | `FuturesOrdered` with read/write locking | `asyncio.gather()` with sequential fallback for mutating |
+| Tool parallelism | `FuturesOrdered` with read/write locking | Sequential dispatch in agent loop (no parallel tool execution yet) |
 | MCP support | Full MCP client + OAuth | Skipped (add later if desired) |
 | Network proxy | Full MITM proxy | Skipped |
 | Multi-agent | Agent spawn/wait/close | Skipped |
