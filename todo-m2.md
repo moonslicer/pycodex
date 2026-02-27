@@ -104,7 +104,7 @@ Extend `python -m pycodex "<prompt>"` with:
   - Returns `ToolResult(body={"matches":[…],"truncated":bool})`.
   - Verify: `python3 -c "import asyncio; from pathlib import Path; from pycodex.tools.grep_files import GrepFilesTool; print(asyncio.run(GrepFilesTool().handle({'pattern':'def ','path':'.'}, Path('.'))))"`
 
-- [ ] T6: `tools/base.py` (modify)
+- [x] T6: `tools/base.py` (modify)
   - Add optional `orchestrator: OrchestratorConfig | None = None` to `ToolRegistry.__init__()`.
   - In `ToolRegistry.dispatch()`: if orchestrator config present, route mutating calls through `execute_with_approval()`; catch `ToolAborted` and return `ToolError(message="Aborted by user.", code="aborted")`.
   - Depends on: T2

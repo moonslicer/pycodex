@@ -5,12 +5,15 @@ from __future__ import annotations
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, cast
+from typing import TYPE_CHECKING, Any, cast
 
 from pycodex.approval.policy import ApprovalPolicy, ApprovalStore, ReviewDecision
-from pycodex.tools.base import ToolError, ToolHandler, ToolOutcome
+from pycodex.tools.outcome import ToolError, ToolOutcome
 
-AskUserFn = Callable[[ToolHandler, dict[str, Any]], Awaitable[ReviewDecision]]
+if TYPE_CHECKING:
+    from pycodex.tools.base import ToolHandler
+
+AskUserFn = Callable[["ToolHandler", dict[str, Any]], Awaitable[ReviewDecision]]
 
 
 @dataclass(slots=True, frozen=True)

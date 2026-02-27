@@ -11,6 +11,7 @@ from typing import Any, Literal, Protocol
 
 from pycodex.core.model_client import OutputItemDone, OutputTextDelta
 from pycodex.core.session import PromptItem, Session
+from pycodex.tools.orchestrator import ToolAborted
 
 _log = logging.getLogger(__name__)
 
@@ -136,11 +137,17 @@ class Agent:
                         arguments=tool_call.arguments,
                     )
                 )
-                result = await self.tool_router.dispatch(
-                    name=tool_call.name,
-                    arguments=tool_call.arguments,
-                    cwd=self.cwd,
-                )
+                try:
+                    result = await self.tool_router.dispatch(
+                        name=tool_call.name,
+                        arguments=tool_call.arguments,
+                        cwd=self.cwd,
+                    )
+                except ToolAborted:
+                    abort_text = "Aborted by user."
+                    _log.info("turn aborted by user during tool %r", tool_call.name)
+                    await self._emit(TurnCompleted(final_text=abort_text))
+                    return abort_text
                 _log.debug("tool %r result: %d chars", tool_call.name, len(result))
                 self.session.append_tool_result(tool_call.call_id, result)
                 await self._emit(

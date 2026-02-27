@@ -15,6 +15,7 @@ from pycodex.core.agent import (
 )
 from pycodex.core.model_client import Completed, OutputItemDone, OutputTextDelta, ResponseEvent
 from pycodex.core.session import Session
+from pycodex.tools.orchestrator import ToolAborted
 
 
 class _FakeModelClient:
@@ -58,6 +59,19 @@ class _FakeToolRouter:
         result = self.results[self._result_idx]
         self._result_idx += 1
         return result
+
+
+@dataclass(slots=True)
+class _AbortingToolRouter:
+    specs: list[dict[str, Any]]
+    dispatch_calls: list[dict[str, Any]] = field(default_factory=list, init=False)
+
+    def tool_specs(self) -> list[dict[str, Any]]:
+        return [dict(spec) for spec in self.specs]
+
+    async def dispatch(self, *, name: str, arguments: str | dict[str, Any], cwd: Path) -> str:
+        self.dispatch_calls.append({"name": name, "arguments": arguments, "cwd": cwd})
+        raise ToolAborted(name)
 
 
 def test_run_turn_returns_text_when_no_tool_calls(tmp_path: Path) -> None:
@@ -271,6 +285,62 @@ def test_run_turn_keeps_error_tool_output_in_session(tmp_path: Path) -> None:
         "tool_call_id": "call_1",
         "content": "[ERROR] Command failed",
     }
+
+
+def test_run_turn_aborts_immediately_when_tool_aborted(tmp_path: Path) -> None:
+    session = Session()
+    model_client = _FakeModelClient(
+        turns=[
+            [
+                OutputItemDone(
+                    item={
+                        "type": "function_call",
+                        "name": "write_file",
+                        "arguments": '{"file_path":"x.txt","content":"hi"}',
+                        "call_id": "call_abort",
+                    }
+                ),
+                Completed(response_id="resp_tools"),
+            ]
+        ]
+    )
+    router = _AbortingToolRouter(
+        specs=[{"type": "function", "function": {"name": "write_file"}}]
+    )
+    emitted: list[AgentEvent] = []
+
+    async def on_event(event: AgentEvent) -> None:
+        emitted.append(event)
+
+    result = asyncio.run(
+        run_turn(
+            session=session,
+            model_client=model_client,
+            tool_router=router,
+            cwd=tmp_path,
+            user_input="write file",
+            on_event=on_event,
+        )
+    )
+
+    assert result == "Aborted by user."
+    assert [event.type for event in emitted] == [
+        "turn_started",
+        "tool_call_dispatched",
+        "turn_completed",
+    ]
+    assert isinstance(emitted[2], TurnCompleted)
+    assert emitted[2].final_text == "Aborted by user."
+    assert len(model_client.calls) == 1
+    assert session.to_prompt() == [
+        {"role": "user", "content": "write file"},
+        {
+            "type": "function_call",
+            "call_id": "call_abort",
+            "name": "write_file",
+            "arguments": '{"file_path":"x.txt","content":"hi"}',
+        },
+    ]
 
 
 def test_run_turn_uses_done_item_text_when_no_text_deltas(tmp_path: Path) -> None:

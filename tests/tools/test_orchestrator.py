@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 from pathlib import Path
 from typing import Any
 
@@ -282,3 +283,49 @@ async def test_execute_with_approval_uses_tool_specific_approval_key(tmp_path: P
     assert isinstance(outcome, ToolResult)
     assert ask_count == 0
     assert tool.calls == 1
+
+
+async def test_execute_with_approval_concurrent_shared_key_prompts_once(tmp_path: Path) -> None:
+    tool = _MutatingTool()
+    store = ApprovalStore()
+    ask_count = 0
+    first_prompt_entered = asyncio.Event()
+    release_first_prompt = asyncio.Event()
+
+    async def ask_user_fn(_tool: Any, _args: dict[str, Any]) -> ReviewDecision:
+        nonlocal ask_count
+        ask_count += 1
+        if ask_count == 1:
+            first_prompt_entered.set()
+            await release_first_prompt.wait()
+        return ReviewDecision.APPROVED_FOR_SESSION
+
+    task_one = asyncio.create_task(
+        execute_with_approval(
+            tool=tool,
+            args={"x": 1},
+            cwd=tmp_path,
+            policy=ApprovalPolicy.ON_REQUEST,
+            store=store,
+            ask_user_fn=ask_user_fn,
+        )
+    )
+    await first_prompt_entered.wait()
+    task_two = asyncio.create_task(
+        execute_with_approval(
+            tool=tool,
+            args={"x": 1},
+            cwd=tmp_path,
+            policy=ApprovalPolicy.ON_REQUEST,
+            store=store,
+            ask_user_fn=ask_user_fn,
+        )
+    )
+    release_first_prompt.set()
+
+    first, second = await asyncio.gather(task_one, task_two)
+
+    assert isinstance(first, ToolResult)
+    assert isinstance(second, ToolResult)
+    assert ask_count == 1
+    assert tool.calls == 2

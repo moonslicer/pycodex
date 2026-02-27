@@ -6,9 +6,23 @@ import json
 import logging
 from dataclasses import dataclass
 from pathlib import Path
-from typing import Any, Protocol, TypeAlias
+from typing import Any, Protocol
+
+from pycodex.tools.orchestrator import OrchestratorConfig, ToolAborted, execute_with_approval
+from pycodex.tools.outcome import ToolError, ToolOutcome, ToolResult
 
 _log = logging.getLogger(__name__)
+
+__all__ = [
+    "RoutedToolCall",
+    "ToolError",
+    "ToolHandler",
+    "ToolOutcome",
+    "ToolRegistry",
+    "ToolResult",
+    "ToolRouter",
+    "serialize_tool_outcome",
+]
 
 
 class ToolHandler(Protocol):
@@ -26,29 +40,12 @@ class ToolHandler(Protocol):
         """Execute tool logic and return a typed outcome."""
 
 
-@dataclass(slots=True, frozen=True)
-class ToolResult:
-    """Structured successful tool output."""
-
-    body: Any
-
-
-@dataclass(slots=True, frozen=True)
-class ToolError:
-    """Structured tool failure payload."""
-
-    message: str
-    code: str | None = None
-
-
-ToolOutcome: TypeAlias = ToolResult | ToolError
-
-
 class ToolRegistry:
     """In-memory registry for tool handlers."""
 
-    def __init__(self) -> None:
+    def __init__(self, orchestrator: OrchestratorConfig | None = None) -> None:
         self._tools: dict[str, ToolHandler] = {}
+        self._orchestrator = orchestrator
 
     def register(self, handler: ToolHandler) -> None:
         """Register or replace a tool handler by name."""
@@ -71,7 +68,19 @@ class ToolRegistry:
             )
 
         try:
-            outcome = await handler.handle(args, cwd)
+            if self._orchestrator is None:
+                outcome = await handler.handle(args, cwd)
+            else:
+                outcome = await execute_with_approval(
+                    tool=handler,
+                    args=args,
+                    cwd=cwd,
+                    policy=self._orchestrator.policy,
+                    store=self._orchestrator.store,
+                    ask_user_fn=self._orchestrator.ask_user_fn,
+                )
+        except ToolAborted:
+            raise
         except Exception as exc:  # pragma: no cover - defensive boundary
             return serialize_tool_outcome(
                 ToolError(
