@@ -125,7 +125,7 @@ def test_model_client_maps_events_to_typed_dataclasses() -> None:
     assert responses.calls[0]["model"] == "gpt-test"
     assert responses.calls[0]["stream"] is True
     assert isinstance(responses.calls[0]["input"], list)
-    assert isinstance(responses.calls[0]["tools"], list)
+    assert responses.calls[0]["tools"] == [{"type": "function", "name": "shell"}]
 
 
 def test_model_client_converts_function_call_and_tool_messages() -> None:

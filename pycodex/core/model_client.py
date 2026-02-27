@@ -117,10 +117,11 @@ class ModelClient:
             raise ModelClientSetupError("OpenAI client is missing responses.create")
 
         input_items = _convert_prompt_to_responses_input(messages)
+        normalized_tools = _normalize_tools_for_responses(tools)
         stream = await responses.create(
             model=self._config.model,
             input=input_items,
-            tools=tools,
+            tools=normalized_tools,
             stream=True,
         )
         if not hasattr(stream, "__aiter__"):
@@ -249,6 +250,28 @@ def _convert_prompt_to_responses_input(messages: list[PromptItem]) -> list[dict[
             )
 
     return input_items
+
+
+def _normalize_tools_for_responses(tools: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    normalized: list[dict[str, Any]] = []
+
+    for tool in tools:
+        payload = dict(tool)
+        if payload.get("type") != "function":
+            normalized.append(payload)
+            continue
+
+        function_payload = payload.get("function")
+        if isinstance(function_payload, dict):
+            merged = dict(payload)
+            merged.pop("function", None)
+            merged.update(function_payload)
+            normalized.append(merged)
+            continue
+
+        normalized.append(payload)
+
+    return normalized
 
 
 def _event_get(container: Any, key: str) -> Any:

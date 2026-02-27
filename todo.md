@@ -98,10 +98,16 @@ Build a runnable `python -m pycodex "<prompt>"` flow that:
   - Depends on: T2, T3, T4, T5, T6
   - Verify: coroutine function + local fake-client loop test.
 
-- [ ] T8: `__main__.py`
+- [x] T8: `__main__.py`
   - Parse CLI prompt and run `run_turn`.
   - Depends on: T7
   - Verify: `python3 -m pycodex --help`
+
+- [ ] T8.5: CLI integration + opt-in live-network E2E
+  - Add deterministic integration tests for `python -m pycodex` wiring (arg parsing, dependency setup, and final output rendering) using fakes/mocks.
+  - Add an opt-in `@pytest.mark.e2e` live-network smoke test gated by `OPENAI_API_KEY` to validate real OpenAI Responses API flow.
+  - Depends on: T8
+  - Verify: `pytest tests/ -m "not e2e and not agent_harness" -q` and `pytest tests/ -m e2e -v`
 
 - [ ] T9: Structured tool result/error protocol
   - Replace string-only `[ERROR] ...` tool failures with structured `ToolResult`/`ToolError` in `tools/base.py`.
@@ -111,7 +117,7 @@ Build a runnable `python -m pycodex "<prompt>"` flow that:
   - Verify: `pytest tests/tools/ -v`
 
 ## Completion Checklist
-- [ ] All T1-T8 done
+- [ ] All T1-T8 and T8.5 done
 - [ ] Quality gates all pass
 - [ ] Milestone verification command passes
 - [ ] Milestone report includes risks, assumptions, and next milestone recommendation

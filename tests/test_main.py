@@ -1,0 +1,69 @@
+from __future__ import annotations
+
+from pathlib import Path
+from typing import Any
+
+import pycodex.__main__ as main_module
+import pytest
+from pycodex.core.config import Config
+from pycodex.core.session import Session
+
+
+class _FakeModelClient:
+    def __init__(self, config: Config) -> None:
+        self.config = config
+
+
+def test_main_help_exits_with_usage(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main_module.main(["--help"])
+
+    assert exc_info.value.code == 0
+    captured = capsys.readouterr()
+    assert "usage:" in captured.out
+    assert "prompt" in captured.out
+
+
+def test_main_runs_turn_and_prints_output(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = Config(
+        model="test-model",
+        api_key="test-key",
+        cwd=tmp_path,
+    )
+
+    async def fake_run_turn(
+        *,
+        session: Session,
+        model_client: _FakeModelClient,
+        tool_router: Any,
+        cwd: Path,
+        user_input: str,
+    ) -> str:
+        assert isinstance(session, Session)
+        assert session.config == config
+        assert isinstance(model_client, _FakeModelClient)
+        assert cwd == tmp_path
+        assert user_input == "hello from cli"
+
+        tool_names = {
+            spec["function"]["name"]
+            for spec in tool_router.tool_specs()
+            if spec.get("type") == "function" and isinstance(spec.get("function"), dict)
+        }
+        assert tool_names == {"shell", "read_file"}
+
+        return "final-answer"
+
+    monkeypatch.setattr(main_module, "load_config", lambda: config)
+    monkeypatch.setattr(main_module, "ModelClient", _FakeModelClient)
+    monkeypatch.setattr(main_module, "run_turn", fake_run_turn)
+
+    exit_code = main_module.main(["hello from cli"])
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "final-answer"
