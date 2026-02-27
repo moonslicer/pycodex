@@ -39,13 +39,16 @@ class ApprovalStore:
         return self._cache.get(_normalize_key(key))
 
     def put(self, key: object, decision: ReviewDecision) -> None:
-        """Cache only APPROVED_FOR_SESSION decisions."""
-        normalized_key = _normalize_key(key)
-        if decision == ReviewDecision.APPROVED_FOR_SESSION:
-            self._cache[normalized_key] = decision
-            return
+        """Cache only APPROVED_FOR_SESSION decisions; all other decisions are no-ops.
 
-        self._cache.pop(normalized_key, None)
+        Non-session decisions must never evict a cached APPROVED_FOR_SESSION entry:
+        once a user grants session-wide approval the orchestrator honours it for the
+        lifetime of the store, even if a concurrent path writes a different decision
+        for the same key.
+        """
+        if decision != ReviewDecision.APPROVED_FOR_SESSION:
+            return
+        self._cache[_normalize_key(key)] = decision
 
     def get_pending_prompt(self, key: object) -> asyncio.Event | None:
         """Return the in-flight prompt event for a key, if any.

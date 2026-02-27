@@ -39,17 +39,21 @@ def test_approval_store_does_not_cache_approved() -> None:
     assert store.get(key) is None
 
 
-def test_approval_store_non_session_decisions_clear_existing_cache() -> None:
+def test_approval_store_non_session_decisions_do_not_evict_session_cache() -> None:
     store = ApprovalStore()
     key = {"tool": "shell", "cmd": "ls"}
     store.put(key, ReviewDecision.APPROVED_FOR_SESSION)
 
+    # DENIED and ABORT must not evict an existing APPROVED_FOR_SESSION entry.
     store.put(key, ReviewDecision.DENIED)
-    assert store.get(key) is None
+    assert store.get(key) == ReviewDecision.APPROVED_FOR_SESSION
 
-    store.put(key, ReviewDecision.APPROVED_FOR_SESSION)
     store.put(key, ReviewDecision.ABORT)
-    assert store.get(key) is None
+    assert store.get(key) == ReviewDecision.APPROVED_FOR_SESSION
+
+    # APPROVED (one-time, non-session) must also leave the session entry intact.
+    store.put(key, ReviewDecision.APPROVED)
+    assert store.get(key) == ReviewDecision.APPROVED_FOR_SESSION
 
 
 def test_approval_store_exposes_prompt_lock() -> None:

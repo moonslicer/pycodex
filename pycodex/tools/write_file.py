@@ -88,11 +88,6 @@ class WriteFileTool:
         )
 
 
-def build_write_file_approval_key(args: dict[str, Any], cwd: Path) -> str | ToolError:
-    """Return the approval cache key for write-file calls (thin wrapper for backwards compat)."""
-    return WriteFileTool().approval_key(args, cwd)
-
-
 def _resolve_path(*, file_path: str, cwd: Path) -> Path | ToolError:
     path = Path(file_path)
     if not path.is_absolute():

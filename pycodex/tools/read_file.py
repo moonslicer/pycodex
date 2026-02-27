@@ -14,20 +14,22 @@ MAX_LINE_CHARS = 500
 MAX_OUTPUT_BYTES = 262_144
 MAX_PARALLEL_READS = 4
 
-_READ_SEMAPHORE: asyncio.Semaphore | None = None
-
-
-def _get_semaphore() -> asyncio.Semaphore:
-    global _READ_SEMAPHORE
-    if _READ_SEMAPHORE is None:
-        _READ_SEMAPHORE = asyncio.Semaphore(MAX_PARALLEL_READS)
-    return _READ_SEMAPHORE
-
 
 class ReadFileTool:
     """Read file content and render it with line numbers."""
 
     name = "read_file"
+
+    def __init__(self) -> None:
+        # Semaphore is created lazily so it is always bound to the running event loop.
+        # A module-level semaphore would be created at import time, potentially outside
+        # an event loop, and shared across test runs that create fresh loops.
+        self._semaphore: asyncio.Semaphore | None = None
+
+    def _get_semaphore(self) -> asyncio.Semaphore:
+        if self._semaphore is None:
+            self._semaphore = asyncio.Semaphore(MAX_PARALLEL_READS)
+        return self._semaphore
 
     def tool_spec(self) -> dict[str, Any]:
         return {
@@ -116,7 +118,7 @@ class ReadFileTool:
             return prepared
         path, file_size_bytes = prepared
 
-        async with _get_semaphore():
+        async with self._get_semaphore():
             try:
                 window, total_seen, has_more = await asyncio.to_thread(
                     _read_window,
