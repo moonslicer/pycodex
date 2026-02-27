@@ -103,7 +103,7 @@ Build a runnable `python -m pycodex "<prompt>"` flow that:
   - Depends on: T7
   - Verify: `python3 -m pycodex --help`
 
-- [ ] T8.5: CLI integration + opt-in live-network E2E
+- [x] T8.5: CLI integration + opt-in live-network E2E
   - Add deterministic integration tests for `python -m pycodex` wiring (arg parsing, dependency setup, and final output rendering) using fakes/mocks.
   - Add an opt-in `@pytest.mark.e2e` live-network smoke test gated by `OPENAI_API_KEY` to validate real OpenAI Responses API flow.
   - Depends on: T8

@@ -84,7 +84,7 @@ Each milestone produces a **runnable system**. You can stop at any milestone and
 
 **Goal**: A CLI that takes a prompt, calls a model, executes tool calls, loops until done, and prints the result.
 
-**Status**: **Complete** — all core tasks (T1–T8, T9) implemented and passing. One optional task (T8.5 opt-in E2E tests) remains open but is not a blocker.
+**Status**: **Complete** — all tasks (T1–T9, T8.5) implemented and passing. No open items.
 
 ---
 
@@ -131,12 +131,6 @@ All 8 planned files were created with the following implementations and notable 
 
 ---
 
-#### Remaining open item
-
-- **T8.5** (opt-in E2E, non-blocker): Integration tests using fakes for CLI wiring + `@pytest.mark.e2e` live-network smoke test gated by `OPENAI_API_KEY`. Can be added at any time; does not block M2.
-
----
-
 **Key learnings**: Async agent loop; typed streaming events; Protocol-based tool dispatch; structured outcome types isolating failure modes; session-as-sole-history-mutator invariant; copy-on-read prompt snapshots.
 
 **Test it**: `python -m pycodex "list the Python files in the current directory"`
@@ -147,52 +141,168 @@ All 8 planned files were created with the following implementations and notable 
 
 **Goal**: Add approval prompts before mutating operations. Add file write, list_dir, grep tools.
 
-**Files to create**:
+**Codex references**: `codex-rs/protocol/src/approvals.rs`, `codex-rs/core/src/tools/sandboxing.rs`, `codex-rs/core/src/tools/orchestrator.rs`, `codex-rs/core/src/tools/handlers/{list_dir,grep_files,apply_patch}.rs`
+
+---
+
+#### Design notes (informed by M1 + Codex source)
+
+- **`ToolOutcome` is already the return type** — `handle()` returns `ToolResult | ToolError`. Orchestrator operates on `ToolOutcome` internally; `serialize_tool_outcome()` at the registry boundary is unchanged.
+- **`is_mutating()` is already on all tools** — `ShellTool` returns `True`, `ReadFileTool` returns `False`. New tools just set the right value; no protocol changes needed.
+- **Agent loop is unchanged** — orchestrator is injected at the `ToolRouter`/`ToolRegistry` layer. `core/agent.py` does not change.
+- **`ask_user_fn` injected from `__main__.py`** — The non-interactive implementation uses `asyncio.to_thread(input, prompt)` (never blocking `input()`) to keep the event loop healthy.
+- **Approval cache key = `json.dumps(key, sort_keys=True)`** — Codex serializes approval keys to JSON strings. For shell/write_file, the key is the full args dict; for `write_file` specifically, the key is the **absolute resolved file path** (matching Codex's `apply_patch` per-file caching pattern). This lets the user approve editing one file without approving edits to another.
+- **`ApprovalStore.prompt_lock`** — asyncio lock serializes concurrent `ask_user_fn` calls so two simultaneous mutating tool calls don't interleave prompts in the terminal.
+- **`DENIED` vs `ABORT`** — `DENIED` returns a `ToolError(code="denied")` to the model; the agent continues the turn normally (model can try something else). `ABORT` raises `ToolAborted`, caught by the agent loop, which emits a `TurnCompleted` with an abort message and stops.
+- **`ApprovalPolicy.ON_FAILURE`** — auto-approve the first attempt; only prompt if execution fails (e.g. sandbox denial). This is Codex's retry-with-escalation pattern. For M2 (no sandbox yet) this behaves identically to `NEVER`; the escalation path is wired up properly in M5.
+- **`write_file` → atomic write** — write to a `.tmp` sibling then `os.replace()`. Matches Codex's `std::fs::write` semantics; parent dirs created with `parents=True` if needed. Workspace-containment path check same as `read_file.py`.
+- **`list_dir` → paginated, depth-limited tree** — Codex uses `offset`/`limit`/`depth` args (defaults: offset=1, limit=25, depth=2). Output is sorted by name; dirs get `/` suffix, symlinks get `@` suffix. Matches Codex's `list_dir.rs` exactly.
+- **`grep_files` → `rg` first, `grep -rn` fallback** — Codex uses `rg --files-with-matches --sortr=modified --regexp <pattern> --glob <include>` with a 30s timeout. Returns file paths sorted by modification time (most recent first). Result limit: default 100, max 2000. Exit code 1 = no matches (not an error).
+
+---
+
+#### Files to create / update
 
 1. **`approval/policy.py`** — Approval types and caching
-   - `ApprovalPolicy` enum: `NEVER`, `ON_FAILURE`, `ON_REQUEST`, `UNLESS_TRUSTED`
-   - `ReviewDecision` enum: `APPROVED`, `APPROVED_FOR_SESSION`, `DENIED`, `ABORT`
-   - `ApprovalStore`: session-scoped cache (`dict[str, ReviewDecision]`)
-     - Cache key = serialized (tool_name, command/path)
-     - `APPROVED_FOR_SESSION` decisions cached for matching future calls
-   - Reference: `codex-rs/core/src/tools/sandboxing.rs` — `ApprovalStore`, `ExecApprovalRequirement`
+   ```python
+   class ApprovalPolicy(str, Enum):
+       NEVER          = "never"           # Auto-approve everything; errors returned to model
+       ON_FAILURE     = "on-failure"      # Auto-approve; prompt only if execution fails
+       ON_REQUEST     = "on-request"      # Prompt for all mutating ops (default interactive)
+       UNLESS_TRUSTED = "unless-trusted"  # Prompt unless command is known-safe read-only
+
+   class ReviewDecision(str, Enum):
+       APPROVED             = "approved"              # One-time approval
+       APPROVED_FOR_SESSION = "approved_for_session"  # Cache for rest of session
+       DENIED               = "denied"                # Reject; model can retry differently
+       ABORT                = "abort"                 # Stop the turn immediately
+
+   class ApprovalStore:
+       _cache: dict[str, ReviewDecision]
+       prompt_lock: asyncio.Lock   # Serialize concurrent approval prompts
+
+       def get(self, key: object) -> ReviewDecision | None:
+           return self._cache.get(json.dumps(key, sort_keys=True))
+
+       def put(self, key: object, decision: ReviewDecision) -> None:
+           self._cache[json.dumps(key, sort_keys=True)] = decision
+   ```
+   - For `write_file`: cache key = resolved absolute path (not full args dict), so per-file approval decisions are independent
+   - For `shell`: cache key = full args dict (tool_name + command string)
+   - Reference: `codex-rs/protocol/src/approvals.rs`, `codex-rs/core/src/tools/sandboxing.rs`
 
 2. **`tools/orchestrator.py`** — Approval → execute flow
    ```python
-   async def execute_with_approval(tool, args, policy, store, ask_user_fn):
+   AskUserFn = Callable[[ToolHandler, dict[str, Any]], Awaitable[ReviewDecision]]
+
+   class ToolAborted(Exception):
+       def __init__(self, tool_name: str) -> None: ...
+
+   async def execute_with_approval(
+       tool: ToolHandler,
+       args: dict[str, Any],
+       cwd: Path,
+       policy: ApprovalPolicy,
+       store: ApprovalStore,
+       ask_user_fn: AskUserFn,
+   ) -> ToolOutcome:
        if not await tool.is_mutating(args):
-           return await tool.handle(args)   # Read-only — skip approval
-       cached = store.get(approval_key(tool, args))
-       if cached == APPROVED_FOR_SESSION:
-           return await tool.handle(args)   # Previously approved
-       if policy == NEVER:
-           return await tool.handle(args)   # Auto-approve mode
-       decision = await ask_user_fn(tool, args)  # Ask user
-       store.put(approval_key(tool, args), decision)
-       if decision in (APPROVED, APPROVED_FOR_SESSION):
-           return await tool.handle(args)
-       raise ToolDenied(...)
+           return await tool.handle(args, cwd)           # Read-only — skip approval
+
+       key = _approval_key(tool, args)                   # Tool-specific key construction
+       cached = store.get(key)
+       if cached == ReviewDecision.APPROVED_FOR_SESSION:
+           return await tool.handle(args, cwd)           # Previously approved for session
+
+       if policy in (ApprovalPolicy.NEVER, ApprovalPolicy.ON_FAILURE):
+           return await tool.handle(args, cwd)           # Auto-approve modes
+
+       async with store.prompt_lock:                     # Serialize concurrent prompts
+           decision = await ask_user_fn(tool, args)      # Non-blocking via asyncio.to_thread
+
+       store.put(key, decision)
+
+       if decision == ReviewDecision.ABORT:
+           raise ToolAborted(tool.name)                  # Agent loop catches → stops turn
+       if decision == ReviewDecision.DENIED:
+           return ToolError(message="Operation denied by user.", code="denied")
+       return await tool.handle(args, cwd)               # APPROVED or APPROVED_FOR_SESSION
    ```
-   - Reference: `codex-rs/core/src/tools/orchestrator.rs` lines ~100-323
+   - Slotted inside `ToolRegistry.dispatch()` via an optional `OrchestratorConfig` dataclass — agent loop unchanged
+   - Reference: `codex-rs/core/src/tools/orchestrator.rs`
 
 3. **`tools/write_file.py`** — File writing
-   - Simple: accept `file_path` + `content`, write file
-   - `is_mutating() = True` — always requires approval
-   - Later: evolve to unified-diff patching (apply_patch)
+   - Args: `file_path: str`, `content: str`
+   - Workspace-containment check (same pattern as `read_file.py`)
+   - Atomic write: `path.with_suffix('.tmp')` → write → `os.replace(tmp, path)`
+   - Creates parent directories if needed (`path.parent.mkdir(parents=True, exist_ok=True)`)
+   - Returns `ToolResult(body={"path": str, "bytes_written": int})`
+   - `is_mutating() = True`; approval key = resolved absolute path (not full args)
+   - Later milestone: evolve to unified-diff patch via `apply_patch`
+   - Reference: `codex-rs/core/src/tools/handlers/apply_patch.rs` + `codex-rs/apply-patch/src/lib.rs`
 
 4. **`tools/list_dir.py`** — Directory listing
-   - Accept `path`, return formatted file listing with sizes/types
+   - Args: `dir_path: str`, `offset: int = 1` (1-indexed), `limit: int = 25`, `depth: int = 2`
+   - Sorted by name; directories suffixed `/`, symlinks suffixed `@`
+   - Tree-indented output (2 spaces per depth level)
+   - Pagination: include "… N more entries" message when truncated
+   - Entry display truncated at 500 chars
+   - Returns `ToolResult(body=str)` — plain text listing
+   - `is_mutating() = False`
+   - Reference: `codex-rs/core/src/tools/handlers/list_dir.rs`
 
 5. **`tools/grep_files.py`** — Content search
-   - Accept `pattern`, `path`, optional `include` glob
-   - Use `subprocess` to run `grep -rn` or implement with `pathlib` + `re`
+   - Args: `pattern: str`, `path: str | None`, `include: str | None` (glob), `limit: int = 100`
+   - Max limit: 2000; results sorted by modification time (most recent first)
+   - Command: `rg --files-with-matches --sortr=modified --regexp <pattern> [--glob <include>] -- <path>`
+   - Timeout: 30s; exit code 1 = no matches (return empty list, not error)
+   - Falls back to `grep -rl <pattern> <path>` if `rg` not found
+   - Returns `ToolResult(body={"matches": [str], "truncated": bool})`
+   - `is_mutating() = False`
+   - Reference: `codex-rs/core/src/tools/handlers/grep_files.rs`
 
-6. **Update `core/agent.py`** — Wire tool dispatch through orchestrator
-   - Non-interactive: use `input()` for approval prompts (simple but functional)
+6. **`__main__.py`** — Add `--approval` flag
+   - `--approval {never,on-failure,on-request,unless-trusted}` (default: `never`)
+   - Build `ApprovalStore`, wire non-interactive `ask_user_fn` using `asyncio.to_thread(input, prompt)`
+   - Pass `OrchestratorConfig(policy, store, ask_user_fn)` into `ToolRegistry` before constructing the agent
+
+---
+
+#### What does NOT change
+
+- `core/agent.py` — untouched; `ToolAborted` is caught at the `ToolRegistry.dispatch()` level and converted to a `ToolError` before reaching the agent, or propagated up if ABORT
+- `core/model_client.py`, `core/session.py`, `core/config.py` — no changes
+- `tools/base.py`, `tools/shell.py`, `tools/read_file.py` — no changes; orchestrator wraps transparently
+
+---
+
+#### Risk areas
+
+| Risk | Mitigation |
+|---|---|
+| Blocking `input()` stalls event loop | Use `asyncio.to_thread(input, prompt)` |
+| Concurrent mutating calls interleave prompts | `ApprovalStore.prompt_lock` serializes `ask_user_fn` calls |
+| Cache key collisions on dict arg order | `json.dumps(key, sort_keys=True)` — order-independent |
+| `ABORT` silently drops the turn | Raise `ToolAborted`; agent loop catches and emits abort message |
+| `write_file` escapes workspace | Same `cwd`-containment check as `read_file.py` |
+| `grep_files` `rg` not installed | Detect via `shutil.which("rg")`; fall back to `grep -rl` |
+| `ON_FAILURE` escalation not wired yet | Correct in M2 (behaves as `NEVER`); sandbox retry added in M5 |
+
+---
+
+#### Done criteria
+
+- `python -m pycodex --approval on-request "create a hello.py file that prints hello world"` prompts before writing
+- `python -m pycodex --approval never "create a hello.py file"` writes without prompting
+- `APPROVED_FOR_SESSION` skips prompt on second identical call within same session
+- `DENIED` returns a clean error to the model; turn continues
+- `ABORT` stops the turn with a clear message
+- `list_dir` and `grep_files` never prompt (read-only)
+- All quality gates pass (`ruff`, `mypy --strict`, `pytest`)
 
 **Test it**: `python -m pycodex --approval on-request "create a hello.py file that prints hello world"`
 
-**Key learning**: Approval flow, session caching, mutating vs read-only distinction.
+**Key learning**: Approval flow, per-resource session caching, mutating vs read-only distinction, async-safe user prompting, `rg`/`grep` subprocess pattern.
 
 ---
 

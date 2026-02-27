@@ -8,6 +8,8 @@ import pytest
 from pycodex.core.config import Config
 from pycodex.core.session import Session
 
+pytestmark = pytest.mark.integration
+
 
 class _FakeModelClient:
     def __init__(self, config: Config) -> None:
@@ -22,6 +24,16 @@ def test_main_help_exits_with_usage(capsys: pytest.CaptureFixture[str]) -> None:
     captured = capsys.readouterr()
     assert "usage:" in captured.out
     assert "prompt" in captured.out
+
+
+def test_main_missing_prompt_exits_with_parser_error(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main_module.main([])
+
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "usage:" in captured.err
 
 
 def test_main_runs_turn_and_prints_output(

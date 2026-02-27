@@ -16,6 +16,18 @@ Run this command when changing:
 - Approval/sandbox policy behavior
 - Agent loop or event protocol behavior
 
+## CLI Integration and E2E
+Use marker-based CLI tests for milestone-level validation outside `tests/agent_harness/`.
+
+- Integration marker: `pytest tests/ -m "integration" -v`
+- E2E marker: `pytest tests/ -m "e2e" -v`
+
+Rules:
+- Integration tests must be deterministic and avoid live network calls.
+- E2E tests may call live services but must be opt-in and gate on required env vars.
+- OpenAI live E2E requires `OPENAI_API_KEY`; if missing, the test should skip.
+- If the OpenAI endpoint is unreachable in the current environment, the live E2E should skip instead of failing unrelated CI jobs.
+
 ## Harness Layout
 - `tests/agent_harness/fixtures/`: canned inputs and expected outputs/metadata
 - `tests/agent_harness/test_*.py`: scenario assertions
