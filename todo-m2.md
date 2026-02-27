@@ -78,7 +78,7 @@ Extend `python -m pycodex "<prompt>"` with:
   - `APPROVED_FOR_SESSION` cached; `APPROVED` not cached.
   - Verify: `python3 -c "from pycodex.approval.policy import ApprovalPolicy, ReviewDecision, ApprovalStore; s=ApprovalStore(); s.put({'tool':'shell','cmd':'ls'}, ReviewDecision.APPROVED_FOR_SESSION); print(s.get({'cmd':'ls','tool':'shell'}))"`
 
-- [ ] T2: `tools/orchestrator.py`
+- [x] T2: `tools/orchestrator.py`
   - Implement `execute_with_approval()`, `ToolAborted`, `OrchestratorConfig`, `AskUserFn`.
   - Read-only bypass, NEVER/ON_FAILURE auto-approve, APPROVED_FOR_SESSION cache hit, DENIED → ToolError, ABORT → ToolAborted.
   - Depends on: T1
@@ -123,7 +123,7 @@ Extend `python -m pycodex "<prompt>"` with:
   - Depends on: T1
   - Verify: `pytest tests/approval/test_policy.py -v`
 
-- [ ] T9: `tests/tools/test_orchestrator.py`
+- [x] T9: `tests/tools/test_orchestrator.py`
   - Unit tests with mock `ask_user_fn` (never use `policy=NEVER` to hide approval path):
     - read-only tool bypasses approval entirely
     - `NEVER` policy auto-approves without calling `ask_user_fn`
