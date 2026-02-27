@@ -211,61 +211,93 @@ All 8 planned files were created with the following implementations and notable 
 
 ### Milestone 3: Event Protocol + JSONL Mode
 
-**Goal**: Structured event protocol for programmatic use (like `codex exec --json`).
+**Goal**: Structured event protocol for programmatic use (like `codex exec --json`). Establishes the stable event contract that M4's TUI will consume.
 
 **Status**: **Planned (next milestone)**.
 
+**Non-goals**:
+- No `item.updated` (streaming delta events) — deferred to M4 where the TUI needs them.
+- No schema versioning or backward-compatibility guarantees.
+- No event replay, persistence, or session recovery (M6).
+- No WebSocket or SSE transport — JSONL stdout only.
+- No changes to sequential tool dispatch — parallelism remains out of scope.
+
 Current baseline before M3:
-- `core/agent.py` already emits internal dataclass lifecycle callbacks (`turn_started`, `tool_call_dispatched`, `tool_result_received`, `turn_completed`).
-- `core/model_client.py` already emits typed stream events used by the agent (`OutputTextDelta`, `OutputItemDone`, `Completed`).
+- `core/agent.py` already emits internal dataclass lifecycle callbacks (`turn_started`, `tool_call_dispatched`, `tool_result_received`, `turn_completed`) with `call_id` on tool events.
+- `core/model_client.py` already emits typed stream events used by the agent (`OutputTextDelta`, `OutputItemDone`, `Completed`), but `Completed` currently carries `response_id` only. Token usage is not yet surfaced to agent events.
 - There is no canonical protocol module yet (`pycodex/protocol/events.py` missing).
 - There is no `--json` CLI mode yet; current entrypoint is `pycodex/__main__.py` (not `cli/app.py`).
 
-#### Milestone 3 execution plan (updated for current repo structure)
+#### Architecture: 3 layers
 
-1. **Create canonical protocol models in `protocol/events.py`**
-   - Define Pydantic models for thread/turn/item lifecycle events:
-     - `thread.started`
-     - `turn.started`, `turn.completed`
-     - `item.started`, `item.updated`, `item.completed`
-   - Define discriminated `ThreadItem` details for:
-     - assistant message lifecycle
-     - tool-call lifecycle
-     - tool-result lifecycle
-   - Include stable IDs (`thread_id`, `turn_id`, `item_id`, `tool_call_id` where applicable).
+```
+core/agent.py          internal AgentEvent dataclasses (unchanged)
+        ↓
+core/event_adapter.py  stateful mapper: AgentEvent → ProtocolEvent (new)
+        ↓
+__main__.py            renderer: text mode or JSONL mode (--json flag)
+```
 
-2. **Adapt `core/agent.py` to emit protocol events**
-   - Keep current behavioral ordering, but emit protocol events instead of ad-hoc internal-only dataclasses (or provide a compatibility adapter during migration).
-   - Preserve existing ABORT semantics (`ToolAborted` => terminal `turn.completed`).
-   - Ensure tool calls continue to execute only from completed tool-call output items.
+`agent.py` internal event types (`TurnStarted`, `ToolCallDispatched`, etc.) are **not replaced**. The adapter is the permanent translation layer, not a migration shim.
 
-3. **Add JSONL mode in current entrypoint (`pycodex/__main__.py`)**
+#### Milestone 3 execution plan (clear, incremental, verifiable)
+
+1. **Define schema contract in `protocol/events.py`**
+   - Root event discriminator is `type` (`thread.started`, `turn.started`, `turn.completed`, `turn.failed`, `item.started`, `item.completed`).
+   - To avoid `type` collisions, item payload uses `item_kind` (not `type`) for details (`tool_call`, `tool_result`, `assistant_message`).
+   - `TokenUsage`: `input_tokens: int`, `output_tokens: int` (optional on `turn.completed`).
+   - All models use `model_config = ConfigDict(frozen=True)`.
+   - Verification: `pytest tests/protocol/test_events.py -q`
+
+2. **Implement deterministic ID strategy (owned by adapter)**
+   - `thread_id`: generated once per run (default `uuid4()`), injectable in tests.
+   - `turn_id`: monotonic adapter counter (`turn_1`, `turn_2`, ...), injectable start offset for tests.
+   - `item_id`: reuse tool `call_id`; if missing/invalid, synthesize `item_<turn>_<ordinal>`.
+   - Verification: `pytest tests/core/test_event_adapter.py::test_id_generation_and_reuse -q`
+
+3. **Build `core/event_adapter.py` as permanent translation layer**
+   - Consumes internal `AgentEvent`; emits protocol events through an output callback.
+   - Maintains in-flight map keyed by `call_id` for `item.started -> item.completed` correlation.
+   - Mapping:
+     - `TurnStarted` -> `turn.started`
+     - `ToolCallDispatched` -> `item.started`
+     - `ToolResultReceived` -> `item.completed`
+     - `TurnCompleted` -> `turn.completed`
+   - ABORT remains intentional success: adapter emits `turn.completed` (not `turn.failed`).
+   - Verification: `pytest tests/core/test_event_adapter.py -q`
+
+4. **Plumb token usage to `turn.completed`**
+   - Extend `core/model_client.py` `Completed` to optional usage payload when available from Responses API.
+   - Thread usage through `core/agent.py` `TurnCompleted` and map to protocol `TokenUsage`.
+   - If usage is unavailable, emit `usage: null` (or omit per schema choice) deterministically.
+   - Verification: `pytest tests/core/test_model_client.py tests/core/test_agent.py -k usage -q`
+
+5. **Add explicit `turn.failed` exception boundary in `__main__.py` JSON path**
+   - In JSON mode, wrap turn execution so unhandled turn exceptions emit one `turn.failed` event before process exit.
+   - Keep existing non-JSON error behavior unchanged.
+   - Verification: `pytest tests/test_main.py -k \"json and failed\" -q`
+
+6. **Add JSONL CLI mode and contract tests**
    - Add `--json` flag.
-   - In JSON mode, stream one serialized protocol event per line to stdout.
-   - Preserve existing text mode behavior and error handling.
-
-4. **Expand model-client stream typing only as needed**
-   - Add `OutputItemAdded` only if required to support item-start semantics cleanly.
-   - Keep raw SDK dicts encapsulated inside `model_client.py`.
-
-5. **Add deterministic tests (contract-first)**
-   - Unit tests for protocol model validation/serialization.
-   - Agent integration tests for ordered lifecycle events:
-     - no-tool turn
-     - tool-call turn with follow-up iteration
-     - abort turn path (terminal completion)
-   - CLI tests for `--json` output shape and line-delimited validity.
+   - JSON mode: one serialized protocol event per line (`model_dump_json()`).
+   - Text mode remains unchanged; JSON formatter and text formatter are separate paths.
+   - Add deterministic CLI tests for line-delimited validity, ordering, and mandatory root `type`.
+   - Verification: `pytest tests/cli/test_jsonl_mode.py -q`
 
 #### Milestone 3 done criteria
 
-- `--json` emits valid JSONL protocol events for both text-only and tool-call flows.
-- Event stream has stable IDs and deterministic ordering in tests.
-- ABORT semantics remain unchanged under protocol/JSON mode.
-- Quality gates pass for touched scope (`ruff`, targeted `pytest`, `mypy --strict` on touched packages).
+- `--json` emits valid JSONL with a root `type` field on every line, for both text-only and tool-call flows.
+- Adapter correctly reuses `call_id` as `item_id` across `item.started` -> `item.completed`.
+- `turn.failed` is emitted on agent-loop exceptions; `turn.completed` is emitted on ABORT (not `turn.failed`).
+- Token usage appears in `turn.completed` when available from the API; field is absent (or `null`) otherwise.
+- Human text output mode is unchanged and unaffected by the adapter.
+- `mypy --strict` passes on `protocol/` and `core/event_adapter.py`.
+- `ruff check` and `ruff format` clean on all touched files.
+- All new adapter unit tests pass with deterministic event sequences.
 
 **Test it**: `python -m pycodex --json "what is 2+2" | python -c "import sys,json; [print(json.loads(l)['type']) for l in sys.stdin]"`
 
-**Key learning target**: standardized event contracts and clean separation between core lifecycle events and presentation/output mode.
+**Key learning target**: layered event architecture — internal lifecycle events, stateful public protocol adapter, and output-format-agnostic rendering. mirrors how Codex separates `exec_events.rs` from `event_processor_with_jsonl_output.rs`.
 
 ---
 
@@ -273,31 +305,32 @@ Current baseline before M3:
 
 **Goal**: Multi-turn interactive chat with streaming display and approval popups.
 
-**Files to create**:
+#### Milestone 4 execution plan (clear, incremental, verifiable)
 
-1. **`cli/display.py`** — Rich rendering utilities
-   - `render_markdown(text) -> rich.Text` — markdown with syntax highlighting
-   - `render_diff(patch) -> rich.Text` — colored unified diff
-   - `render_command(cmd, output, exit_code) -> rich.Panel` — command result display
-   - Uses `rich.markdown.Markdown`, `rich.syntax.Syntax`
+1. **Build rendering primitives in `cli/display.py`**
+   - Markdown, diff, and command-output render helpers with stable formatting contracts.
+   - Value: isolates presentation logic from TUI event/state logic.
+   - Verification: `pytest tests/cli/test_display.py -q`
 
-2. **`cli/tui.py`** — Textual TUI application
-   - Layout: scrollable chat history + text input + status bar
-   - `ChatView` widget: renders `ThreadItem` events with rich formatting
-   - `InputArea` widget: text input with Enter to send, Ctrl+C to interrupt
-   - `ApprovalModal` widget: shows tool call details, approve/deny/approve-for-session buttons
-   - `StatusBar` widget: model name, token usage, agent status
-   - Receives `ThreadEvent` from agent core via async message queue
-   - Streaming text: characters appear progressively (driven by `OutputTextDelta` events)
+2. **Build TUI shell in `cli/tui.py`**
+   - Create baseline layout: history, input, status bar, and event queue wiring.
+   - Value: runnable multi-turn skeleton before approval/streaming complexity.
+   - Verification: `pytest tests/cli/test_tui_layout.py -q`
 
-3. **`cli/app.py`** — Update entry point
-   - No args / interactive mode → launch TUI
-   - `--json` flag → JSONL mode
-   - `-p "prompt"` → single-turn non-interactive mode
+3. **Bind protocol events to UI timeline**
+   - Render `ThreadEvent` items deterministically in chat history.
+   - Value: M3 protocol becomes the single UI data contract.
+   - Verification: `pytest tests/cli/test_tui_event_rendering.py -q`
 
-4. **Wire approval into TUI**
-   - `ask_user_fn` callback opens `ApprovalModal` and awaits user selection
-   - Replaces `input()` from Milestone 2
+4. **Integrate approval modal flow**
+   - `ask_user_fn` opens `ApprovalModal` and returns `ReviewDecision`.
+   - Value: removes blocking `input()` path and keeps approvals in UI loop.
+   - Verification: `pytest tests/cli/test_tui_approval.py -q`
+
+5. **Route entrypoints in `cli/app.py` and `__main__.py`**
+   - Interactive default, `-p` single-turn, and `--json` protocol mode all coexist.
+   - Value: one coherent interface surface for all runtime modes.
+   - Verification: `pytest tests/test_main.py tests/cli/test_app_modes.py -q`
 
 **Test it**: `python -m pycodex` → interactive chat, try "read the README.md file" then "create a test.py file" (should prompt for approval)
 
@@ -309,29 +342,28 @@ Current baseline before M3:
 
 **Goal**: Basic sandboxing for command execution and file operations.
 
-**Files to create**:
+#### Milestone 5 execution plan (clear, incremental, verifiable)
 
-1. **`approval/sandbox.py`** — Sandbox policies
-   - `SandboxPolicy` enum: `READ_ONLY`, `WORKSPACE_WRITE`, `FULL_ACCESS`
-   - `PathValidator`: check if a path is within workspace bounds
-   - `SandboxManager`: select sandbox level, validate paths
-   - Reference: `codex-rs/core/src/sandboxing/` — `SandboxPolicy` enum, `SandboxManager`
+1. **Define sandbox policy domain in `approval/sandbox.py`**
+   - Implement `SandboxPolicy`, path validation, and enforcement boundary API.
+   - Value: explicit, testable policy model before command integration.
+   - Verification: `pytest tests/approval/test_sandbox.py -q`
 
-2. **`approval/exec_policy.py`** — Command prefix rules
-   - Default safe commands: `ls`, `cat`, `pwd`, `echo`, `git status`, `git diff`, `python --version`, etc.
-   - Default dangerous: `rm -rf`, `sudo`, `chmod`, etc.
-   - `ExecPolicy.check(command) -> ALLOW | PROMPT | FORBIDDEN`
-   - Reference: `codex-rs/execpolicy/src/` — prefix-based rule matching
+2. **Implement command classification in `approval/exec_policy.py`**
+   - Prefix-rule matcher with `ALLOW | PROMPT | FORBIDDEN`.
+   - Value: deterministic command-safety decisions independent of shell execution.
+   - Verification: `pytest tests/approval/test_exec_policy.py -q`
 
-3. **Optional platform sandboxing**:
-   - macOS: wrap commands with `sandbox-exec -p '(deny default)(allow ...)' bash -c "..."`
-   - Linux: wrap with `firejail --noprofile --quiet` or `bwrap` if available
-   - Fallback: path-based validation only (soft sandbox)
+3. **Integrate orchestrator sandbox flow**
+   - First run under selected sandbox; escalate on failure only where policy allows.
+   - Preserve M2 ABORT and DENIED semantics.
+   - Value: defense-in-depth with explicit escalation path.
+   - Verification: `pytest tests/tools/test_orchestrator.py -k sandbox -q`
 
-4. **Update orchestrator** — Sandbox selection flow
-   - First attempt: run in sandbox
-   - On sandbox failure + `ON_FAILURE` policy: prompt user to escalate
-   - Reference: `codex-rs/core/src/tools/orchestrator.rs` retry-with-escalation pattern
+4. **Optional OS-native sandbox adapters**
+   - macOS `sandbox-exec`, Linux `firejail`/`bwrap`, with soft-sandbox fallback.
+   - Value: stronger isolation where available without hard dependency.
+   - Verification: `pytest tests/approval/test_sandbox_platform.py -q`
 
 **Test it**: `python -m pycodex --sandbox workspace-write "try to delete /etc/hosts"` → blocked or prompts for escalation
 
@@ -343,31 +375,32 @@ Current baseline before M3:
 
 **Goal**: Token tracking, auto-compaction, session persistence, configuration.
 
-**What to build**:
+#### Milestone 6 execution plan (clear, incremental, verifiable)
 
-1. **Token tracking** — Use `tiktoken` to count tokens per turn
-   - Display in status bar and turn completion events
-   - Track cumulative usage across turns
+1. **Token accounting service**
+   - Add per-turn and cumulative usage tracking, surfaced to status bar and `turn.completed`.
+   - Value: objective context-budget visibility.
+   - Verification: `pytest tests/core/test_token_usage.py -q`
 
-2. **Auto-compaction** — When approaching context window limit
-   - Strategy: summarize older messages into a compact context block
-   - Simple approach: call the model to "summarize the conversation so far", replace older history
-   - Reference: Codex's `run_auto_compact()` in `codex.rs`
+2. **Auto-compaction policy + executor**
+   - Trigger near context window threshold; replace older context with deterministic summary block.
+   - Value: keeps long sessions functional with bounded prompt growth.
+   - Verification: `pytest tests/core/test_compaction.py -q`
 
-3. **Session persistence** — Save/resume conversations
-   - Save session state (history, config) to `~/.pycodex/sessions/<id>.json`
-   - `--resume <id>` flag to continue a conversation
-   - Reference: `codex-rs/core/src/message_history.rs`
+3. **Session persistence and resume**
+   - Persist history/config to `~/.pycodex/sessions/<id>.json`; add resume entrypoint.
+   - Value: continuity across runs and recoverability after interruption.
+   - Verification: `pytest tests/core/test_session_persistence.py tests/test_main.py -k resume -q`
 
-4. **Config file** — `~/.pycodex/config.toml`
-   - Model, API key, default approval policy, sandbox policy
-   - Custom system instructions
-   - Default tools to enable
+4. **User config loading**
+   - Add `~/.pycodex/config.toml` defaults and override precedence documentation/tests.
+   - Value: reproducible local behavior without long CLI flags.
+   - Verification: `pytest tests/core/test_config.py -k toml -q`
 
-5. **Error handling** — Graceful API error recovery
-   - Exponential backoff on rate limits
-   - Timeout handling for long-running tools
-   - Ctrl+C interruption during model streaming
+5. **Runtime resiliency pass**
+   - Finalize retry/backoff, tool timeout boundaries, and Ctrl+C interruption behavior.
+   - Value: safer long-running interactive operation.
+   - Verification: `pytest tests/e2e/test_cli_tool_failures.py tests/e2e/test_interrupts.py -q`
 
 **Test it**: Full multi-turn session with token tracking, save session, resume later.
 
