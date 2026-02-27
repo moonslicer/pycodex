@@ -165,10 +165,10 @@ async def _run_search(
         command.extend(["--", relative_target])
         return await _exec_search_command(command=command, cwd=workspace_root)
 
-    command = ["grep", "-rl", pattern]
+    command = ["grep", "-rl"]
     if include is not None:
         command.extend(["--include", include])
-    command.append(relative_target)
+    command.extend(["--", pattern, relative_target])
     return await _exec_search_command(command=command, cwd=workspace_root)
 
 

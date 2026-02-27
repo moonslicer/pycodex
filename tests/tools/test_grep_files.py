@@ -152,6 +152,32 @@ async def test_grep_files_tool_falls_back_to_grep_when_rg_is_unavailable(
     assert payload == {"matches": ["a.txt"], "truncated": False}
     assert calls
     assert calls[0][0] == "grep"
+    assert "--" in calls[0]
+
+
+async def test_grep_files_tool_grep_fallback_handles_option_like_patterns(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    (tmp_path / "a.txt").write_text("--help marker", encoding="utf-8")
+
+    calls: list[tuple[Any, ...]] = []
+
+    async def fake_create_subprocess_exec(*args: Any, **kwargs: Any) -> _FakeProcess:
+        calls.append(args)
+        _ = kwargs
+        return _FakeProcess(returncode=0, stdout=b"a.txt\n")
+
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    result = await GrepFilesTool().handle({"pattern": "--help"}, tmp_path)
+    payload = _expect_result(result).body
+
+    assert payload == {"matches": ["a.txt"], "truncated": False}
+    assert calls
+    assert calls[0][0] == "grep"
+    assert "--" in calls[0]
+    assert "--help" in calls[0]
 
 
 async def test_grep_files_tool_timeout_returns_error(tmp_path: Path, monkeypatch: Any) -> None:
