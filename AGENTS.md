@@ -83,6 +83,12 @@ Run the smallest gate set that matches scope:
   4. Proposed next milestone.
 - Wait for explicit approval before starting the next milestone.
 
+### Build Command Gate (Required)
+- Applies to command-style build requests (for example: `build-task`, `build-tasks`, `build-milestone`).
+- Before doing implementation work, load and follow the matching command spec in `.claude/commands/` (for example `.claude/commands/build-task.md`).
+- Plan-first is mandatory for all build commands (not only parallel work): present scope, file-level plan, success metrics/verification commands, and assumptions, then stop for explicit user approval.
+- Do not create or edit implementation files before approval. If no matching command spec exists, fall back to the same plan-first approval gate.
+
 ## 9) Coding Defaults (Python)
 - Python 3.11+.
 - Type hints on public APIs.

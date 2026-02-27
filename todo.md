@@ -88,7 +88,7 @@ Build a runnable `python -m pycodex "<prompt>"` flow that:
   - Depends on: T1
   - Verify: dataclass instantiation/import smoke check.
 
-- [ ] T7: `core/agent.py`
+- [x] T7: `core/agent.py`
   - Implement async tool-loop orchestration:
     - append user message
     - stream model response

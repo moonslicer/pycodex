@@ -128,7 +128,7 @@ def test_model_client_maps_events_to_typed_dataclasses() -> None:
     assert isinstance(responses.calls[0]["tools"], list)
 
 
-def test_model_client_converts_tool_messages_to_function_call_output() -> None:
+def test_model_client_converts_function_call_and_tool_messages() -> None:
     responses = _FakeResponses(
         streams=[_FakeStream(events=[{"type": "response.completed", "response": {"id": "resp_1"}}])]
     )
@@ -142,6 +142,12 @@ def test_model_client_converts_tool_messages_to_function_call_output() -> None:
         async for event in client.stream(
             messages=[
                 {"role": "user", "content": "hello"},
+                {
+                    "type": "function_call",
+                    "call_id": "call_1",
+                    "name": "shell",
+                    "arguments": '{"command":"echo hi"}',
+                },
                 {"role": "tool", "tool_call_id": "call_1", "content": '{"ok":true}'},
             ],
             tools=[],
@@ -154,6 +160,12 @@ def test_model_client_converts_tool_messages_to_function_call_output() -> None:
     assert events == [Completed(response_id="resp_1")]
     assert responses.calls[0]["input"] == [
         {"role": "user", "content": "hello"},
+        {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "shell",
+            "arguments": '{"command":"echo hi"}',
+        },
         {"type": "function_call_output", "call_id": "call_1", "output": '{"ok":true}'},
     ]
 

@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import importlib
+import json
 from collections.abc import AsyncIterator, Callable
 from dataclasses import dataclass
 from typing import Any, Literal
@@ -199,8 +200,32 @@ def _convert_prompt_to_responses_input(messages: list[PromptItem]) -> list[dict[
     input_items: list[dict[str, Any]] = []
     for message in messages:
         payload = dict(message)
+        item_type = _to_optional_str(payload.get("type"))
         role = _to_optional_str(payload.get("role"))
         content = payload.get("content", "")
+
+        if item_type == "function_call":
+            call_id = _to_optional_str(payload.get("call_id"))
+            name = _to_optional_str(payload.get("name"))
+            arguments_raw = payload.get("arguments", "{}")
+            if call_id is None or name is None:
+                continue
+            if isinstance(arguments_raw, str):
+                arguments = arguments_raw
+            elif isinstance(arguments_raw, dict):
+                arguments = json.dumps(arguments_raw, ensure_ascii=True)
+            else:
+                arguments = "{}"
+
+            input_items.append(
+                {
+                    "type": "function_call",
+                    "call_id": call_id,
+                    "name": name,
+                    "arguments": arguments,
+                }
+            )
+            continue
 
         if role == "tool":
             call_id = _to_optional_str(payload.get("tool_call_id"))

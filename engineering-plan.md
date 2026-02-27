@@ -251,6 +251,49 @@ Each milestone produces a **runnable system**. You can stop at any milestone and
    - JSON mode: emit JSONL to stdout (one event per line)
    - Text mode: print human-readable output (default)
 
+#### Milestone 3 Implementation Checklist (Richer Item Event Handling)
+
+Use this checklist when implementing M3 so event handling scope is explicit:
+
+1. **Expand model stream event surface in `core/model_client.py`**
+   - Add typed events for item lifecycle and richer stream payloads:
+     - `OutputItemAdded`
+     - `OutputItemDone` (already present; keep as the completion trigger for tool-call execution)
+     - `OutputTextDelta` (already present)
+     - `Completed` (already present)
+   - Keep dataclass-only event outputs (no raw dict events crossing module boundaries).
+
+2. **Define canonical thread/item event schemas in `protocol/events.py`**
+   - Add `ThreadEvent` + `ThreadItem` discriminated unions for:
+     - agent message items (started/updated/completed)
+     - tool call items (started/completed)
+   - Include stable ids (`thread_id`, `turn_id`, `item_id`, `tool_call_id` where relevant).
+
+3. **Map model events to lifecycle events in `core/agent.py`**
+   - Emit `item.started` when an output item is added.
+   - Emit `item.updated` on text deltas for active assistant items.
+   - Emit `item.completed` when an output item is done.
+   - Execute tool calls only from completed tool-call items, then emit tool result completion events.
+   - Emit `turn.started`/`turn.completed` around each sampling request loop.
+
+4. **Wire JSONL emission in `cli/app.py`**
+   - `--json` mode prints serialized `ThreadEvent` records, one line per event.
+   - Preserve current human-readable mode behavior when `--json` is not set.
+
+5. **Add deterministic verification tests**
+   - Unit tests for event mapping and schema validation.
+   - Agent integration test asserting ordered lifecycle sequence for:
+     - a no-tool turn
+     - a tool-call turn with follow-up model iteration
+   - Assert contract fields and ids, not prose text content.
+
+#### Milestone 3 Done Criteria
+
+- `--json` emits valid JSONL lifecycle events for text + tool-call flows.
+- Tool calls are sourced from completed output items and represented as explicit item lifecycle events.
+- Event stream is reproducible/deterministic in tests (no live network dependency).
+- Quality gates pass for touched modules (`ruff`, targeted `pytest`, `mypy --strict` on touched packages).
+
 **Test it**: `python -m pycodex --json "what OS am I running?" | python -c "import sys,json; [print(json.loads(l)['type']) for l in sys.stdin]"`
 
 **Key learning**: Event-driven architecture, separation of core engine from presentation.

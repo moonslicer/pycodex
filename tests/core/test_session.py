@@ -15,6 +15,13 @@ def test_append_user_message_adds_user_item() -> None:
     assert session.to_prompt() == [{"role": "user", "content": "hello"}]
 
 
+def test_append_assistant_message_adds_assistant_item() -> None:
+    session = Session()
+    session.append_assistant_message("hello from assistant")
+
+    assert session.to_prompt() == [{"role": "assistant", "content": "hello from assistant"}]
+
+
 def test_append_tool_result_adds_tool_item() -> None:
     session = Session()
     session.append_tool_result("call_123", "ok")
@@ -22,14 +29,36 @@ def test_append_tool_result_adds_tool_item() -> None:
     assert session.to_prompt() == [{"role": "tool", "tool_call_id": "call_123", "content": "ok"}]
 
 
+def test_append_function_call_adds_function_call_item() -> None:
+    session = Session()
+    session.append_function_call(
+        call_id="call_1",
+        name="read_file",
+        arguments={"file_path": "README.md"},
+    )
+
+    assert session.to_prompt() == [
+        {
+            "type": "function_call",
+            "call_id": "call_1",
+            "name": "read_file",
+            "arguments": '{"file_path": "README.md"}',
+        }
+    ]
+
+
 def test_session_preserves_append_order() -> None:
     session = Session()
     session.append_user_message("first")
+    session.append_assistant_message("assistant before tool")
+    session.append_function_call(call_id="call_1", name="read_file", arguments="{}")
     session.append_tool_result("call_1", "result")
     session.append_user_message("second")
 
     assert session.to_prompt() == [
         {"role": "user", "content": "first"},
+        {"role": "assistant", "content": "assistant before tool"},
+        {"type": "function_call", "call_id": "call_1", "name": "read_file", "arguments": "{}"},
         {"role": "tool", "tool_call_id": "call_1", "content": "result"},
         {"role": "user", "content": "second"},
     ]
