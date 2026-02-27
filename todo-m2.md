@@ -47,7 +47,7 @@ Extend `python -m pycodex "<prompt>"` with:
 - `ToolAborted` exception propagates out of `execute_with_approval()`; agent loop catches it.
 - `DENIED` → returns `ToolError(code="denied")` — does not raise.
 - `write_file` approval key = resolved absolute path (not full args dict).
-- `shell` approval key = full args dict (tool name + command string).
+- `shell` approval key = canonicalized shell wrapper key + timeout (normalizes wrapper forms like `/bin/bash -lc` vs `bash -lc`; preserves semantically sensitive inline forms).
 - Atomic write: `.tmp` sibling → `os.replace()`.
 - `write_file` enforces workspace-containment (same as `read_file`).
 - `grep_files` uses `rg` if available, falls back to `grep -rl`.
@@ -106,7 +106,7 @@ Extend `python -m pycodex "<prompt>"` with:
 
 - [x] T6: `tools/base.py` (modify)
   - Add optional `orchestrator: OrchestratorConfig | None = None` to `ToolRegistry.__init__()`.
-  - In `ToolRegistry.dispatch()`: if orchestrator config present, route mutating calls through `execute_with_approval()`; catch `ToolAborted` and return `ToolError(message="Aborted by user.", code="aborted")`.
+  - In `ToolRegistry.dispatch()`: if orchestrator config present, route mutating calls through `execute_with_approval()`; preserve `ToolAborted` as control flow so `core/agent.py` stops the active turn.
   - Depends on: T2
   - Verify: `python3 -c "from pycodex.tools.base import ToolRegistry; r=ToolRegistry(); print(r.tool_specs())"`
 
@@ -166,7 +166,54 @@ Extend `python -m pycodex "<prompt>"` with:
   - Verify: `pytest tests/tools/test_orchestrator.py -v`
 
 ## Completion Checklist
-- [ ] All T1–T13 done
-- [ ] Quality gates all pass (`ruff check`, `ruff format`, `mypy --strict`, `pytest tests/ -v`)
+- [x] All T1–T13 done
+- [x] Quality gates all pass (`ruff check`, `ruff format`, `mypy --strict`, `pytest tests/ -v`)
 - [ ] Milestone verification command passes
-- [ ] Milestone report includes: files changed, gate results, verification output, risks/assumptions, next milestone recommendation
+- [x] Milestone report includes: files changed, gate results, verification output, risks/assumptions, next milestone recommendation
+
+## Milestone 2 Holistic Report (2026-02-27)
+
+### Milestone
+- Name: Milestone 2 — Permission System + More Tools
+- Overall status: Functionally complete; one manual verification command remains blocked by local runtime dependency setup.
+
+### Files changed (M2 scope)
+- `pycodex/approval/policy.py`
+- `pycodex/tools/orchestrator.py`
+- `pycodex/tools/write_file.py`
+- `pycodex/tools/list_dir.py`
+- `pycodex/tools/grep_files.py`
+- `pycodex/tools/base.py`
+- `pycodex/tools/shell.py`
+- `pycodex/core/agent.py`
+- `pycodex/__main__.py`
+- `tests/approval/test_policy.py`
+- `tests/tools/test_orchestrator.py`
+- `tests/tools/test_write_file.py`
+- `tests/tools/test_list_dir.py`
+- `tests/tools/test_grep_files.py`
+- `tests/tools/test_shell.py`
+- `tests/core/test_agent.py`
+- `tests/test_main.py`
+- `todo-m2.md`
+
+### Gate results
+- `ruff check . --fix` — PASS
+- `ruff format .` — PASS
+- `mypy --strict pycodex/` — PASS (`Success: no issues found in 18 source files`)
+- `pytest tests/ -v` — PASS (`141 passed, 1 skipped`; skip: live OpenAI e2e unreachable in this environment)
+
+### Milestone verification command
+- Command: `python3 -m pycodex --approval on-request "create a file called test.txt with 'hello'"`
+- Result: BLOCKED in local runtime
+- Output: `[ERROR] Failed to initialize OpenAI client: openai package is required; install openai>=1.0 to use ModelClient`
+
+### Risks / assumptions
+- `ABORT` is now explicit terminal turn control flow: orchestrator raises `ToolAborted`, registry propagates, agent terminates active turn.
+- Shell approval-key canonicalization is intentionally conservative:
+  - canonicalizes equivalent wrapper forms (for example `/bin/bash -lc` vs `bash -lc`)
+  - normalizes whitespace only for a strict safe token subset
+  - preserves semantically sensitive inline shell forms as distinct keys
+
+### Next milestone recommendation
+- Proceed to Milestone 3 (Event Protocol + JSONL Mode) after local runtime setup supports the manual milestone verification command (`openai` install + reachable endpoint where required).

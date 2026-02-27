@@ -68,6 +68,7 @@ Run the smallest gate set that matches scope:
   - Why change is mechanical/low-risk or must remain atomic.
   - Rollback plan.
 - For non-trivial milestone work, track decomposition in `todo.md` with one behavior/contract change per task and explicit acceptance criteria.
+- Milestone-specific trackers are valid when present (for example `todo-m2.md`); treat the active milestone tracker as canonical for that milestone.
 - Do not mark task/milestone complete if acceptance criteria or required tests are missing.
 
 ## 8) Milestones (When Applicable)

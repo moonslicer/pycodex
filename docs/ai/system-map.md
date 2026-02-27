@@ -10,6 +10,7 @@ This document is the architecture map for agent behavior and contracts in this r
 ## Sources of Truth
 - Policy and workflow rules: `AGENTS.md`
 - Architecture and responsibilities: `engineering-plan.md`
+- Milestone tracking and completion evidence: `todo-m2.md`
 - Evaluation and regression process: `docs/ai/harness.md`
 - Durable decisions and postmortems: `docs/ai/memory.md`
 
@@ -18,13 +19,32 @@ This document is the architecture map for agent behavior and contracts in this r
 - Capture acceptance criteria in the task/PR before coding non-trivial changes.
 - Update this map when contract ownership moves.
 
-## Ownership Map (Initial)
-- Core agent loop and turn orchestration: `pycodex/core/agent.py` (planned)
-- Session and conversation state: `pycodex/core/session.py` (planned)
-- Model transport and streaming: `pycodex/core/model_client.py` (planned)
-- Tool contracts and dispatch: `pycodex/tools/base.py` and `pycodex/tools/orchestrator.py` (planned)
-- Approval and sandbox policies: `pycodex/approval/*.py` (planned)
-- Event protocol: `pycodex/protocol/events.py` (planned)
+## Ownership Map (Current: Milestones 1-2)
+- Core agent loop and turn orchestration: `pycodex/core/agent.py`
+- Session and conversation state: `pycodex/core/session.py`
+- Model transport and streaming mapping: `pycodex/core/model_client.py`
+- Tool contracts, dispatch, and serialization boundary: `pycodex/tools/base.py`
+- Approval flow and prompt orchestration: `pycodex/tools/orchestrator.py`
+- Approval policy and session-scoped cache store: `pycodex/approval/policy.py`
+- Tool handlers in current production surface:
+  - `pycodex/tools/shell.py`
+  - `pycodex/tools/read_file.py`
+  - `pycodex/tools/write_file.py`
+  - `pycodex/tools/list_dir.py`
+  - `pycodex/tools/grep_files.py`
+- Event protocol module `pycodex/protocol/events.py` is milestone 3 scope and not a current source of truth.
+
+## Key Runtime Contracts (Milestone 2)
+- Mutating tool calls are gated in `execute_with_approval()` based on `tool.is_mutating(args)`.
+- Approval decisions are stateful only through `ApprovalStore`; only `APPROVED_FOR_SESSION` is cached.
+- `DENIED` returns `ToolError(code="denied")` and does not raise.
+- `ABORT` raises `ToolAborted`; this propagates through `ToolRegistry` and is treated as terminal turn control flow by `core/agent.py`.
+- `write_file` approval key is the resolved absolute target path.
+- `shell` approval key is canonicalized conservatively:
+  - normalizes equivalent wrapper forms (`/bin/bash -lc` vs `bash -lc`)
+  - normalizes whitespace only for a strict safe token subset
+  - preserves semantically sensitive inline shell forms as distinct keys
+- Tool handlers return typed outcomes (`ToolResult | ToolError`); JSON serialization happens in `ToolRegistry.dispatch()`.
 
 ## Update Criteria
 Update this file when any of the following change:

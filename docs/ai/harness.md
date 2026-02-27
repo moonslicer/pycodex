@@ -32,6 +32,14 @@ Rules:
 - `tests/agent_harness/fixtures/`: canned inputs and expected outputs/metadata
 - `tests/agent_harness/test_*.py`: scenario assertions
 
+## Milestone 2 Coverage Snapshot
+- Approval-policy harness coverage lives in:
+  - `tests/agent_harness/test_approval_policy_scenarios.py`
+- Required scenarios covered:
+  - denied decision returns structured denied tool result and turn continues
+  - abort decision stops the active turn immediately
+  - approved-for-session decision skips the second prompt for the same operation
+
 ## Minimum Scenario Shape
 Each scenario should define:
 - Context/setup inputs
@@ -45,6 +53,9 @@ When a harness test fails:
 2. If intentional, update fixture/expectations and explain why in the PR/task summary.
 3. If unintentional, fix code/prompt/policy and rerun harness tests.
 
-## CI Integration (Target State)
-- Gate merges on harness tests for agent-affecting changes.
-- Keep fixture runtime small so checks stay fast.
+## CI Integration (Current)
+- CI runs:
+  - `pytest tests/ --ignore=tests/agent_harness -m "not e2e" -v`
+  - `pytest tests/agent_harness/ -v`
+  - `pytest tests/ -m "e2e" -v` (PR to `main` only)
+- Keep harness fixtures and scenarios deterministic and fast so CI remains actionable.
