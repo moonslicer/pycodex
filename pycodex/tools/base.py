@@ -3,9 +3,12 @@
 from __future__ import annotations
 
 import json
+import logging
 from dataclasses import dataclass
 from pathlib import Path
 from typing import Any, Protocol, TypeAlias
+
+_log = logging.getLogger(__name__)
 
 
 class ToolHandler(Protocol):
@@ -115,6 +118,7 @@ class ToolRouter:
         cwd: Path,
     ) -> str:
         """Dispatch a tool call payload from the model."""
+        _log.debug("routing tool %r", name)
         parsed_args = self._parse_arguments(arguments)
         if isinstance(parsed_args, ToolError):
             return serialize_tool_outcome(parsed_args)

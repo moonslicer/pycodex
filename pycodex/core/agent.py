@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
 from inspect import isawaitable
@@ -10,6 +11,8 @@ from typing import Any, Literal, Protocol
 
 from pycodex.core.model_client import OutputItemDone, OutputTextDelta
 from pycodex.core.session import PromptItem, Session
+
+_log = logging.getLogger(__name__)
 
 
 @dataclass(slots=True, frozen=True)
@@ -100,12 +103,14 @@ class Agent:
 
     async def run_turn(self, user_input: str) -> str:
         """Run one user turn until the model emits no tool calls."""
+        _log.debug("turn started: %r", user_input[:80])
         self.session.append_user_message(user_input)
         await self._emit(TurnStarted(user_input=user_input))
 
         while True:
             tool_calls, text = await self._sample_model_once()
             if not tool_calls:
+                _log.info("turn completed: %d chars", len(text))
                 await self._emit(TurnCompleted(final_text=text))
                 return text
 
@@ -117,6 +122,12 @@ class Agent:
                     call_id=tool_call.call_id,
                     name=tool_call.name,
                     arguments=tool_call.arguments,
+                )
+                _log.debug(
+                    "dispatching tool %r (call_id=%s) args=%s",
+                    tool_call.name,
+                    tool_call.call_id,
+                    _summarize_args(tool_call.arguments),
                 )
                 await self._emit(
                     ToolCallDispatched(
@@ -130,6 +141,7 @@ class Agent:
                     arguments=tool_call.arguments,
                     cwd=self.cwd,
                 )
+                _log.debug("tool %r result: %d chars", tool_call.name, len(result))
                 self.session.append_tool_result(tool_call.call_id, result)
                 await self._emit(
                     ToolResultReceived(
@@ -243,3 +255,25 @@ def _extract_assistant_text_from_item(item: Any) -> str | None:
     if not text_parts:
         return None
     return "".join(text_parts)
+
+
+_SUMMARIZE_TRUNCATE = 120  # chars per value before truncating
+
+
+def _summarize_args(arguments: str | dict[str, Any]) -> str:
+    """Return a compact one-line summary of tool arguments for debug logging.
+
+    Long string values are truncated so a write_file call with thousands of
+    characters of content doesn't flood the log.
+    """
+    if isinstance(arguments, str):
+        raw = arguments.strip()
+        return raw[:_SUMMARIZE_TRUNCATE] + ("…" if len(raw) > _SUMMARIZE_TRUNCATE else "")
+
+    parts: list[str] = []
+    for k, v in arguments.items():
+        v_str = repr(v)
+        if len(v_str) > _SUMMARIZE_TRUNCATE:
+            v_str = v_str[:_SUMMARIZE_TRUNCATE] + "…'"
+        parts.append(f"{k}={v_str}")
+    return "{" + ", ".join(parts) + "}"

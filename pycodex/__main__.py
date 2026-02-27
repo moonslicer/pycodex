@@ -4,6 +4,8 @@ from __future__ import annotations
 
 import argparse
 import asyncio
+import logging
+import os
 import sys
 from collections.abc import Sequence
 
@@ -27,6 +29,22 @@ def _build_parser() -> argparse.ArgumentParser:
         description="Run one non-interactive pycodex turn.",
     )
     parser.add_argument("prompt", help="User prompt for the model.")
+    parser.add_argument(
+        "--log-level",
+        default=os.environ.get("PYCODEX_LOG_LEVEL", "WARNING"),
+        choices=["DEBUG", "INFO", "WARNING", "ERROR"],
+        help="Logging verbosity (default: WARNING; env: PYCODEX_LOG_LEVEL).",
+    )
+    parser.add_argument(
+        "--log-filter",
+        default=None,
+        metavar="PREFIX",
+        help=(
+            "Only emit log records whose logger name starts with PREFIX. "
+            "Example: --log-filter pycodex silences httpcore, httpx, openai, asyncio. "
+            "Omit to show all loggers."
+        ),
+    )
     return parser
 
 
@@ -61,6 +79,18 @@ async def _run_prompt(prompt: str) -> str:
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
+    logging.basicConfig(
+        level=args.log_level,
+        format="%(levelname)s %(name)s: %(message)s",
+    )
+    if args.log_filter:
+        _prefix = args.log_filter
+
+        class _PrefixFilter(logging.Filter):
+            def filter(self, record: logging.LogRecord) -> bool:
+                return record.name.startswith(_prefix)
+
+        logging.getLogger().handlers[0].addFilter(_PrefixFilter())
     try:
         final_text = asyncio.run(_run_prompt(args.prompt))
     except Exception as exc:

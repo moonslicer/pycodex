@@ -96,6 +96,7 @@ Run the smallest gate set that matches scope:
 - Import order: stdlib, third-party, local.
 - Avoid blocking calls in async contexts.
 - Pydantic v2: `model_validate()`, `model_dump()`, `ConfigDict`.
+- Logging: module loggers via `getLogger(__name__)` only; configure only at the entry point (`__main__.py`).
 
 ## 10) Documentation Placement
 - Keep this file short and directive.

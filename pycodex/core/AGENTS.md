@@ -21,3 +21,9 @@ Applies in addition to root `AGENTS.md`. Root rules take precedence when they co
 ## Events
 - All events are emitted via a callback passed into the agent at construction — never printed directly.
 - Events must be emitted at each lifecycle point: turn started, tool call dispatched, tool result received, turn completed.
+
+## Logging
+- Use `logging.getLogger(__name__)` for module-level loggers in `agent.py` and adjacent modules.
+- Log level semantics: DEBUG for internal state (event types, dispatch routing), INFO for lifecycle milestones (turn start/end), WARNING/ERROR for unexpected states.
+- Never configure logging (`basicConfig`, `addHandler`) inside library modules — configuration belongs in `__main__.py` only.
+- The prohibition on logging in `model_client.py` stands: use the event callback instead.
