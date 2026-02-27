@@ -63,7 +63,9 @@ async def test_grep_files_tool_returns_matches_sorted_by_mtime(
     result = await GrepFilesTool().handle({"pattern": "def "}, tmp_path)
     payload = _expect_result(result).body
 
-    assert payload == {"matches": ["new.py", "old.py"], "truncated": False}
+    # rg handles sorting via --sortr=modified; Python-side sort is skipped for rg
+    # The fake process returns ["old.py", "new.py"] in that order
+    assert payload == {"matches": ["old.py", "new.py"], "truncated": False}
     assert calls
     assert calls[0][0] == "rg"
 
@@ -202,3 +204,85 @@ async def test_grep_files_tool_timeout_returns_error(tmp_path: Path, monkeypatch
 
     assert error.message == "Command timed out after 30000ms"
     assert process.killed is True
+
+
+# --- Validation error tests ---
+
+
+async def test_grep_files_tool_rejects_empty_pattern(tmp_path: Path) -> None:
+    result = await GrepFilesTool().handle({"pattern": ""}, tmp_path)
+    _expect_error(result, code="invalid_arguments")
+
+
+async def test_grep_files_tool_rejects_whitespace_pattern(tmp_path: Path) -> None:
+    result = await GrepFilesTool().handle({"pattern": "   "}, tmp_path)
+    _expect_error(result, code="invalid_arguments")
+
+
+async def test_grep_files_tool_rejects_limit_zero(tmp_path: Path) -> None:
+    result = await GrepFilesTool().handle({"pattern": "x", "limit": 0}, tmp_path)
+    _expect_error(result, code="invalid_arguments")
+
+
+async def test_grep_files_tool_rejects_limit_over_max(tmp_path: Path) -> None:
+    result = await GrepFilesTool().handle({"pattern": "x", "limit": 2001}, tmp_path)
+    _expect_error(result, code="invalid_arguments")
+
+
+async def test_grep_files_tool_rejects_path_outside_workspace(tmp_path: Path) -> None:
+    result = await GrepFilesTool().handle({"pattern": "x", "path": "/etc"}, tmp_path)
+    _expect_error(result, code="access_denied")
+
+
+async def test_grep_files_tool_rejects_nonexistent_path(tmp_path: Path) -> None:
+    result = await GrepFilesTool().handle(
+        {"pattern": "x", "path": "nonexistent_dir_xyz"}, tmp_path
+    )
+    _expect_error(result, code="not_found")
+
+
+# --- Command failure test ---
+
+
+async def test_grep_files_tool_command_failed_nonzero_exit(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    async def fake_create_subprocess_exec(*args: Any, **kwargs: Any) -> _FakeProcess:
+        _ = args, kwargs
+        return _FakeProcess(returncode=2, stderr=b"Permission denied\n")
+
+    monkeypatch.setattr("shutil.which", lambda name: "/usr/bin/rg" if name == "rg" else None)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    result = await GrepFilesTool().handle({"pattern": "needle"}, tmp_path)
+    error = _expect_error(result, code="command_failed")
+    assert "exit code 2" in error.message
+    assert "Permission denied" in error.message
+
+
+# --- grep fallback include glob test ---
+
+
+async def test_grep_files_tool_grep_fallback_passes_include(
+    tmp_path: Path, monkeypatch: Any
+) -> None:
+    (tmp_path / "a.py").write_text("def hi():\n    pass\n", encoding="utf-8")
+
+    command_calls: list[tuple[Any, ...]] = []
+
+    async def fake_create_subprocess_exec(*args: Any, **kwargs: Any) -> _FakeProcess:
+        command_calls.append(args)
+        _ = kwargs
+        return _FakeProcess(returncode=0, stdout=b"a.py\n")
+
+    monkeypatch.setattr("shutil.which", lambda name: None)
+    monkeypatch.setattr(asyncio, "create_subprocess_exec", fake_create_subprocess_exec)
+
+    result = await GrepFilesTool().handle({"pattern": "def ", "include": "*.py"}, tmp_path)
+    _expect_result(result)
+
+    assert command_calls
+    command = list(command_calls[0])
+    assert command[0] == "grep"
+    assert "--include" in command
+    assert "*.py" in command

@@ -93,7 +93,7 @@ class GrepFilesTool:
         if isinstance(target, ToolError):
             return target
 
-        use_rg = shutil.which("rg") is not None
+        use_rg = await asyncio.to_thread(shutil.which, "rg") is not None
         raw_matches = await _run_search(
             use_rg=use_rg,
             pattern=pattern,
@@ -104,12 +104,16 @@ class GrepFilesTool:
         if isinstance(raw_matches, ToolError):
             return raw_matches
 
-        sorted_matches = await asyncio.to_thread(_sort_by_mtime, raw_matches, workspace_root)
-        truncated = len(sorted_matches) > raw_limit
+        # rg already returns files sorted by --sortr=modified; only sort for grep fallback
+        if use_rg:
+            final_matches = raw_matches
+        else:
+            final_matches = await asyncio.to_thread(_sort_by_mtime, raw_matches, workspace_root)
+        truncated = len(final_matches) > raw_limit
 
         return ToolResult(
             body={
-                "matches": sorted_matches[:raw_limit],
+                "matches": final_matches[:raw_limit],
                 "truncated": truncated,
             }
         )
@@ -149,8 +153,6 @@ async def _run_search(
     workspace_root: Path,
 ) -> list[str] | ToolError:
     relative_target = str(target.relative_to(workspace_root))
-    if relative_target == ".":
-        relative_target = "."
 
     if use_rg:
         command = [
@@ -227,9 +229,9 @@ def _normalize_lines(lines: list[str]) -> list[str]:
 
 def _sort_by_mtime(paths: list[str], workspace_root: Path) -> list[str]:
     def key(path_text: str) -> float:
-        target = (workspace_root / path_text).resolve(strict=False)
+        abs_path = (workspace_root / path_text).resolve(strict=False)
         try:
-            return target.stat().st_mtime
+            return abs_path.stat().st_mtime
         except OSError:
             return 0.0
 

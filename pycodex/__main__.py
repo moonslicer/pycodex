@@ -12,6 +12,7 @@ from pycodex.core.config import load_config
 from pycodex.core.model_client import ModelClient
 from pycodex.core.session import Session
 from pycodex.tools.base import ToolRegistry, ToolRouter
+from pycodex.tools.grep_files import GrepFilesTool
 from pycodex.tools.list_dir import ListDirTool
 from pycodex.tools.read_file import ReadFileTool
 from pycodex.tools.shell import ShellTool
@@ -33,6 +34,7 @@ def _build_tool_router() -> ToolRouter:
     registry.register(ReadFileTool())
     registry.register(WriteFileTool())
     registry.register(ListDirTool())
+    registry.register(GrepFilesTool())
     return ToolRouter(registry)
 
 
