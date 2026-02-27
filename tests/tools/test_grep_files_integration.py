@@ -8,6 +8,8 @@ import pytest
 from pycodex.tools.base import ToolError, ToolResult
 from pycodex.tools.grep_files import GrepFilesTool
 
+pytestmark = pytest.mark.integration
+
 
 def _expect_result(outcome: ToolResult | ToolError) -> ToolResult:
     assert isinstance(outcome, ToolResult)

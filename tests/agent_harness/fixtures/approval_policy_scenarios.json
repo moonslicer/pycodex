@@ -1,0 +1,39 @@
+{
+  "denied": {
+    "user_input": "create denied file",
+    "assistant_after_tool": "denied path handled",
+    "call": {
+      "type": "function_call",
+      "name": "write_file",
+      "arguments": "{\"file_path\":\"denied.txt\",\"content\":\"blocked\"}",
+      "call_id": "call_denied"
+    }
+  },
+  "abort": {
+    "user_input": "abort this write",
+    "call": {
+      "type": "function_call",
+      "name": "write_file",
+      "arguments": "{\"file_path\":\"abort.txt\",\"content\":\"blocked\"}",
+      "call_id": "call_abort"
+    }
+  },
+  "session_cache": {
+    "user_input": "write same path twice",
+    "assistant_after_tool": "session cache handled",
+    "calls": [
+      {
+        "type": "function_call",
+        "name": "write_file",
+        "arguments": "{\"file_path\":\"cache.txt\",\"content\":\"first\"}",
+        "call_id": "call_cache_1"
+      },
+      {
+        "type": "function_call",
+        "name": "write_file",
+        "arguments": "{\"file_path\":\"cache.txt\",\"content\":\"second\"}",
+        "call_id": "call_cache_2"
+      }
+    ]
+  }
+}
