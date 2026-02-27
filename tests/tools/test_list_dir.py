@@ -47,7 +47,7 @@ async def test_list_dir_tool_applies_offset_limit_and_more_entries_message(tmp_p
     result = await ListDirTool().handle({"dir_path": ".", "offset": 2, "limit": 2}, tmp_path)
     body = _expect_result(result).body
 
-    assert body == "b.txt\nc.txt\n… 1 more entries"
+    assert body == "b.txt\nc.txt\n\u2026 1 more entries"
 
 
 async def test_list_dir_tool_marks_directories_and_symlinks(tmp_path: Path) -> None:
@@ -67,3 +67,41 @@ async def test_list_dir_tool_nonexistent_path_returns_error(tmp_path: Path) -> N
     error = _expect_error(result, code="not_found")
 
     assert error.message == f"Directory not found: {tmp_path / 'missing'}"
+
+
+async def test_list_dir_tool_rejects_path_outside_workspace(tmp_path: Path) -> None:
+    result = await ListDirTool().handle({"dir_path": "../outside"}, tmp_path)
+    assert isinstance(result, ToolError)
+    assert result.code == "access_denied"
+
+
+async def test_list_dir_tool_rejects_file_as_dir_path(tmp_path: Path) -> None:
+    (tmp_path / "file.txt").write_text("content")
+    result = await ListDirTool().handle({"dir_path": "file.txt"}, tmp_path)
+    assert isinstance(result, ToolError)
+    assert result.code == "not_a_directory"
+
+
+async def test_list_dir_tool_rejects_offset_zero(tmp_path: Path) -> None:
+    result = await ListDirTool().handle({"dir_path": ".", "offset": 0}, tmp_path)
+    assert isinstance(result, ToolError)
+    assert result.code == "invalid_arguments"
+
+
+async def test_list_dir_tool_rejects_depth_over_max(tmp_path: Path) -> None:
+    result = await ListDirTool().handle({"dir_path": ".", "depth": 11}, tmp_path)
+    assert isinstance(result, ToolError)
+    assert result.code == "invalid_arguments"
+
+
+async def test_list_dir_tool_rejects_limit_over_max(tmp_path: Path) -> None:
+    result = await ListDirTool().handle({"dir_path": ".", "limit": 2001}, tmp_path)
+    assert isinstance(result, ToolError)
+    assert result.code == "invalid_arguments"
+
+
+async def test_list_dir_tool_offset_out_of_range(tmp_path: Path) -> None:
+    (tmp_path / "a.txt").write_text("x")
+    result = await ListDirTool().handle({"dir_path": ".", "offset": 100}, tmp_path)
+    assert isinstance(result, ToolError)
+    assert result.code == "offset_out_of_range"

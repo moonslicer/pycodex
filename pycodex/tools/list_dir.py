@@ -14,6 +14,7 @@ DEFAULT_DEPTH = 2
 MAX_LIMIT = 2_000
 MAX_DEPTH = 10
 MAX_ENTRY_CHARS = 500
+MAX_TOTAL_ENTRIES = 50_000
 
 
 class ListDirTool:
@@ -42,6 +43,7 @@ class ListDirTool:
                         "limit": {
                             "type": "integer",
                             "minimum": 1,
+                            "maximum": 2000,
                             "description": (
                                 "Optional entry count to return. "
                                 f"Defaults to {DEFAULT_LIMIT}, max {MAX_LIMIT}."
@@ -50,6 +52,7 @@ class ListDirTool:
                         "depth": {
                             "type": "integer",
                             "minimum": 1,
+                            "maximum": 10,
                             "description": (
                                 "Optional maximum depth. "
                                 f"Defaults to {DEFAULT_DEPTH}, max {MAX_DEPTH}."
@@ -63,7 +66,6 @@ class ListDirTool:
         }
 
     async def is_mutating(self, args: dict[str, Any]) -> bool:
-        _ = args
         return False
 
     async def handle(self, args: dict[str, Any], cwd: Path) -> ToolOutcome:
@@ -96,25 +98,27 @@ class ListDirTool:
                 code="invalid_arguments",
             )
 
-        prepared = await asyncio.to_thread(_prepare_directory, dir_path, cwd)
-        if isinstance(prepared, ToolError):
-            return prepared
-
         collected = await asyncio.to_thread(
-            _collect_window_and_count,
-            prepared,
+            _prepare_and_collect,
+            dir_path,
+            cwd,
             depth,
             offset,
             limit,
         )
         if isinstance(collected, ToolError):
             return collected
-        window, total_entries = collected
+        window, total_entries, capped = collected
+
         if total_entries == 0:
+            if offset != DEFAULT_OFFSET:
+                return ToolError(
+                    message="offset exceeds directory entry count", code="offset_out_of_range"
+                )
             return ToolResult(body="(empty directory)")
 
         start_index = offset - 1
-        if start_index >= total_entries:
+        if start_index >= total_entries and not capped:
             return ToolError(
                 message="offset exceeds directory entry count", code="offset_out_of_range"
             )
@@ -122,7 +126,10 @@ class ListDirTool:
         remaining = total_entries - (start_index + len(window))
         rendered = "\n".join(window)
         if remaining > 0:
-            rendered = f"{rendered}\n… {remaining} more entries"
+            if capped:
+                rendered = f"{rendered}\n\u2026 {MAX_TOTAL_ENTRIES}+ entries"
+            else:
+                rendered = f"{rendered}\n\u2026 {remaining} more entries"
 
         return ToolResult(body=rendered)
 
@@ -156,21 +163,43 @@ def _prepare_directory(dir_path: str, cwd: Path) -> Path | ToolError:
     return resolved_path
 
 
+def _prepare_and_collect(
+    dir_path: str,
+    cwd: Path,
+    depth: int,
+    offset: int,
+    limit: int,
+) -> tuple[list[str], int, bool] | ToolError:
+    """Prepare the directory path then collect the listing window and total count.
+
+    Returns a tuple of (window, total_entries, capped) where capped indicates
+    that the traversal hit MAX_TOTAL_ENTRIES and stopped early.
+    """
+    prepared = _prepare_directory(dir_path, cwd)
+    if isinstance(prepared, ToolError):
+        return prepared
+    return _collect_window_and_count(prepared, depth, offset, limit)
+
+
 def _collect_window_and_count(
     root: Path,
     depth: int,
     offset: int,
     limit: int,
-) -> tuple[list[str], int] | ToolError:
+) -> tuple[list[str], int, bool] | ToolError:
     window: list[str] = []
     start_index = offset - 1
     end_index = start_index + limit
     total_entries = 0
+    capped = False
 
     def walk(current: Path, level: int) -> None:
-        nonlocal total_entries
+        nonlocal total_entries, capped
         children = sorted(current.iterdir(), key=lambda item: item.name)
         for child in children:
+            if total_entries >= MAX_TOTAL_ENTRIES:
+                capped = True
+                return
             marker = _entry_marker(child)
             label = _truncate_entry(f"{child.name}{marker}")
             if start_index <= total_entries < end_index:
@@ -179,6 +208,7 @@ def _collect_window_and_count(
 
             if level + 1 >= depth:
                 continue
+            # Do not recurse into symlinked directories to avoid infinite cycles
             if child.is_symlink() or not child.is_dir():
                 continue
 
@@ -189,7 +219,7 @@ def _collect_window_and_count(
     except OSError as exc:
         return ToolError(message=f"Failed to list directory: {exc}", code="read_failed")
 
-    return window, total_entries
+    return window, total_entries, capped
 
 
 def _entry_marker(path: Path) -> str:
