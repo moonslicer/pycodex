@@ -44,6 +44,19 @@ class WriteFileTool:
         _ = args
         return True
 
+    def approval_key(self, args: dict[str, Any], cwd: Path) -> str | ToolError:
+        """Return the approval cache key (resolved absolute path) for this call."""
+        file_path = args.get("file_path")
+        if not isinstance(file_path, str) or not file_path.strip():
+            return ToolError(
+                message="Invalid arguments: 'file_path' must be a non-empty string",
+                code="invalid_arguments",
+            )
+        resolved = _resolve_path(file_path=file_path, cwd=cwd)
+        if isinstance(resolved, ToolError):
+            return resolved
+        return str(resolved)
+
     async def handle(self, args: dict[str, Any], cwd: Path) -> ToolOutcome:
         file_path = args.get("file_path")
         if not isinstance(file_path, str) or not file_path.strip():
@@ -76,19 +89,8 @@ class WriteFileTool:
 
 
 def build_write_file_approval_key(args: dict[str, Any], cwd: Path) -> str | ToolError:
-    """Return the approval cache key for write-file calls."""
-
-    file_path = args.get("file_path")
-    if not isinstance(file_path, str) or not file_path.strip():
-        return ToolError(
-            message="Invalid arguments: 'file_path' must be a non-empty string",
-            code="invalid_arguments",
-        )
-
-    resolved_path = _resolve_path(file_path=file_path, cwd=cwd)
-    if isinstance(resolved_path, ToolError):
-        return resolved_path
-    return str(resolved_path)
+    """Return the approval cache key for write-file calls (thin wrapper for backwards compat)."""
+    return WriteFileTool().approval_key(args, cwd)
 
 
 def _resolve_path(*, file_path: str, cwd: Path) -> Path | ToolError:
@@ -112,8 +114,7 @@ def _write_atomic(path: Path, content: str) -> int | ToolError:
     except OSError as exc:
         return ToolError(message=f"Failed to create parent directories: {exc}", code="write_failed")
 
-    temp_path = path.with_name(f"{path.name}.tmp")
-    content_bytes = content.encode("utf-8")
+    temp_path = path.with_name(f".{path.name}.{os.getpid()}.tmp")
 
     try:
         temp_path.write_text(content, encoding="utf-8")
@@ -123,4 +124,4 @@ def _write_atomic(path: Path, content: str) -> int | ToolError:
             temp_path.unlink(missing_ok=True)
         return ToolError(message=f"Failed to write file: {exc}", code="write_failed")
 
-    return len(content_bytes)
+    return len(content.encode("utf-8"))

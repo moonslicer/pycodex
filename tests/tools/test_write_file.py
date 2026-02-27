@@ -38,7 +38,9 @@ async def test_write_file_tool_uses_atomic_tmp_path_and_cleans_it_up(tmp_path: P
     )
     _expect_result(result)
 
-    assert not (tmp_path / "notes.txt.tmp").exists()
+    # Temp file uses .{name}.{pid}.tmp pattern — none should remain after success
+    remaining_tmps = list(tmp_path.glob(".notes.txt.*.tmp"))
+    assert remaining_tmps == [], f"Unexpected temp files: {remaining_tmps}"
     assert (tmp_path / "notes.txt").read_text(encoding="utf-8") == "abc"
 
 
@@ -73,3 +75,41 @@ async def test_write_file_tool_overwrites_existing_file(tmp_path: Path) -> None:
     _expect_result(result)
 
     assert target.read_text(encoding="utf-8") == "new value"
+
+
+def test_approval_key_returns_resolved_absolute_path(tmp_path: Path) -> None:
+    key = WriteFileTool().approval_key({"file_path": "foo.txt"}, tmp_path)
+    assert key == str(tmp_path / "foo.txt")
+
+
+def test_approval_key_rejects_whitespace_file_path(tmp_path: Path) -> None:
+    result = WriteFileTool().approval_key({"file_path": "   "}, tmp_path)
+    assert isinstance(result, ToolError)
+    assert result.code == "invalid_arguments"
+
+
+def test_approval_key_rejects_missing_file_path(tmp_path: Path) -> None:
+    result = WriteFileTool().approval_key({}, tmp_path)
+    assert isinstance(result, ToolError)
+    assert result.code == "invalid_arguments"
+
+
+async def test_write_file_tool_rejects_missing_content(tmp_path: Path) -> None:
+    result = await WriteFileTool().handle({"file_path": "x.txt"}, tmp_path)
+    assert isinstance(result, ToolError)
+    assert result.code == "invalid_arguments"
+
+
+async def test_write_file_tool_rejects_non_string_content(tmp_path: Path) -> None:
+    result = await WriteFileTool().handle({"file_path": "x.txt", "content": 42}, tmp_path)
+    assert isinstance(result, ToolError)
+    assert result.code == "invalid_arguments"
+
+
+async def test_write_file_tool_reports_unicode_byte_count(tmp_path: Path) -> None:
+    content = "こんにちは"  # 5 chars, 15 UTF-8 bytes
+    result = await WriteFileTool().handle(
+        {"file_path": "unicode.txt", "content": content}, tmp_path
+    )
+    payload = _expect_result(result).body
+    assert payload["bytes_written"] == 15

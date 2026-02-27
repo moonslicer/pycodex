@@ -14,6 +14,7 @@ from pycodex.core.session import Session
 from pycodex.tools.base import ToolRegistry, ToolRouter
 from pycodex.tools.read_file import ReadFileTool
 from pycodex.tools.shell import ShellTool
+from pycodex.tools.write_file import WriteFileTool
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -29,6 +30,7 @@ def _build_tool_router() -> ToolRouter:
     registry = ToolRegistry()
     registry.register(ShellTool())
     registry.register(ReadFileTool())
+    registry.register(WriteFileTool())
     return ToolRouter(registry)
 
 
