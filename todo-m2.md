@@ -151,8 +151,22 @@ Extend `python -m pycodex "<prompt>"` with:
   - Depends on: T5
   - Verify: `pytest tests/tools/test_grep_files.py -v`
 
+- [ ] T13: Approval semantics hardening (`ABORT` + decision-key canonicalization)
+  - Resolve and enforce a single `ABORT` contract end-to-end:
+    - User choosing `ABORT` must stop the active turn immediately (no further model/tool work in that turn).
+    - Align implementation and docs across `tools/orchestrator.py`, `tools/base.py`, `core/agent.py`, and this TODO.
+    - Remove conflicting behavior where abort is converted into a normal tool error continuation path.
+  - Add shell approval-key canonicalization for session cache stability:
+    - Normalize equivalent shell wrappers/argv forms to the same approval key (for example `/bin/bash -lc "ls -la"` vs `bash -lc "ls   -la"`).
+    - Keep `write_file` key behavior unchanged (resolved absolute path).
+  - Add deterministic regression tests:
+    - `ABORT` path proves turn termination behavior.
+    - Canonicalized shell variants hit the same session approval cache key.
+  - Depends on: T2, T6, T7, T9
+  - Verify: `pytest tests/tools/test_orchestrator.py -v`
+
 ## Completion Checklist
-- [ ] All T1–T12 done
+- [ ] All T1–T13 done
 - [ ] Quality gates all pass (`ruff check`, `ruff format`, `mypy --strict`, `pytest tests/ -v`)
 - [ ] Milestone verification command passes
 - [ ] Milestone report includes: files changed, gate results, verification output, risks/assumptions, next milestone recommendation
