@@ -35,7 +35,7 @@ Build a runnable `python -m pycodex "<prompt>"` flow that:
 - `Session` is the only history mutator.
 - `Session.to_prompt()` returns a copy (no shared mutable history leaks).
 - `model_client` yields typed event dataclasses, not raw dicts.
-- Tool failures return strings prefixed with `[ERROR]`.
+- Tool failures return `ToolError` instances (serialized to structured JSON at the registry boundary).
 
 ### Quality Gates
 - `ruff check . --fix`

@@ -8,9 +8,10 @@ Applies in addition to root `AGENTS.md`. Root rules take precedence when they co
 - `is_mutating()` must be correct: false positives (over-cautious) are acceptable; false negatives (claiming read-only when mutating) are bugs.
 
 ## Error Handling
-- Tool errors are returned as strings with an `[ERROR]` prefix — never raised as exceptions to the agent loop.
-- A tool that fails must still return a string result so the agent can reason about the failure.
-- Timeouts must be caught and returned as `[ERROR] Command timed out after {n}s`.
+- Tool handlers return a typed `ToolOutcome` (`ToolResult | ToolError`) — never raise exceptions to the agent loop.
+- A tool that fails must return `ToolError(message=..., code=...)` so the agent can reason about the failure.
+- Timeouts must be caught and returned as `ToolError(message="Command timed out after {n}ms", code="timeout")`.
+- Serialization to JSON string happens at `ToolRegistry.dispatch` via `serialize_tool_outcome` — not inside individual tool handlers.
 
 ## File Organization
 - Each tool lives in its own file (`shell.py`, `read_file.py`, etc.).

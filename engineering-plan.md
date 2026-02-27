@@ -80,74 +80,66 @@ Each milestone produces a **runnable system**. You can stop at any milestone and
 
 ---
 
-### Milestone 1: Minimal Agent Loop (Non-Interactive)
+### Milestone 1: Minimal Agent Loop (Non-Interactive) ✅ COMPLETE
 
 **Goal**: A CLI that takes a prompt, calls a model, executes tool calls, loops until done, and prints the result.
 
-**Files to create**:
+**Status**: **Complete** — all core tasks (T1–T8, T9) implemented and passing. One optional task (T8.5 opt-in E2E tests) remains open but is not a blocker.
 
-1. **`core/config.py`** — Pydantic `Config` model
-   - Fields: `model`, `api_key` (from `OPENAI_API_KEY` env), `api_base_url`, `cwd`
-   - Load from env vars + optional `pycodex.toml`
+---
 
-2. **`core/model_client.py`** — Async streaming model client
-   - `ModelClient.stream(messages, tools) -> AsyncIterator[ResponseEvent]`
-   - Wraps `openai.AsyncOpenAI().responses.create(stream=True)`
-   - `ResponseEvent` dataclass variants: `OutputTextDelta`, `OutputItemDone`, `Completed`
-   - Key reference: the Codex pattern of iterating over response stream events and collecting tool call items
+#### What was built
 
-3. **`core/session.py`** — Session state
-   - `Session` class: holds message history (list of response input items), config, event callbacks
-   - `append_user_message()`, `append_tool_result()`, `to_prompt() -> list`
+All 8 planned files were created with the following implementations and notable divergences from the original spec:
 
-4. **`tools/base.py`** — Tool system foundation
-   - `ToolHandler` protocol:
-     ```python
-     class ToolHandler(Protocol):
-         name: str
-         def tool_spec(self) -> dict: ...          # JSON schema for API
-         async def is_mutating(self, args: dict) -> bool: ...
-         async def handle(self, args: dict, cwd: Path) -> str: ...
-     ```
-   - `ToolRegistry`: `dict[str, ToolHandler]`, `register()`, `dispatch(name, args)`
-   - `ToolRouter`: builds tool spec list for API, routes model tool_call items to handlers
+1. **`core/config.py`** ✅ — `Config` (Pydantic BaseModel) with `model`, `api_key`, `api_base_url`, `cwd`. `load_config()` merges defaults < TOML < env vars.
 
-5. **`tools/shell.py`** — Shell execution
-   - `asyncio.create_subprocess_exec(["bash", "-c", command])`
-   - Capture stdout+stderr with configurable timeout (default 120s)
-   - Return formatted output: exit code + truncated output
-   - Reference: `codex-rs/core/src/tools/handlers/shell.rs`
+2. **`core/model_client.py`** ✅ — `ModelClient.stream()` yields typed dataclass events (`OutputTextDelta`, `OutputItemDone`, `Completed`). Wraps `openai.AsyncOpenAI().responses.create(stream=True)`. Added transient-retry logic (max 2 attempts on 5xx/429/timeout). `_map_response_event()` keeps raw dicts fully isolated from callers. Added `ModelClientError`, `ModelClientSetupError`, `ModelClientStreamError` for clean error propagation.
 
-6. **`tools/read_file.py`** — File reading
-   - Accept `file_path`, optional `offset`/`limit`
-   - Return content with line numbers (like `cat -n`)
-   - Reference: `codex-rs/core/src/tools/handlers/read_file.rs`
+3. **`core/session.py`** ✅ — `Session` with `append_user_message`, `append_assistant_message`, `append_tool_result`, `append_function_call`, `to_prompt()`. TypedDicts for all item variants. `to_prompt()` returns a detached copy. Tool results capped at 200K chars with a truncation marker. Expanded beyond spec: added `append_function_call` and `append_assistant_message` required by the agent loop.
 
-7. **`core/agent.py`** — The core agent loop
-   ```python
-   async def run_turn(session, user_input):
-       session.append_user_message(user_input)
-       while True:
-           # Stream model response
-           tool_calls, text = await _run_sampling_request(session)
-           if not tool_calls:
-               return text  # Done — model gave final answer
-           # Execute tool calls concurrently
-           results = await asyncio.gather(*[
-               router.dispatch(tc) for tc in tool_calls
-           ])
-           # Append results to history, loop for follow-up
-           for tc, result in zip(tool_calls, results):
-               session.append_tool_result(tc.call_id, result)
-   ```
-   - Reference: `codex-rs/core/src/codex.rs` lines ~4744-5104 (`run_turn`)
+4. **`tools/base.py`** ✅ — `ToolHandler` protocol, `ToolRegistry`, `ToolRouter`, `ToolResult`, `ToolError`, `ToolOutcome`, `serialize_tool_outcome`. `handle` returns `ToolOutcome = ToolResult | ToolError` (not a bare string as originally specced). Serialization to the model-facing JSON string is isolated in `serialize_tool_outcome`.
 
-8. **`__main__.py`** — CLI entry point
-   - Parse prompt from args, call `run_turn()`, print result
+5. **`tools/shell.py`** ✅ — `ShellTool`. `asyncio.create_subprocess_exec(["bash", "-c", cmd])`. Default timeout 10s (not 120s as in spec — safer default). Output capped at 1MB. Returns `ToolResult` with JSON body containing `output`, `exit_code`, `duration_seconds`. `is_mutating` returns `True`.
+
+6. **`tools/read_file.py`** ✅ — `ReadFileTool`. Line-numbered output with `L{n}:` prefix. Optional `offset`/`limit` (default 200, max 2000). Workspace-containment security check. Supports `response_format="json"` for metadata. Parallel read semaphore (max 4). Returns `ToolResult`. `is_mutating` returns `False`.
+
+7. **`core/agent.py`** ✅ — `Agent` dataclass with `run_turn(user_input)`. Event system: `TurnStarted`, `ToolCallDispatched`, `ToolResultReceived`, `TurnCompleted`. Protocol interfaces `SupportsModelClient` and `SupportsToolRouter` for testability. Module-level `run_turn()` convenience wrapper. `on_event` callback supports both sync and async callables.
+
+8. **`__main__.py`** ✅ — `main(argv)` + `_run_prompt(prompt)`. `ArgumentParser` for single positional `prompt`. Returns exit code 0/1. Error messages go to stderr, final answer to stdout.
+
+---
+
+#### Deviations from original spec
+
+| Spec | Actual |
+|---|---|
+| `handle() -> str` | `handle() -> ToolOutcome` (T9 structured outcomes) |
+| Shell default timeout 120s | 10s (more conservative for interactive use) |
+| Shell returns plain string | Returns `ToolResult` with JSON body |
+| `Session` has 3 append methods | 4 methods — added `append_function_call`, `append_assistant_message` |
+| No retry in model client | 2-attempt transient retry with backoff |
+
+---
+
+#### Quality gates (all passing)
+
+- `ruff check . --fix` — clean
+- `ruff format .` — clean
+- `mypy --strict pycodex/` — 12 source files, no issues
+- `pytest tests/ -v` — **59 tests passing** (0 failures) — includes structured outcome tests for T9
+
+---
+
+#### Remaining open item
+
+- **T8.5** (opt-in E2E, non-blocker): Integration tests using fakes for CLI wiring + `@pytest.mark.e2e` live-network smoke test gated by `OPENAI_API_KEY`. Can be added at any time; does not block M2.
+
+---
+
+**Key learnings**: Async agent loop; typed streaming events; Protocol-based tool dispatch; structured outcome types isolating failure modes; session-as-sole-history-mutator invariant; copy-on-read prompt snapshots.
 
 **Test it**: `python -m pycodex "list the Python files in the current directory"`
-
-**Key learning**: The agent loop pattern, streaming responses, tool dispatch, concurrent execution.
 
 ---
 

@@ -19,3 +19,4 @@ Steps:
 
 Do not push unless explicitly asked.
 Do not amend previous commits — always create a new commit.
+Do not add Co-Authored-By trailers to commit messages.
