@@ -100,20 +100,26 @@ class ListDirTool:
         if isinstance(prepared, ToolError):
             return prepared
 
-        entries = await asyncio.to_thread(_collect_entries, prepared, depth)
-        if isinstance(entries, ToolError):
-            return entries
-        if not entries:
+        collected = await asyncio.to_thread(
+            _collect_window_and_count,
+            prepared,
+            depth,
+            offset,
+            limit,
+        )
+        if isinstance(collected, ToolError):
+            return collected
+        window, total_entries = collected
+        if total_entries == 0:
             return ToolResult(body="(empty directory)")
 
         start_index = offset - 1
-        if start_index >= len(entries):
+        if start_index >= total_entries:
             return ToolError(
                 message="offset exceeds directory entry count", code="offset_out_of_range"
             )
 
-        window = entries[start_index : start_index + limit]
-        remaining = len(entries) - (start_index + len(window))
+        remaining = total_entries - (start_index + len(window))
         rendered = "\n".join(window)
         if remaining > 0:
             rendered = f"{rendered}\n… {remaining} more entries"
@@ -150,15 +156,26 @@ def _prepare_directory(dir_path: str, cwd: Path) -> Path | ToolError:
     return resolved_path
 
 
-def _collect_entries(root: Path, depth: int) -> list[str] | ToolError:
-    results: list[str] = []
+def _collect_window_and_count(
+    root: Path,
+    depth: int,
+    offset: int,
+    limit: int,
+) -> tuple[list[str], int] | ToolError:
+    window: list[str] = []
+    start_index = offset - 1
+    end_index = start_index + limit
+    total_entries = 0
 
     def walk(current: Path, level: int) -> None:
+        nonlocal total_entries
         children = sorted(current.iterdir(), key=lambda item: item.name)
         for child in children:
             marker = _entry_marker(child)
             label = _truncate_entry(f"{child.name}{marker}")
-            results.append(f"{'  ' * level}{label}")
+            if start_index <= total_entries < end_index:
+                window.append(f"{'  ' * level}{label}")
+            total_entries += 1
 
             if level + 1 >= depth:
                 continue
@@ -172,7 +189,7 @@ def _collect_entries(root: Path, depth: int) -> list[str] | ToolError:
     except OSError as exc:
         return ToolError(message=f"Failed to list directory: {exc}", code="read_failed")
 
-    return results
+    return window, total_entries
 
 
 def _entry_marker(path: Path) -> str:
