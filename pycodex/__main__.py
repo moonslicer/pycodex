@@ -18,6 +18,8 @@ from pycodex.tools.read_file import ReadFileTool
 from pycodex.tools.shell import ShellTool
 from pycodex.tools.write_file import WriteFileTool
 
+EXPECTED_TOOL_NAMES = {"shell", "read_file", "write_file", "list_dir", "grep_files"}
+
 
 def _build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
@@ -30,12 +32,16 @@ def _build_parser() -> argparse.ArgumentParser:
 
 def _build_tool_router() -> ToolRouter:
     registry = ToolRegistry()
+    _register_default_tools(registry)
+    return ToolRouter(registry)
+
+
+def _register_default_tools(registry: ToolRegistry) -> None:
     registry.register(ShellTool())
     registry.register(ReadFileTool())
     registry.register(WriteFileTool())
     registry.register(ListDirTool())
     registry.register(GrepFilesTool())
-    return ToolRouter(registry)
 
 
 async def _run_prompt(prompt: str) -> str:

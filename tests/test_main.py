@@ -66,7 +66,7 @@ def test_main_runs_turn_and_prints_output(
             for spec in tool_router.tool_specs()
             if spec.get("type") == "function" and isinstance(spec.get("function"), dict)
         }
-        assert tool_names == {"shell", "read_file"}
+        assert tool_names == main_module.EXPECTED_TOOL_NAMES
 
         return "final-answer"
 
