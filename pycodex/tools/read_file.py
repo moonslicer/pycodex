@@ -13,7 +13,14 @@ MAX_LINE_CHARS = 500
 MAX_OUTPUT_BYTES = 262_144
 MAX_PARALLEL_READS = 4
 
-_READ_SEMAPHORE = asyncio.Semaphore(MAX_PARALLEL_READS)
+_READ_SEMAPHORE: asyncio.Semaphore | None = None
+
+
+def _get_semaphore() -> asyncio.Semaphore:
+    global _READ_SEMAPHORE
+    if _READ_SEMAPHORE is None:
+        _READ_SEMAPHORE = asyncio.Semaphore(MAX_PARALLEL_READS)
+    return _READ_SEMAPHORE
 
 
 class ReadFileTool:
@@ -64,7 +71,6 @@ class ReadFileTool:
         }
 
     async def is_mutating(self, args: dict[str, Any]) -> bool:
-        _ = args
         return False
 
     async def handle(self, args: dict[str, Any], cwd: Path) -> str:
@@ -94,7 +100,7 @@ class ReadFileTool:
             return prepared
         path, file_size_bytes = prepared
 
-        async with _READ_SEMAPHORE:
+        async with _get_semaphore():
             try:
                 window, total_seen, has_more = await asyncio.to_thread(
                     _read_window,
@@ -164,9 +170,7 @@ def _read_window(path: Path, offset: int, limit: int) -> tuple[list[tuple[int, s
                 has_more = True
                 break
 
-            normalized = raw_line.rstrip("\n")
-            if normalized.endswith("\r"):
-                normalized = normalized[:-1]
+            normalized = raw_line.rstrip("\r\n")
             window.append((total_seen, _truncate_line(normalized)))
 
     return window, total_seen, has_more

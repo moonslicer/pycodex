@@ -8,6 +8,7 @@ from inspect import isawaitable
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+from pycodex.core.model_client import OutputItemDone, OutputTextDelta
 from pycodex.core.session import PromptItem, Session
 
 
@@ -140,34 +141,24 @@ class Agent:
 
     async def _sample_model_once(self) -> tuple[list[ParsedToolCall], str]:
         text_parts: list[str] = []
-        completed_message_parts: list[str] = []
         tool_calls: list[ParsedToolCall] = []
 
         async for event in self.model_client.stream(
             messages=self.session.to_prompt(),
             tools=self.tool_router.tool_specs(),
         ):
-            event_type = getattr(event, "type", None)
-            if event_type == "output_text_delta":
-                delta = getattr(event, "delta", None)
-                if isinstance(delta, str):
-                    text_parts.append(delta)
-                continue
-
-            if event_type == "output_item_done":
-                item = getattr(event, "item", None)
-                parsed = _parse_tool_call_item(item=item, ordinal=len(tool_calls) + 1)
+            if isinstance(event, OutputTextDelta):
+                text_parts.append(event.delta)
+            elif isinstance(event, OutputItemDone):
+                parsed = _parse_tool_call_item(item=event.item, ordinal=len(tool_calls) + 1)
                 if parsed is not None:
                     tool_calls.append(parsed)
-                    continue
+                elif not text_parts:
+                    completed_text = _extract_assistant_text_from_item(event.item)
+                    if completed_text is not None:
+                        text_parts.append(completed_text)
 
-                completed_text = _extract_assistant_text_from_item(item)
-                if completed_text is not None:
-                    completed_message_parts.append(completed_text)
-
-        if text_parts:
-            return tool_calls, "".join(text_parts)
-        return tool_calls, "".join(completed_message_parts)
+        return tool_calls, "".join(text_parts)
 
     async def _emit(self, event: AgentEvent) -> None:
         if self.on_event is None:

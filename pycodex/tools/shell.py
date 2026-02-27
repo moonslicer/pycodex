@@ -44,7 +44,6 @@ class ShellTool:
         }
 
     async def is_mutating(self, args: dict[str, Any]) -> bool:
-        _ = args
         return True
 
     async def handle(self, args: dict[str, Any], cwd: Path) -> str:
@@ -62,7 +61,7 @@ class ShellTool:
                 "bash",
                 "-c",
                 command,
-                cwd=str(cwd),
+                cwd=cwd,
                 stdout=PIPE,
                 stderr=PIPE,
             )

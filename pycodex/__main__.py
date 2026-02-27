@@ -1,3 +1,5 @@
+"""CLI entry point for pycodex."""
+
 from __future__ import annotations
 
 import argparse
