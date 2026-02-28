@@ -65,11 +65,27 @@ requires-python = ">=3.11"
 dependencies = [
     "openai>=1.0",       # Model API (Responses API with streaming)
     "pydantic>=2.0",     # Data validation, event serialization
-    "rich>=13.0",        # Terminal formatting, markdown, syntax highlight
-    "textual>=0.40",     # TUI framework (built on rich)
-    "typer>=0.9",        # CLI argument parsing
+    "rich>=13.0",        # Terminal formatting, markdown, syntax highlight (text mode)
     "tiktoken>=0.5",     # Token counting
+    # Note: textual removed — TUI layer is TypeScript (React + Ink + Yoga)
 ]
+```
+
+**TypeScript TUI dependencies** (`tui/package.json`, M4+):
+```json
+{
+  "dependencies": {
+    "react": "^18",
+    "ink": "^5",
+    "yoga-layout": "^3"
+  },
+  "devDependencies": {
+    "typescript": "^5",
+    "@types/react": "^18",
+    "ink-testing-library": "^3",
+    "ts-jest": "^29"
+  }
+}
 ```
 
 ---
@@ -213,7 +229,7 @@ All 8 planned files were created with the following implementations and notable 
 
 **Goal**: Structured event protocol for programmatic use (like `codex exec --json`). Establishes the stable event contract that M4's TUI will consume.
 
-**Status**: **Planned (next milestone)**.
+**Status**: **Complete (implementation + tests)**. Milestone tracker: `todo-m3.md`.
 
 **Non-goals**:
 - No `item.updated` (streaming delta events) — deferred to M4 where the TUI needs them.
@@ -222,82 +238,52 @@ All 8 planned files were created with the following implementations and notable 
 - No WebSocket or SSE transport — JSONL stdout only.
 - No changes to sequential tool dispatch — parallelism remains out of scope.
 
-Current baseline before M3:
-- `core/agent.py` already emits internal dataclass lifecycle callbacks (`turn_started`, `tool_call_dispatched`, `tool_result_received`, `turn_completed`) with `call_id` on tool events.
-- `core/model_client.py` already emits typed stream events used by the agent (`OutputTextDelta`, `OutputItemDone`, `Completed`), but `Completed` currently carries `response_id` only. Token usage is not yet surfaced to agent events.
-- There is no canonical protocol module yet (`pycodex/protocol/events.py` missing).
-- There is no `--json` CLI mode yet; current entrypoint is `pycodex/__main__.py` (not `cli/app.py`).
+#### What shipped
 
-#### Architecture: 3 layers
+1. **Protocol package (`pycodex/protocol/events.py`)**
+   - Added frozen Pydantic models for `thread.started`, `turn.started`, `turn.completed`, `turn.failed`, `item.started`, `item.completed`.
+   - Added discriminated union `ProtocolEvent` keyed by root `type`.
+   - Added `TokenUsage(input_tokens, output_tokens)` with strict integer validation.
 
-```
-core/agent.py          internal AgentEvent dataclasses (unchanged)
-        ↓
-core/event_adapter.py  stateful mapper: AgentEvent → ProtocolEvent (new)
-        ↓
-__main__.py            renderer: text mode or JSONL mode (--json flag)
-```
+2. **Stateful adapter (`pycodex/core/event_adapter.py`)**
+   - Added deterministic ID strategy:
+     - `thread_id`: per-adapter, injectable.
+     - `turn_id`: `turn_1`, `turn_2`, ...
+     - `item_id`: reuse `call_id` with deterministic fallback.
+   - Added mapping from internal `AgentEvent` dataclasses to protocol events.
+   - Added explicit one-time thread start guard: duplicate `start_thread()` now raises.
+   - Preserved ABORT contract: ABORT still maps to `turn.completed` (not `turn.failed`).
 
-`agent.py` internal event types (`TurnStarted`, `ToolCallDispatched`, etc.) are **not replaced**. The adapter is the permanent translation layer, not a migration shim.
+3. **Usage threading (`pycodex/core/model_client.py`, `pycodex/core/agent.py`)**
+   - Extended stream `Completed` event to carry optional usage when available.
+   - Threaded usage through agent lifecycle into protocol `turn.completed.usage`.
 
-#### Milestone 3 execution plan (clear, incremental, verifiable)
+4. **JSONL CLI mode (`pycodex/__main__.py`)**
+   - Added `--json` mode.
+   - Emits one serialized protocol event per line.
+   - Added JSON-mode exception boundary that emits `turn.failed` and exits non-zero.
+   - Kept human text mode unchanged and separate.
 
-1. **Define schema contract in `protocol/events.py`**
-   - Root event discriminator is `type` (`thread.started`, `turn.started`, `turn.completed`, `turn.failed`, `item.started`, `item.completed`).
-   - To avoid `type` collisions, item payload uses `item_kind` (not `type`) for details (`tool_call`, `tool_result`, `assistant_message`).
-   - `TokenUsage`: `input_tokens: int`, `output_tokens: int` (optional on `turn.completed`).
-   - All models use `model_config = ConfigDict(frozen=True)`.
-   - Verification: `pytest tests/protocol/test_events.py -q`
+5. **Test coverage**
+   - Added/extended:
+     - `tests/protocol/test_events.py`
+     - `tests/core/test_event_adapter.py`
+     - `tests/core/test_model_client.py`
+     - `tests/core/test_agent.py`
+     - `tests/test_main.py`
+     - `tests/e2e/test_cli_json_contract.py`
 
-2. **Implement deterministic ID strategy (owned by adapter)**
-   - `thread_id`: generated once per run (default `uuid4()`), injectable in tests.
-   - `turn_id`: monotonic adapter counter (`turn_1`, `turn_2`, ...), injectable start offset for tests.
-   - `item_id`: reuse tool `call_id`; if missing/invalid, synthesize `item_<turn>_<ordinal>`.
-   - Verification: `pytest tests/core/test_event_adapter.py::test_id_generation_and_reuse -q`
+#### Verification snapshot (latest local run)
 
-3. **Build `core/event_adapter.py` as permanent translation layer**
-   - Consumes internal `AgentEvent`; emits protocol events through an output callback.
-   - Maintains in-flight map keyed by `call_id` for `item.started -> item.completed` correlation.
-   - Mapping:
-     - `TurnStarted` -> `turn.started`
-     - `ToolCallDispatched` -> `item.started`
-     - `ToolResultReceived` -> `item.completed`
-     - `TurnCompleted` -> `turn.completed`
-   - ABORT remains intentional success: adapter emits `turn.completed` (not `turn.failed`).
-   - Verification: `pytest tests/core/test_event_adapter.py -q`
+- `ruff check . --fix` — pass
+- `ruff format .` — pass
+- `mypy --strict pycodex/` — pass (`21 source files`)
+- `pytest tests/ -v` — pass (`187 passed, 1 skipped`)
+- Milestone verification command:
+  - `python3 -m pycodex --json "what is 2+2"`
+  - observed event flow: `thread.started` → `turn.started` → `turn.completed` (with `usage`)
 
-4. **Plumb token usage to `turn.completed`**
-   - Extend `core/model_client.py` `Completed` to optional usage payload when available from Responses API.
-   - Thread usage through `core/agent.py` `TurnCompleted` and map to protocol `TokenUsage`.
-   - If usage is unavailable, emit `usage: null` (or omit per schema choice) deterministically.
-   - Verification: `pytest tests/core/test_model_client.py tests/core/test_agent.py -k usage -q`
-
-5. **Add explicit `turn.failed` exception boundary in `__main__.py` JSON path**
-   - In JSON mode, wrap turn execution so unhandled turn exceptions emit one `turn.failed` event before process exit.
-   - Keep existing non-JSON error behavior unchanged.
-   - Verification: `pytest tests/test_main.py -k \"json and failed\" -q`
-
-6. **Add JSONL CLI mode and contract tests**
-   - Add `--json` flag.
-   - JSON mode: one serialized protocol event per line (`model_dump_json()`).
-   - Text mode remains unchanged; JSON formatter and text formatter are separate paths.
-   - Add deterministic CLI tests for line-delimited validity, ordering, and mandatory root `type`.
-   - Verification: `pytest tests/cli/test_jsonl_mode.py -q`
-
-#### Milestone 3 done criteria
-
-- `--json` emits valid JSONL with a root `type` field on every line, for both text-only and tool-call flows.
-- Adapter correctly reuses `call_id` as `item_id` across `item.started` -> `item.completed`.
-- `turn.failed` is emitted on agent-loop exceptions; `turn.completed` is emitted on ABORT (not `turn.failed`).
-- Token usage appears in `turn.completed` when available from the API; field is absent (or `null`) otherwise.
-- Human text output mode is unchanged and unaffected by the adapter.
-- `mypy --strict` passes on `protocol/` and `core/event_adapter.py`.
-- `ruff check` and `ruff format` clean on all touched files.
-- All new adapter unit tests pass with deterministic event sequences.
-
-**Test it**: `python -m pycodex --json "what is 2+2" | python -c "import sys,json; [print(json.loads(l)['type']) for l in sys.stdin]"`
-
-**Key learning target**: layered event architecture — internal lifecycle events, stateful public protocol adapter, and output-format-agnostic rendering. mirrors how Codex separates `exec_events.rs` from `event_processor_with_jsonl_output.rs`.
+**Key learning**: layered event architecture with a stable protocol boundary: internal agent callbacks stay implementation-focused, while `EventAdapter` owns deterministic public event identity and JSONL emission contracts.
 
 ---
 
@@ -305,36 +291,53 @@ __main__.py            renderer: text mode or JSONL mode (--json flag)
 
 **Goal**: Multi-turn interactive chat with streaming display and approval popups.
 
+**Architecture**: TypeScript (React + Ink + Yoga) is the entry point and display layer. It spawns Python as a child process. Communication is over stdio pipes using a JSON-RPC envelope — the same framing used by LSP and MCP over stdio. Python's existing `--json` JSONL event stream is the data source; a new `--tui-mode` flag enables Python to also read JSON-RPC commands from stdin.
+
+**Language boundary**: Python owns the agent brain (model calls, tool execution, approval decisions). TypeScript owns display, input, and approval UI. Neither side knows the internals of the other — they communicate only through the JSONL/JSON-RPC protocol.
+
+**Wire protocol**:
+```
+Python stdout → JSONL (one ProtocolEvent per line, M3 format + new events)
+TypeScript stdin write → JSON-RPC commands
+
+Python emits:   thread.started, turn.started, turn.completed, turn.failed,
+                item.started, item.completed, item.updated (M4B),
+                approval.request (M4C)
+
+TypeScript sends: user.input, approval.response, interrupt
+```
+
+Detailed sub-milestone breakdown is in `tui-plan.md`. Summary of execution plan:
+
 #### Milestone 4 execution plan (clear, incremental, verifiable)
 
-1. **Build rendering primitives in `cli/display.py`**
-   - Markdown, diff, and command-output render helpers with stable formatting contracts.
-   - Value: isolates presentation logic from TUI event/state logic.
-   - Verification: `pytest tests/cli/test_display.py -q`
+1. **M4A — Python pipe protocol + TypeScript Ink shell**
+   - Python: add `--tui-mode` flag; implement `core/tui_bridge.py` (asyncio stdin reader + JSON-RPC command dispatcher; routes `user.input` → `run_turn()`, `interrupt` → task cancel).
+   - TypeScript: scaffold `tui/` package (React + Ink + Yoga); implement `protocol/reader.ts` (JSONL line reader), `protocol/writer.ts` (JSON-RPC serializer), `src/index.ts` (spawn Python, pipe lifecycle), `app.tsx` (root Ink component), `ChatView`, `InputArea`, `StatusBar`.
+   - Value: runnable multi-turn Ink chat; full pipe architecture established; all later sub-milestones are additions.
+   - Verification: `pytest tests/core/test_tui_bridge.py -q` + `jest tui/ -q` + `node tui/dist/index.js` multi-turn chat works.
 
-2. **Build TUI shell in `cli/tui.py`**
-   - Create baseline layout: history, input, status bar, and event queue wiring.
-   - Value: runnable multi-turn skeleton before approval/streaming complexity.
-   - Verification: `pytest tests/cli/test_tui_layout.py -q`
+2. **M4B — Streaming text (`item.updated`)**
+   - Python: add `ItemUpdated` event to `protocol/events.py`; surface `OutputTextDelta` through adapter as `item.updated`.
+   - TypeScript: add `item.updated` to `types.ts`; implement `LineBuffer` in `ChatView.tsx` (newline-gated commit; simpler than Codex's 3-layer `StreamController`).
+   - Value: model response text appears progressively; `item.updated` is now part of the stable protocol (existing `--json` consumers see it too).
+   - Verification: `pytest tests/protocol/test_events.py tests/core/test_event_adapter.py -k updated -q` + `jest tui/ -q`
 
-3. **Bind protocol events to UI timeline**
-   - Render `ThreadEvent` items deterministically in chat history.
-   - Value: M3 protocol becomes the single UI data contract.
-   - Verification: `pytest tests/cli/test_tui_event_rendering.py -q`
+3. **M4C — Approval modal**
+   - Python: add `ApprovalRequested` event to `protocol/events.py`; implement `tui_ask_user_fn` in `tui_bridge.py` (emits `approval.request`, awaits `approval.response` via `asyncio.Event`, returns `ReviewDecision`).
+   - TypeScript: add `ApprovalModal.tsx` (key bindings: `y/n/s/a`; queue of pending requests); route `approval.request` event → modal state; on key press send `approval.response` command.
+   - Value: removes blocking `input()` path; approval is now a first-class UI event with a clean request/response ID protocol.
+   - Verification: `pytest tests/core/test_tui_bridge.py -k approval -q` + `jest tui/ -q` + manual tool-call approval test.
 
-4. **Integrate approval modal flow**
-   - `ask_user_fn` opens `ApprovalModal` and returns `ReviewDecision`.
-   - Value: removes blocking `input()` path and keeps approvals in UI loop.
-   - Verification: `pytest tests/cli/test_tui_approval.py -q`
+4. **M4D — Tool call panels + interrupt + status polish**
+   - TypeScript: extend `ChatView` to render `item.started`/`item.completed` as inline bordered tool panels (keyed by `item_id`); extend `StatusBar` with cumulative token usage from `turn.completed.usage`; wire Ctrl+C → `writer.sendInterrupt()`.
+   - Python: `tui_bridge.py` handles `interrupt` command → cancel active turn task.
+   - Value: full visibility into tool call lifecycle; clean Ctrl+C cancellation; token budget visible.
+   - Verification: `jest tui/ -q` + `pytest tests/core/test_tui_bridge.py -k interrupt -q` + manual tool-panel test.
 
-5. **Route entrypoints in `cli/app.py` and `__main__.py`**
-   - Interactive default, `-p` single-turn, and `--json` protocol mode all coexist.
-   - Value: one coherent interface surface for all runtime modes.
-   - Verification: `pytest tests/test_main.py tests/cli/test_app_modes.py -q`
+**Test it**: `node tui/dist/index.js` → interactive chat; try "read the README.md file" then "create a test.py file" (approval modal appears); Ctrl+C mid-turn cancels cleanly.
 
-**Test it**: `python -m pycodex` → interactive chat, try "read the README.md file" then "create a test.py file" (should prompt for approval)
-
-**Key learning**: TUI architecture, event-to-UI rendering, interactive approval flow, streaming display.
+**Key learning**: TypeScript/Python process boundary; JSON-RPC framing over stdio pipes; React + Ink component model; bidirectional request/response protocol with asyncio.Event suspension; transport-agnostic envelope design (pipes now, WebSocket in M6).
 
 ---
 
@@ -373,7 +376,7 @@ __main__.py            renderer: text mode or JSONL mode (--json flag)
 
 ### Milestone 6: Context Management + Polish
 
-**Goal**: Token tracking, auto-compaction, session persistence, configuration.
+**Goal**: Token tracking, auto-compaction, session persistence, configuration, and transport upgrade from stdio pipes to local server.
 
 #### Milestone 6 execution plan (clear, incremental, verifiable)
 
@@ -402,7 +405,17 @@ __main__.py            renderer: text mode or JSONL mode (--json flag)
    - Value: safer long-running interactive operation.
    - Verification: `pytest tests/e2e/test_cli_tool_failures.py tests/e2e/test_interrupts.py -q`
 
-**Test it**: Full multi-turn session with token tracking, save session, resume later.
+6. **Transport upgrade: stdio pipe → WebSocket / Unix socket**
+   - **Why**: The JSON-RPC envelope established in M4 is transport-agnostic by design. Upgrading the transport from stdio pipes to a local WebSocket server enables multi-client scenarios (VS Code extension, web UI, remote access) without any protocol changes.
+   - **Python side**: Add `core/server.py` — `asyncio` WebSocket server (`websockets` library) that accepts connections and runs the same `TuiBridge` command-dispatch logic. Python starts listening on a Unix socket or `localhost:<port>` instead of reading from `sys.stdin`; it still emits JSONL to the socket instead of `sys.stdout`.
+   - **TypeScript side**: Replace `child.stdout`/`child.stdin` pipe wiring in `index.ts` with a WebSocket client (`ws` package). `protocol/reader.ts` and `protocol/writer.ts` swap their underlying I/O from readline streams to WebSocket messages — the JSON-RPC message format is identical.
+   - **Protocol is unchanged**: `user.input`, `approval.response`, `interrupt`, `approval.request`, `item.updated`, and all existing M3 events carry over without modification. No schema changes required.
+   - **Multi-client path**: WebSocket server can accept multiple simultaneous clients (e.g., VS Code extension + Ink TUI); agent events are broadcast to all connected clients. Approval responses are routed by `request_id`.
+   - **Pipes remain as fallback**: `--tui-mode` stdio path stays intact for environments where a local server is undesirable (CI, SSH, piped scripting).
+   - Value: unlocks VS Code extension, web frontend, and remote session scenarios without touching the agent, tool, or approval logic.
+   - Verification: `pytest tests/core/test_server.py -q` + `jest tui/ -k websocket -q` + manual multi-client test (two TypeScript clients connecting simultaneously).
+
+**Test it**: Full multi-turn session with token tracking, save session, resume later; open second client (VS Code extension stub) connecting to same Python server and observing same event stream.
 
 ---
 
@@ -422,7 +435,7 @@ __main__.py            renderer: text mode or JSONL mode (--json flag)
 
 | Aspect | Codex (Full) | PyCodex (Simplified) |
 |---|---|---|
-| Language | Rust + TypeScript | Python only |
+| Language | Rust + TypeScript | Python (agent) + TypeScript/React/Ink (TUI) |
 | Model API | Custom client, WebSocket + SSE | OpenAI Python SDK |
 | Sandboxing | Seatbelt, seccomp+bubblewrap, restricted tokens | Path validation + optional sandbox-exec/firejail |
 | Tool parallelism | `FuturesOrdered` with read/write locking | Sequential dispatch in agent loop (no parallel tool execution yet) |
@@ -439,6 +452,6 @@ After each milestone, verify with these tests:
 - **M1**: `python -m pycodex "list files in current directory and show me the contents of pyproject.toml"` — model should call shell/read_file tools and return results
 - **M2**: `python -m pycodex --approval on-request "create a file called test.txt with 'hello'"` — should prompt before writing
 - **M3**: `python -m pycodex --json "what is 2+2"` — should emit valid JSONL events
-- **M4**: `python -m pycodex` (interactive) — multi-turn chat with streaming text and approval popups
+- **M4**: `node tui/dist/index.js` (interactive) — multi-turn Ink chat with streaming text and approval modal
 - **M5**: `python -m pycodex --sandbox read-only "rm -rf /"` — should block the command
 - **M6**: Long conversation that triggers auto-compaction; save and resume session

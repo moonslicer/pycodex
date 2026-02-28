@@ -10,6 +10,7 @@ This file defines repo-level operating rules for coding agents.
   - `pycodex/tools/AGENTS.md` — tool protocol, error format, mutating semantics
   - `pycodex/approval/AGENTS.md` — approval store, stateless policy rules
   - `pycodex/cli/AGENTS.md` — rendering separation, no business logic in CLI
+  - `tui/AGENTS.md` — TypeScript/React/Ink architecture and frontend quality rules
 
 ## 2) Core Outcome
 - Deliver correct, maintainable changes with minimal complexity.

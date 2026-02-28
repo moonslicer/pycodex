@@ -55,6 +55,7 @@ __main__.py            renderer: text mode or JSONL mode (--json flag)
 - `agent.py` internal event types (`TurnStarted`, `ToolCallDispatched`, etc.) are NOT modified structurally.
 - Adapter owns all ID generation: `thread_id` injectable (default `uuid4()`), `turn_id` monotonic counter (`turn_1`, `turn_2`, …), `item_id` = `call_id` with `item_<turn>_<ordinal>` fallback.
 - Adapter is stateful per-run; no module-level mutable state.
+- `thread.started` is single-emission per adapter instance; duplicate emission raises.
 - Human CLI output and JSONL processor are separate code paths — no shared formatter.
 - Schema models use `model_config = ConfigDict(frozen=True)`.
 - Item payload uses `item_kind` discriminator (not `type`) to avoid collision with root event `type`.
@@ -115,6 +116,7 @@ __main__.py            renderer: text mode or JSONL mode (--json flag)
     - ABORT: agent emits `TurnCompleted` on abort (no exception); adapter maps it to `turn.completed` — no special handling needed.
     - `thread.started` is emitted once by the caller at startup (not by the adapter per-turn).
   - Tests (`tests/core/test_event_adapter.py`):
+    - `test_start_thread_raises_when_called_more_than_once`: duplicate `start_thread()` raises to enforce one `thread.started` per adapter run.
     - `test_id_generation_and_reuse`: `ToolCallDispatched(call_id="call_abc")` → `ItemStarted(item_id="call_abc")`; `ToolResultReceived(call_id="call_abc")` → `ItemCompleted(item_id="call_abc")`. Same ID both sides.
     - `test_id_fallback_when_call_id_empty`: `call_id=""` → synthesized `item_id` matches pattern `item_turn_1_1`.
     - `test_no_tool_turn`: `TurnStarted` + `TurnCompleted` → exactly `[turn.started, turn.completed]`; no item events.
@@ -171,3 +173,4 @@ __main__.py            renderer: text mode or JSONL mode (--json flag)
 - [x] Milestone report includes: files changed, gate results, verification output, risks/assumptions, next milestone recommendation
   - 2026-02-28 gate run results: `ruff check . --fix` PASS, `ruff format .` PASS, `mypy --strict pycodex/` PASS, `pytest tests/ -v` PASS (`187 passed, 1 skipped`).
   - 2026-02-28 latest local milestone verification now passes: `python3 -m pycodex --json "what is 2+2"` emits `thread.started`, `turn.started`, `turn.completed` with usage populated.
+  - Next recommended milestone: M4 (interactive TUI on top of the M3 protocol stream).
