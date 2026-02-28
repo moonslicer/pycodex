@@ -212,7 +212,7 @@ TypeScript:
   - Verify:
     - `cd tui && npm test -- --runInBand --findRelatedTests src/hooks/useApprovalQueue.ts src/components/ApprovalModal.tsx src/app.tsx`
 
-- [ ] T12: M4E tool panels and status usage polish
+- [x] T12: M4E tool panels and status usage polish
   - Implement `ToolCallPanel`; render lifecycle rows keyed by `item_id`.
   - Show latest/cumulative usage in `StatusBar` from `turn.completed.usage`.
   - Verify:

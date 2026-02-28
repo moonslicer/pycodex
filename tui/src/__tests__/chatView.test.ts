@@ -1,5 +1,6 @@
 import {
   summarizeApprovalDebugLinesForTurn,
+  toolCallsInDisplayOrder,
   summarizeToolCallsForTurn,
 } from "../components/ChatView.js";
 import type { ApprovalDecisionLog } from "../hooks/useApprovalQueue.js";
@@ -76,6 +77,35 @@ describe("summarizeToolCallsForTurn", () => {
         }),
       ),
     ).toBe("Tool calls: shell, write_file");
+  });
+});
+
+describe("toolCallsInDisplayOrder", () => {
+  test("returns tool calls in insertion order for stable item_id keyed rendering", () => {
+    const turn = baseTurn({
+      toolCalls: {
+        item_2: {
+          item_id: "item_2",
+          name: "write_file",
+          arguments: null,
+          status: "done",
+          content: "ok",
+        },
+        item_1: {
+          item_id: "item_1",
+          name: "shell",
+          arguments: "{\"command\":\"ls -lrt\"}",
+          status: "pending",
+          content: null,
+        },
+      },
+    });
+
+    const ordered = toolCallsInDisplayOrder(turn);
+    expect(ordered.map((toolCall) => toolCall.item_id)).toEqual([
+      "item_2",
+      "item_1",
+    ]);
   });
 });
 

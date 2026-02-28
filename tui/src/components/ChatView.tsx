@@ -1,9 +1,10 @@
 import { Box, Text } from "ink";
 
 import type { ApprovalDecisionLog } from "../hooks/useApprovalQueue.js";
-import type { TurnState } from "../hooks/useTurns.js";
+import type { ToolCallState, TurnState } from "../hooks/useTurns.js";
 import type { ApprovalPolicyValue } from "../runtime/launch.js";
 import { Spinner } from "./Spinner.js";
+import { ToolCallPanel } from "./ToolCallPanel.js";
 
 const VISIBLE_TURNS = 20;
 
@@ -47,6 +48,10 @@ type TurnRowProps = {
   showToolCallSummary: boolean;
   turn: TurnState;
 };
+
+export function toolCallsInDisplayOrder(turn: TurnState): ToolCallState[] {
+  return Object.values(turn.toolCalls);
+}
 
 export function summarizeToolCallsForTurn(turn: TurnState): string | null {
   const namesInOrder: string[] = [];
@@ -141,6 +146,7 @@ function TurnRow({
   showToolCallSummary,
   turn,
 }: TurnRowProps) {
+  const toolCalls = toolCallsInDisplayOrder(turn);
   const assistantLines = [...turn.assistantLines];
   if (turn.partialLine.length > 0) {
     assistantLines.push(turn.partialLine);
@@ -160,6 +166,10 @@ function TurnRow({
       ) : null}
 
       {assistantText.length > 0 ? <Text>{assistantText}</Text> : null}
+
+      {toolCalls.map((toolCall) => (
+        <ToolCallPanel key={toolCall.item_id} toolCall={toolCall} />
+      ))}
 
       {toolCallSummary !== null ? <Text dimColor>{toolCallSummary}</Text> : null}
       {approvalDebugLines.map((line) => (
