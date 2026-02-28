@@ -139,7 +139,7 @@ __main__.py            renderer: text mode or JSONL mode (--json flag)
     - `tests/core/test_event_adapter.py`: `test_usage_none_when_absent` — adapter receives `TurnCompleted(usage=None)` → `turn.completed.usage is None`.
   - Verify: `pytest tests/core/test_model_client.py tests/core/test_agent.py tests/core/test_event_adapter.py -k usage -v`
 
-- [ ] T4: `__main__.py` — `--json` flag, adapter wiring, `turn.failed` exception boundary
+- [x] T4: `__main__.py` — `--json` flag, adapter wiring, `turn.failed` exception boundary
   - Add `--json` boolean flag (default `False`).
   - In JSON mode:
     - Instantiate `EventAdapter`; emit `ThreadStarted` immediately (before agent turn) and serialize to stdout.

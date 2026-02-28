@@ -1,10 +1,12 @@
 from __future__ import annotations
 
+import json
 from pathlib import Path
 from typing import Any
 
 import pycodex.__main__ as main_module
 import pytest
+from pycodex.core.agent import ToolCallDispatched, ToolResultReceived, TurnCompleted, TurnStarted
 from pycodex.core.config import Config
 from pycodex.core.session import Session
 
@@ -137,3 +139,268 @@ def test_main_passes_approval_policy_to_run_prompt(
     }
     captured = capsys.readouterr()
     assert captured.out.strip() == "final-answer"
+
+
+def test_json_flag_emits_valid_jsonl(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = Config(
+        model="test-model",
+        api_key="test-key",
+        cwd=tmp_path,
+    )
+
+    async def fake_run_turn(
+        *,
+        session: Session,
+        model_client: Any,
+        tool_router: Any,
+        cwd: Path,
+        user_input: str,
+        on_event: Any = None,
+    ) -> str:
+        _ = session, model_client, tool_router, cwd
+        assert user_input == "hello from cli"
+        assert on_event is not None
+        on_event(TurnStarted(user_input=user_input))
+        on_event(TurnCompleted(final_text="done"))
+        return "final-answer"
+
+    monkeypatch.setattr(main_module, "load_config", lambda: config)
+    monkeypatch.setattr(main_module, "ModelClient", _FakeModelClient)
+    monkeypatch.setattr(main_module, "run_turn", fake_run_turn)
+
+    exit_code = main_module.main(["--json", "hello from cli"])
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    lines = captured.out.splitlines()
+    assert lines
+    parsed = [json.loads(line) for line in lines]
+    assert all("type" in line for line in parsed)
+
+
+def test_json_flag_event_ordering(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = Config(
+        model="test-model",
+        api_key="test-key",
+        cwd=tmp_path,
+    )
+
+    async def fake_run_turn(
+        *,
+        session: Session,
+        model_client: Any,
+        tool_router: Any,
+        cwd: Path,
+        user_input: str,
+        on_event: Any = None,
+    ) -> str:
+        _ = session, model_client, tool_router, cwd, user_input
+        assert on_event is not None
+        on_event(TurnStarted(user_input="hello from cli"))
+        on_event(ToolCallDispatched(call_id="call_1", name="shell", arguments='{"command":"pwd"}'))
+        on_event(ToolResultReceived(call_id="call_1", name="shell", result="/tmp"))
+        on_event(TurnCompleted(final_text="done"))
+        return "final-answer"
+
+    monkeypatch.setattr(main_module, "load_config", lambda: config)
+    monkeypatch.setattr(main_module, "ModelClient", _FakeModelClient)
+    monkeypatch.setattr(main_module, "run_turn", fake_run_turn)
+
+    exit_code = main_module.main(["--json", "hello from cli"])
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    types = [json.loads(line)["type"] for line in captured.out.splitlines()]
+    assert types == [
+        "thread.started",
+        "turn.started",
+        "item.started",
+        "item.completed",
+        "turn.completed",
+    ]
+
+
+def test_json_flag_turn_failed_on_exception(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = Config(
+        model="test-model",
+        api_key="test-key",
+        cwd=tmp_path,
+    )
+
+    async def failing_run_turn(
+        *,
+        session: Session,
+        model_client: Any,
+        tool_router: Any,
+        cwd: Path,
+        user_input: str,
+        on_event: Any = None,
+    ) -> str:
+        _ = session, model_client, tool_router, cwd, user_input, on_event
+        raise RuntimeError("boom")
+
+    monkeypatch.setattr(main_module, "load_config", lambda: config)
+    monkeypatch.setattr(main_module, "run_turn", failing_run_turn)
+
+    exit_code = main_module.main(["--json", "hello from cli"])
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    lines = [json.loads(line) for line in captured.out.splitlines()]
+    assert lines[0]["type"] == "thread.started"
+    assert lines[-1]["type"] == "turn.failed"
+    assert lines[-1]["thread_id"] == lines[0]["thread_id"]
+    assert lines[-1]["turn_id"] == "turn_1"
+    assert "boom" in lines[-1]["error"]
+
+
+def test_json_flag_turn_failed_before_turn_started_uses_fallback_turn_id(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = Config(
+        model="test-model",
+        api_key="test-key",
+        cwd=tmp_path,
+    )
+
+    async def failing_run_turn(
+        *,
+        session: Session,
+        model_client: Any,
+        tool_router: Any,
+        cwd: Path,
+        user_input: str,
+        on_event: Any = None,
+    ) -> str:
+        _ = session, model_client, tool_router, cwd, user_input, on_event
+        raise RuntimeError("early boom")
+
+    monkeypatch.setattr(main_module, "load_config", lambda: config)
+    monkeypatch.setattr(main_module, "run_turn", failing_run_turn)
+
+    exit_code = main_module.main(["--json", "hello from cli"])
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    lines = [json.loads(line) for line in captured.out.splitlines()]
+    assert [line["type"] for line in lines] == ["thread.started", "turn.failed"]
+    assert lines[-1]["turn_id"] == "turn_1"
+    assert lines[-1]["thread_id"] == lines[0]["thread_id"]
+
+
+def test_json_flag_turn_failed_after_turn_started_uses_active_turn_id(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = Config(
+        model="test-model",
+        api_key="test-key",
+        cwd=tmp_path,
+    )
+
+    async def failing_run_turn(
+        *,
+        session: Session,
+        model_client: Any,
+        tool_router: Any,
+        cwd: Path,
+        user_input: str,
+        on_event: Any = None,
+    ) -> str:
+        _ = session, model_client, tool_router, cwd, user_input
+        assert on_event is not None
+        on_event(TurnStarted(user_input="hello from cli"))
+        raise RuntimeError("late boom")
+
+    monkeypatch.setattr(main_module, "load_config", lambda: config)
+    monkeypatch.setattr(main_module, "run_turn", failing_run_turn)
+
+    exit_code = main_module.main(["--json", "hello from cli"])
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    lines = [json.loads(line) for line in captured.out.splitlines()]
+    assert [line["type"] for line in lines] == [
+        "thread.started",
+        "turn.started",
+        "turn.failed",
+    ]
+    assert lines[-1]["turn_id"] == "turn_1"
+    assert "late boom" in lines[-1]["error"]
+
+
+def test_main_json_mode_top_level_exception_reports_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    async def failing_run_prompt_json(
+        prompt: str,
+        *,
+        approval_policy: main_module.ApprovalPolicy,
+    ) -> int:
+        _ = prompt, approval_policy
+        raise RuntimeError()
+
+    monkeypatch.setattr(main_module, "_run_prompt_json", failing_run_prompt_json)
+
+    exit_code = main_module.main(["--json", "hello from cli"])
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip() == "[ERROR] RuntimeError"
+
+
+def test_text_mode_unchanged(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = Config(
+        model="test-model",
+        api_key="test-key",
+        cwd=tmp_path,
+    )
+
+    async def fake_run_turn(
+        *,
+        session: Session,
+        model_client: Any,
+        tool_router: Any,
+        cwd: Path,
+        user_input: str,
+    ) -> str:
+        _ = session, model_client, tool_router, cwd, user_input
+        return "final-answer"
+
+    monkeypatch.setattr(main_module, "load_config", lambda: config)
+    monkeypatch.setattr(main_module, "run_turn", fake_run_turn)
+
+    exit_code = main_module.main(["hello from cli"])
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    assert captured.out.strip() == "final-answer"
+    with pytest.raises(json.JSONDecodeError):
+        json.loads(captured.out)

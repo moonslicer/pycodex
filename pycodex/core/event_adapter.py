@@ -89,6 +89,12 @@ class EventAdapter:
 
         return []
 
+    def failure_turn_id(self) -> str:
+        """Return turn ID to use when emitting a turn-level failure event."""
+        if self._current_turn_id is not None:
+            return self._current_turn_id
+        return f"turn_{self._turn_counter + 1}"
+
     def _next_item_id(self, turn_id: str) -> str:
         self._item_counter += 1
         return f"item_{turn_id}_{self._item_counter}"

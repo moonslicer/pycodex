@@ -12,10 +12,12 @@ from collections.abc import Sequence
 from typing import Any
 
 from pycodex.approval.policy import ApprovalPolicy, ApprovalStore, ReviewDecision
-from pycodex.core.agent import run_turn
-from pycodex.core.config import load_config
+from pycodex.core.agent import AgentEvent, run_turn
+from pycodex.core.config import Config, load_config
+from pycodex.core.event_adapter import EventAdapter
 from pycodex.core.model_client import ModelClient
 from pycodex.core.session import Session
+from pycodex.protocol.events import ProtocolEvent, ThreadStarted, TurnFailed
 from pycodex.tools.base import ToolRegistry, ToolRouter
 from pycodex.tools.grep_files import GrepFilesTool
 from pycodex.tools.list_dir import ListDirTool
@@ -55,6 +57,11 @@ def _build_parser() -> argparse.ArgumentParser:
             "Omit to show all loggers."
         ),
     )
+    parser.add_argument(
+        "--json",
+        action="store_true",
+        help="Emit line-delimited protocol JSON events to stdout.",
+    )
     return parser
 
 
@@ -78,10 +85,7 @@ def _register_default_tools(registry: ToolRegistry) -> None:
 
 
 async def _run_prompt(prompt: str, *, approval_policy: ApprovalPolicy) -> str:
-    config = load_config()
-    session = Session(config=config)
-    model_client = ModelClient(config)
-    tool_router = _build_tool_router(approval_policy=approval_policy)
+    config, session, model_client, tool_router = _build_runtime(approval_policy=approval_policy)
     return await run_turn(
         session=session,
         model_client=model_client,
@@ -89,6 +93,56 @@ async def _run_prompt(prompt: str, *, approval_policy: ApprovalPolicy) -> str:
         cwd=config.cwd,
         user_input=prompt,
     )
+
+
+def _build_runtime(
+    *,
+    approval_policy: ApprovalPolicy,
+) -> tuple[Config, Session, ModelClient, ToolRouter]:
+    config = load_config()
+    session = Session(config=config)
+    model_client = ModelClient(config)
+    tool_router = _build_tool_router(approval_policy=approval_policy)
+    return config, session, model_client, tool_router
+
+
+def _emit_protocol_event(event: ProtocolEvent) -> None:
+    sys.stdout.write(f"{event.model_dump_json()}\n")
+
+
+def _render_error_message(exc: Exception) -> str:
+    return str(exc).strip() or type(exc).__name__
+
+
+async def _run_prompt_json(prompt: str, *, approval_policy: ApprovalPolicy) -> int:
+    config, session, model_client, tool_router = _build_runtime(approval_policy=approval_policy)
+    adapter = EventAdapter()
+
+    _emit_protocol_event(ThreadStarted(thread_id=adapter.thread_id))
+
+    def on_event(event: AgentEvent) -> None:
+        for protocol_event in adapter.on_agent_event(event):
+            _emit_protocol_event(protocol_event)
+
+    try:
+        await run_turn(
+            session=session,
+            model_client=model_client,
+            tool_router=tool_router,
+            cwd=config.cwd,
+            user_input=prompt,
+            on_event=on_event,
+        )
+    except Exception as exc:
+        _emit_protocol_event(
+            TurnFailed(
+                thread_id=adapter.thread_id,
+                turn_id=adapter.failure_turn_id(),
+                error=_render_error_message(exc),
+            )
+        )
+        return 1
+    return 0
 
 
 def _parse_review_decision(raw_value: str) -> ReviewDecision:
@@ -128,6 +182,19 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         logging.getLogger().handlers[0].addFilter(_PrefixFilter())
     approval_policy = ApprovalPolicy(args.approval)
+    if args.json:
+        try:
+            return asyncio.run(
+                _run_prompt_json(
+                    args.prompt,
+                    approval_policy=approval_policy,
+                )
+            )
+        except Exception as exc:
+            message = _render_error_message(exc)
+            print(f"[ERROR] {message}", file=sys.stderr)
+            return 1
+
     try:
         final_text = asyncio.run(
             _run_prompt(
@@ -136,7 +203,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             )
         )
     except Exception as exc:
-        message = str(exc).strip() or type(exc).__name__
+        message = _render_error_message(exc)
         print(f"[ERROR] {message}", file=sys.stderr)
         return 1
     print(final_text)

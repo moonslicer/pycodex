@@ -129,6 +129,19 @@ def test_turn_counter_increments() -> None:
     assert second[0].turn_id == "turn_2"
 
 
+def test_failure_turn_id_without_active_turn_uses_next_turn() -> None:
+    adapter = EventAdapter(thread_id="thread_test")
+
+    assert adapter.failure_turn_id() == "turn_1"
+
+
+def test_failure_turn_id_with_active_turn_uses_current_turn() -> None:
+    adapter = EventAdapter(thread_id="thread_test")
+    adapter.on_agent_event(TurnStarted(user_input="run"))
+
+    assert adapter.failure_turn_id() == "turn_1"
+
+
 def test_abort_turn_emits_turn_completed_not_failed() -> None:
     adapter = EventAdapter(thread_id="thread_test")
     adapter.on_agent_event(TurnStarted(user_input="abort"))
