@@ -17,7 +17,7 @@ from pycodex.core.config import Config, load_config
 from pycodex.core.event_adapter import EventAdapter
 from pycodex.core.model_client import ModelClient
 from pycodex.core.session import Session
-from pycodex.protocol.events import ProtocolEvent, ThreadStarted, TurnFailed
+from pycodex.protocol.events import ProtocolEvent
 from pycodex.tools.base import ToolRegistry, ToolRouter
 from pycodex.tools.grep_files import GrepFilesTool
 from pycodex.tools.list_dir import ListDirTool
@@ -118,7 +118,7 @@ async def _run_prompt_json(prompt: str, *, approval_policy: ApprovalPolicy) -> i
     config, session, model_client, tool_router = _build_runtime(approval_policy=approval_policy)
     adapter = EventAdapter()
 
-    _emit_protocol_event(ThreadStarted(thread_id=adapter.thread_id))
+    _emit_protocol_event(adapter.start_thread())
 
     def on_event(event: AgentEvent) -> None:
         for protocol_event in adapter.on_agent_event(event):
@@ -134,13 +134,7 @@ async def _run_prompt_json(prompt: str, *, approval_policy: ApprovalPolicy) -> i
             on_event=on_event,
         )
     except Exception as exc:
-        _emit_protocol_event(
-            TurnFailed(
-                thread_id=adapter.thread_id,
-                turn_id=adapter.failure_turn_id(),
-                error=_render_error_message(exc),
-            )
-        )
+        _emit_protocol_event(adapter.turn_failed(exc))
         return 1
     return 0
 

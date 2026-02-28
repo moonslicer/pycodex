@@ -12,7 +12,9 @@ from pycodex.protocol.events import (
     ItemCompleted,
     ItemStarted,
     ProtocolEvent,
+    ThreadStarted,
     TokenUsage,
+    TurnFailed,
     TurnStarted,
 )
 from pycodex.protocol.events import TurnCompleted as ProtocolTurnCompleted
@@ -27,6 +29,10 @@ class EventAdapter:
     _item_counter: int = 0
     _inflight: dict[str, str] = field(default_factory=dict)
     _current_turn_id: str | None = None
+
+    def start_thread(self) -> ThreadStarted:
+        """Build the canonical thread-start event for this adapter instance."""
+        return ThreadStarted(thread_id=self.thread_id)
 
     def on_agent_event(self, event: AgentEvent) -> list[ProtocolEvent]:
         """Map one internal agent event to ordered protocol events."""
@@ -94,6 +100,18 @@ class EventAdapter:
         if self._current_turn_id is not None:
             return self._current_turn_id
         return f"turn_{self._turn_counter + 1}"
+
+    def turn_failed(self, error: Exception | str) -> TurnFailed:
+        """Build a turn.failed event using adapter-owned thread/turn identity."""
+        if isinstance(error, Exception):
+            message = str(error).strip() or type(error).__name__
+        else:
+            message = str(error).strip()
+        return TurnFailed(
+            thread_id=self.thread_id,
+            turn_id=self.failure_turn_id(),
+            error=message,
+        )
 
     def _next_item_id(self, turn_id: str) -> str:
         self._item_counter += 1

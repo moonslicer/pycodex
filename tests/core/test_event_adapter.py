@@ -5,9 +5,25 @@ import re
 import pytest
 from pycodex.core.agent import ToolCallDispatched, ToolResultReceived, TurnCompleted, TurnStarted
 from pycodex.core.event_adapter import EventAdapter
-from pycodex.protocol.events import ItemCompleted, ItemStarted, TokenUsage
+from pycodex.protocol.events import (
+    ItemCompleted,
+    ItemStarted,
+    ThreadStarted,
+    TokenUsage,
+    TurnFailed,
+)
 from pycodex.protocol.events import TurnCompleted as ProtocolTurnCompleted
 from pycodex.protocol.events import TurnStarted as ProtocolTurnStarted
+
+
+def test_start_thread_emits_adapter_thread_id() -> None:
+    adapter = EventAdapter(thread_id="thread_test")
+
+    out = adapter.start_thread()
+
+    assert isinstance(out, ThreadStarted)
+    assert out.type == "thread.started"
+    assert out.thread_id == "thread_test"
 
 
 def test_id_generation_and_reuse() -> None:
@@ -140,6 +156,29 @@ def test_failure_turn_id_with_active_turn_uses_current_turn() -> None:
     adapter.on_agent_event(TurnStarted(user_input="run"))
 
     assert adapter.failure_turn_id() == "turn_1"
+
+
+def test_turn_failed_without_active_turn_uses_next_turn_and_exception_message() -> None:
+    adapter = EventAdapter(thread_id="thread_test")
+
+    out = adapter.turn_failed(RuntimeError("boom"))
+
+    assert isinstance(out, TurnFailed)
+    assert out.thread_id == "thread_test"
+    assert out.turn_id == "turn_1"
+    assert out.error == "boom"
+
+
+def test_turn_failed_with_active_turn_uses_current_turn_and_fallback_error_name() -> None:
+    adapter = EventAdapter(thread_id="thread_test")
+    adapter.on_agent_event(TurnStarted(user_input="run"))
+
+    out = adapter.turn_failed(RuntimeError())
+
+    assert isinstance(out, TurnFailed)
+    assert out.thread_id == "thread_test"
+    assert out.turn_id == "turn_1"
+    assert out.error == "RuntimeError"
 
 
 def test_abort_turn_emits_turn_completed_not_failed() -> None:
