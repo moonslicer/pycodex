@@ -1,6 +1,7 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
 
 import type { ProtocolEvent, TokenUsage } from "../protocol/types.js";
+import { sliceUnprocessedEvents } from "./eventCursor.js";
 import {
   INITIAL_LINE_BUFFER_STATE,
   reduceLineBuffer,
@@ -351,7 +352,7 @@ export function useTurns(
   events: readonly ProtocolEvent[],
 ): TurnsViewState & TurnsDispatch {
   const [state, dispatch] = useReducer(turnsReducer, INITIAL_TURNS_STATE);
-  const processedEventCount = useRef(0);
+  const lastProcessedEvent = useRef<ProtocolEvent | null>(null);
   const pendingItemUpdates = useRef<Map<string, string>>(new Map());
   const pendingFlushHandle = useRef<NodeJS.Immediate | null>(null);
 
@@ -406,23 +407,21 @@ export function useTurns(
       });
     };
 
-    if (events.length < processedEventCount.current) {
+    if (events.length === 0) {
       cancelScheduledFlush();
       pendingItemUpdates.current.clear();
-      dispatch({ type: "reset" });
-      processedEventCount.current = 0;
+      if (lastProcessedEvent.current !== null) {
+        dispatch({ type: "reset" });
+      }
+      lastProcessedEvent.current = null;
+      return;
     }
 
-    for (
-      let index = processedEventCount.current;
-      index < events.length;
-      index += 1
-    ) {
-      const event = events[index];
-      if (event === undefined) {
-        continue;
-      }
-
+    const unprocessedEvents = sliceUnprocessedEvents(
+      events,
+      lastProcessedEvent.current,
+    );
+    for (const event of unprocessedEvents) {
       if (event.type === "item.updated") {
         const currentDelta = pendingItemUpdates.current.get(event.turn_id) ?? "";
         pendingItemUpdates.current.set(event.turn_id, `${currentDelta}${event.delta}`);
@@ -437,7 +436,8 @@ export function useTurns(
     }
 
     schedulePendingFlush();
-    processedEventCount.current = events.length;
+    const latestEvent = events[events.length - 1];
+    lastProcessedEvent.current = latestEvent ?? null;
   }, [events, flushPendingItemUpdates]);
 
   useEffect(

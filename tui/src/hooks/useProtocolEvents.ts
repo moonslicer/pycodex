@@ -7,8 +7,8 @@ type ProtocolEventState = {
   events: ProtocolEvent[];
 };
 
-// Keep the last N events in memory. useTurns processes each event once via
-// processedEventCount, so trimming old entries does not cause re-processing.
+// Keep the last N events in memory. Consumers process from a last-event anchor
+// so rolling-window truncation does not permanently stall event handling.
 const MAX_EVENTS = 1000;
 
 export function appendProtocolEvent(

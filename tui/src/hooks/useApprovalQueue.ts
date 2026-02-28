@@ -2,6 +2,7 @@ import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import type { ProtocolEvent, ApprovalDecision } from "../protocol/types.js";
 import type { ProtocolWriter } from "../protocol/writer.js";
+import { sliceUnprocessedEvents } from "./eventCursor.js";
 
 export type ApprovalRequest = {
   thread_id: string;
@@ -165,10 +166,9 @@ export function sendApprovalResponseForRequest(
  * Processes approval request events from the shared protocol event array.
  *
  * CONTRACT: `events` must be the stable array reference managed by
- * `useProtocolEvents` (via React useState). The hook tracks how many events
- * it has processed via `processedEventCount` and only iterates new entries on
- * each render. If the caller ever recreates the array (e.g. wraps in useMemo),
- * the ref-based counter will trigger a full reset on apparent shrinkage.
+ * `useProtocolEvents` (via React useState). The hook tracks progress by
+ * anchoring to the last processed event object so a capped rolling window can
+ * keep advancing without stalling when older events are trimmed.
  */
 export function useApprovalQueue(
   events: readonly ProtocolEvent[],
@@ -178,31 +178,37 @@ export function useApprovalQueue(
     approvalQueueReducer,
     INITIAL_APPROVAL_QUEUE_STATE,
   );
-  const processedEventCount = useRef(0);
+  const stateRef = useRef<ApprovalQueueState>(INITIAL_APPROVAL_QUEUE_STATE);
+  const lastProcessedEvent = useRef<ProtocolEvent | null>(null);
   const [decisionLog, setDecisionLog] = useState<ApprovalDecisionLog[]>([]);
+
+  // Keep stateRef in sync with committed state so the event-processing effect
+  // always starts from the latest queue contents without needing `state` as a
+  // reactive dependency (which would cause a dispatch → state-change → re-run
+  // feedback loop).
+  useEffect(() => {
+    stateRef.current = state;
+  });
 
   const currentRequest = state.queue[0] ?? null;
 
   useEffect(() => {
-    let nextState = state;
+    let nextState = stateRef.current;
 
-    if (events.length < processedEventCount.current) {
-      dispatch({ type: "reset" });
-      setDecisionLog([]);
-      processedEventCount.current = 0;
-      nextState = INITIAL_APPROVAL_QUEUE_STATE;
+    if (events.length === 0) {
+      if (lastProcessedEvent.current !== null) {
+        dispatch({ type: "reset" });
+        setDecisionLog([]);
+      }
+      lastProcessedEvent.current = null;
+      return;
     }
 
-    for (
-      let index = processedEventCount.current;
-      index < events.length;
-      index += 1
-    ) {
-      const event = events[index];
-      if (event === undefined) {
-        continue;
-      }
-
+    const unprocessedEvents = sliceUnprocessedEvents(
+      events,
+      lastProcessedEvent.current,
+    );
+    for (const event of unprocessedEvents) {
       if (event.type === "approval.request") {
         if (classifyApprovalRequest(nextState, event) === "duplicate") {
           continue;
@@ -235,8 +241,9 @@ export function useApprovalQueue(
       });
     }
 
-    processedEventCount.current = events.length;
-  }, [events, state, writer]);
+    const latestEvent = events[events.length - 1];
+    lastProcessedEvent.current = latestEvent ?? null;
+  }, [events, writer]);
 
   const respond = useCallback(
     (decision: ApprovalDecision): void => {
