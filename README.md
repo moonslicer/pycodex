@@ -67,6 +67,42 @@ Type check:
 mypy --strict pycodex/
 ```
 
+## Local Review Command
+
+Run one local command for the standard review checks:
+
+```bash
+make review
+```
+
+By default this uses `.venv/bin/python` for Python tooling. If needed, override it:
+
+```bash
+make review PYTHON=python3
+```
+
+This runs:
+
+- Python: `ruff check . --fix`, `ruff format . --check`, `mypy --strict pycodex/`, `pytest tests/ --ignore=tests/agent_harness -m "not e2e" -v`
+- TUI: `npm --prefix tui run typecheck`, `npm --prefix tui run lint`, `npm --prefix tui test -- --runInBand --passWithNoTests`
+
+Optional local hygiene checks:
+
+```bash
+make hygiene
+```
+
+This runs:
+
+- `knip` via `npx` for unused TypeScript exports/dependencies (`tui`)
+- `jscpd` via `npx` for duplication scan across `tui/src`, `pycodex`, and `tests`
+
+To run everything together:
+
+```bash
+make review-hygiene
+```
+
 ## Local Default Gate
 
 ```bash
