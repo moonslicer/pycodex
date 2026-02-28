@@ -34,7 +34,11 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="pycodex",
         description="Run one non-interactive pycodex turn.",
     )
-    parser.add_argument("prompt", nargs="?", help="User prompt for the model.")
+    parser.add_argument(
+        "prompt",
+        nargs="?",
+        help="User prompt for the model (required unless --tui-mode).",
+    )
     parser.add_argument(
         "--approval",
         default=ApprovalPolicy.NEVER.value,
@@ -60,12 +64,12 @@ def _build_parser() -> argparse.ArgumentParser:
     parser.add_argument(
         "--json",
         action="store_true",
-        help="Emit line-delimited protocol JSON events to stdout.",
+        help="Emit line-delimited protocol JSON events (requires prompt).",
     )
     parser.add_argument(
         "--tui-mode",
         action="store_true",
-        help="Run in interactive TUI bridge mode.",
+        help="Run in interactive TUI bridge mode (no prompt).",
     )
     return parser
 

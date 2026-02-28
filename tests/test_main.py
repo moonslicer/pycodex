@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import json
+import re
 from pathlib import Path
 from typing import Any
 
@@ -24,9 +25,12 @@ def test_main_help_exits_with_usage(capsys: pytest.CaptureFixture[str]) -> None:
 
     assert exc_info.value.code == 0
     captured = capsys.readouterr()
+    normalized_help = " ".join(captured.out.split())
     assert "usage:" in captured.out
     assert "--approval" in captured.out
     assert "prompt" in captured.out
+    assert re.search(r"required unless --tui-\s*mode", captured.out) is not None
+    assert "requires prompt" in normalized_help
 
 
 def test_main_missing_prompt_exits_with_parser_error(capsys: pytest.CaptureFixture[str]) -> None:
