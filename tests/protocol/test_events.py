@@ -117,7 +117,9 @@ def test_event_model_round_trip_json(event: Any, event_cls: type[Any]) -> None:
         ),
     ],
 )
-def test_protocol_event_union_resolves_type(payload: dict[str, Any], expected_cls: type[Any]) -> None:
+def test_protocol_event_union_resolves_type(
+    payload: dict[str, Any], expected_cls: type[Any]
+) -> None:
     adapter = TypeAdapter(ProtocolEvent)
     event = adapter.validate_python(payload)
     assert isinstance(event, expected_cls)
@@ -150,4 +152,3 @@ def test_protocol_event_union_rejects_unknown_type() -> None:
                 "thread_id": "thread_1",
             }
         )
-
