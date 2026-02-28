@@ -267,4 +267,38 @@ describe("index main lifecycle", () => {
     expect(harness.renderUnmountCount).toBe(1);
     expect(harness.processRef.exitCalls).toEqual([0]);
   });
+
+  test("app exit request shuts down without sending interrupt", () => {
+    const harness = createHarness();
+    let exitFromApp: () => void = () => {
+      throw new Error("expected app to provide onExitRequested handler");
+    };
+
+    main({
+      resolveRepoRoot: () => "/repo/root",
+      spawnProcess: () => harness.child as unknown as ChildProcess,
+      buildPycodexArgs: () => ["-m", "pycodex", "--tui-mode"],
+      makeReader: () => harness.reader,
+      makeWriter: () => harness.writer,
+      renderApp: (_reader, _writer, handlers) => {
+        exitFromApp = handlers.onExitRequested;
+        return {
+          unmount: () => {
+            harness.renderUnmountCount += 1;
+          },
+        };
+      },
+      processRef: harness.processRef,
+    });
+
+    exitFromApp();
+
+    expect(harness.writer.interruptCount).toBe(0);
+    expect(harness.writer.closeCount).toBe(1);
+    expect(harness.child.killCalls).toContain("SIGTERM");
+
+    harness.child.exitCode = 0;
+    harness.child.emit("exit", 0, null);
+    expect(harness.processRef.exitCalls).toEqual([0]);
+  });
 });

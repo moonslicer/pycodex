@@ -10,11 +10,12 @@ import type { ProtocolReader } from "./protocol/reader.js";
 import type { ProtocolWriter } from "./protocol/writer.js";
 
 type AppProps = {
+  onExitRequested: () => void;
   reader: ProtocolReader;
   writer: ProtocolWriter;
 };
 
-export function App({ reader, writer }: AppProps) {
+export function App({ onExitRequested, reader, writer }: AppProps) {
   const { events } = useProtocolEvents(reader);
   const { turns, threadId, setUserText } = useTurns(events);
 
@@ -44,6 +45,7 @@ export function App({ reader, writer }: AppProps) {
       </Box>
       <InputArea
         disabled={isBusy}
+        onExit={onExitRequested}
         onInterrupt={handleInterrupt}
         onSubmit={handleSubmit}
       />

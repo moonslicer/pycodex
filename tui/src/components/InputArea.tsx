@@ -3,12 +3,23 @@ import { Box, Text, useInput } from "ink";
 
 type InputAreaProps = {
   disabled: boolean;
+  onExit: () => void;
   onInterrupt: () => void;
   onSubmit: (text: string) => void;
 };
 
 const BRACKETED_PASTE_START = "\u001b[200~";
 const BRACKETED_PASTE_END = "\u001b[201~";
+
+export function handleCtrlC(disabled: boolean, callbacks: {
+  onExit: () => void;
+  onInterrupt: () => void;
+}): void {
+  if (disabled) {
+    callbacks.onInterrupt();
+  }
+  callbacks.onExit();
+}
 
 export function sanitizeInputChunk(input: string): string {
   const withoutPasteMarkers = input
@@ -33,6 +44,7 @@ export function sanitizeInputChunk(input: string): string {
 
 export function InputArea({
   disabled,
+  onExit,
   onInterrupt,
   onSubmit,
 }: InputAreaProps) {
@@ -46,7 +58,7 @@ export function InputArea({
 
   useInput((input, key) => {
     if (key.ctrl && input.toLowerCase() === "c") {
-      onInterrupt();
+      handleCtrlC(disabled, { onExit, onInterrupt });
       return;
     }
 

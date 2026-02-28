@@ -49,7 +49,13 @@ type ProcessRef = {
   };
 };
 
-type RenderApp = (reader: ProtocolReader, writer: ProtocolWriter) => {
+type RenderApp = (
+  reader: ProtocolReader,
+  writer: ProtocolWriter,
+  handlers: {
+    onExitRequested: () => void;
+  },
+) => {
   unmount: () => void;
 };
 
@@ -79,8 +85,8 @@ const DEFAULT_MAIN_DEPENDENCIES: MainDependencies = {
   buildPycodexArgs,
   makeReader: (child: ChildProcess) => new StdioReader(child),
   makeWriter: (child: ChildProcess) => new StdioWriter(child),
-  renderApp: (reader, writer) =>
-    render(React.createElement(App, { reader, writer }), {
+  renderApp: (reader, writer, handlers) =>
+    render(React.createElement(App, { ...handlers, reader, writer }), {
       exitOnCtrlC: false,
     }),
   processRef: {
@@ -217,7 +223,11 @@ export function main(dependencies: Partial<MainDependencies> = {}): void {
     requestShutdown();
   });
 
-  appHandle = deps.renderApp(reader, writer);
+  appHandle = deps.renderApp(reader, writer, {
+    onExitRequested: () => {
+      requestShutdown();
+    },
+  });
   if (didExitBeforeRender()) {
     unmountOnce();
   }
