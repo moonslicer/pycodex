@@ -13,16 +13,20 @@ Scan for security vulnerabilities: dependency CVEs, static analysis, subprocess 
 
 ## Step 2 — Dependency audit
 
-- Run: `pip-audit`
-- If `pip-audit` is not installed, report: `SKIP — pip-audit not installed (pip install pip-audit)`
+- Run: `.venv/bin/python -m pip_audit`
+- If module import fails, install dev tools in the project venv and retry:
+  - `.venv/bin/python -m pip install -e '.[dev]'`
+- If install fails, report: `FAIL — dependency audit unavailable (pip-audit install failed)`
 - Parse output for vulnerabilities at any severity
 - For each finding: report CVE ID, package, installed version, fixed version
 - If CRITICAL or HIGH severity found: mark as **FAIL**
 
 ## Step 3 — Static security analysis
 
-- Run: `bandit -r pycodex/ -ll -f json`
-- If `bandit` is not installed, report: `SKIP — bandit not installed (pip install bandit)`
+- Run: `.venv/bin/python -m bandit -r pycodex/ -ll -f json`
+- If module import fails, install dev tools in the project venv and retry:
+  - `.venv/bin/python -m pip install -e '.[dev]'`
+- If install fails, report: `FAIL — static security scan unavailable (bandit install failed)`
 - Parse JSON output for issues with severity MEDIUM or HIGH
 - Key patterns to watch for this project:
   - `B603` — subprocess without shell=False
@@ -65,8 +69,8 @@ Scan for security vulnerabilities: dependency CVEs, static analysis, subprocess 
 **WARN items** (accepted risks — document in docs/ai/memory.md):
 - [check] — file:line — description
 
-**Dependency audit**: PASS / N vulnerabilities found / SKIPPED
-**Static analysis**: PASS / N findings / SKIPPED
+**Dependency audit**: PASS / N vulnerabilities found / FAIL (tool unavailable)
+**Static analysis**: PASS / N findings / FAIL (tool unavailable)
 **Subprocess patterns**: PASS / N findings
 **Secrets detection**: PASS / N findings / SKIPPED
 ```
