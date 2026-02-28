@@ -9,7 +9,7 @@ import { App } from "./app.js";
 import { StdioReader, StdioWriter } from "./protocol/transports/stdio.js";
 import type { ProtocolReader } from "./protocol/reader.js";
 import type { ProtocolWriter } from "./protocol/writer.js";
-import { buildPycodexArgs } from "./runtime/launch.js";
+import { buildPycodexArgs, isTuiDebugEnabled } from "./runtime/launch.js";
 
 const SHUTDOWN_TIMEOUT_MS = 5000;
 
@@ -53,6 +53,7 @@ type RenderApp = (
   reader: ProtocolReader,
   writer: ProtocolWriter,
   handlers: {
+    debug: boolean;
     onExitRequested: () => void;
   },
 ) => {
@@ -124,6 +125,7 @@ export function main(dependencies: Partial<MainDependencies> = {}): void {
 
   const reader = deps.makeReader(child);
   const writer = deps.makeWriter(child);
+  const debug = isTuiDebugEnabled(deps.processRef.env);
 
   reader.start();
 
@@ -224,6 +226,7 @@ export function main(dependencies: Partial<MainDependencies> = {}): void {
   });
 
   appHandle = deps.renderApp(reader, writer, {
+    debug,
     onExitRequested: () => {
       requestShutdown();
     },

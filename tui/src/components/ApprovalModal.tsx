@@ -39,7 +39,7 @@ export function ApprovalModal({ request, onRespond }: ApprovalModalProps) {
       borderColor="yellow"
       flexDirection="column"
       paddingX={1}
-      marginBottom={1}
+      marginTop={1}
     >
       <Text color="yellow">Approval required</Text>
       <Text>{`Tool: ${request.tool}`}</Text>

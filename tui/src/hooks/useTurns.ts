@@ -78,12 +78,88 @@ type BufferedItemUpdate = {
   delta: string;
 };
 
+const UNKNOWN_TOOL_NAME = "unknown";
+
 function toFinalLines(finalText: string): string[] {
   const pushed = reduceLineBuffer(INITIAL_LINE_BUFFER_STATE, {
     type: "push",
     delta: finalText,
   });
   return reduceLineBuffer(pushed, { type: "flush" }).committed;
+}
+
+function applyItemStartedEvent(
+  state: TurnsViewState,
+  event: Extract<ProtocolEvent, { type: "item.started" }>,
+): TurnsViewState {
+  if (event.item_kind !== "tool_call") {
+    return state;
+  }
+
+  const nextTurns = updateTurn(state.turns, event.turn_id, (turn) => {
+    const existing = turn.toolCalls[event.item_id];
+    const nextToolCall: ToolCallState = {
+      item_id: event.item_id,
+      name: event.name ?? existing?.name ?? UNKNOWN_TOOL_NAME,
+      arguments: event.arguments ?? existing?.arguments ?? null,
+      status: "pending",
+      content: existing?.content ?? null,
+    };
+
+    return {
+      ...turn,
+      toolCalls: {
+        ...turn.toolCalls,
+        [event.item_id]: nextToolCall,
+      },
+    };
+  });
+
+  if (nextTurns === state.turns) {
+    return state;
+  }
+
+  return {
+    ...state,
+    turns: nextTurns,
+  };
+}
+
+function applyItemCompletedEvent(
+  state: TurnsViewState,
+  event: Extract<ProtocolEvent, { type: "item.completed" }>,
+): TurnsViewState {
+  if (event.item_kind !== "tool_result") {
+    return state;
+  }
+
+  const nextTurns = updateTurn(state.turns, event.turn_id, (turn) => {
+    const existing = turn.toolCalls[event.item_id];
+    const nextToolCall: ToolCallState = {
+      item_id: event.item_id,
+      name: existing?.name ?? UNKNOWN_TOOL_NAME,
+      arguments: existing?.arguments ?? null,
+      status: "done",
+      content: event.content,
+    };
+
+    return {
+      ...turn,
+      toolCalls: {
+        ...turn.toolCalls,
+        [event.item_id]: nextToolCall,
+      },
+    };
+  });
+
+  if (nextTurns === state.turns) {
+    return state;
+  }
+
+  return {
+    ...state,
+    turns: nextTurns,
+  };
 }
 
 function applyItemUpdatedDelta(
@@ -212,7 +288,9 @@ export function reduceTurns(
       };
     }
     case "item.started":
+      return applyItemStartedEvent(state, event);
     case "item.completed":
+      return applyItemCompletedEvent(state, event);
     case "approval.request":
       return state;
     case "item.updated":

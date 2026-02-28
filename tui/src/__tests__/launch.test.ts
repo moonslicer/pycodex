@@ -1,4 +1,4 @@
-import { buildPycodexArgs } from "../runtime/launch.js";
+import { buildPycodexArgs, isTuiDebugEnabled } from "../runtime/launch.js";
 
 describe("buildPycodexArgs", () => {
   test("defaults to on-request approval", () => {
@@ -25,5 +25,22 @@ describe("buildPycodexArgs", () => {
       "--approval",
       "never",
     ]);
+  });
+});
+
+describe("isTuiDebugEnabled", () => {
+  test("defaults to disabled", () => {
+    expect(isTuiDebugEnabled({})).toBe(false);
+  });
+
+  test("enables with truthy env values", () => {
+    expect(isTuiDebugEnabled({ PYCODEX_TUI_DEBUG: "1" })).toBe(true);
+    expect(isTuiDebugEnabled({ PYCODEX_TUI_DEBUG: "true" })).toBe(true);
+    expect(isTuiDebugEnabled({ PYCODEX_TUI_DEBUG: "YES" })).toBe(true);
+  });
+
+  test("disables for unknown values", () => {
+    expect(isTuiDebugEnabled({ PYCODEX_TUI_DEBUG: "debug" })).toBe(false);
+    expect(isTuiDebugEnabled({ PYCODEX_TUI_DEBUG: "0" })).toBe(false);
   });
 });

@@ -138,6 +138,89 @@ describe("reduceTurns", () => {
     expect(failed.turns[0]?.error).toBe("interrupted");
   });
 
+  test("item.started tool_call is tracked with name and arguments", () => {
+    const next = reduceTurnsSequence(INITIAL_TURNS_STATE, [
+      {
+        type: "turn.started",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+      },
+      {
+        type: "item.started",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+        item_id: "item_1",
+        item_kind: "tool_call",
+        name: "shell",
+        arguments: "{\"command\":\"ls -lrt\"}",
+      },
+    ]);
+
+    expect(next.turns[0]?.toolCalls["item_1"]).toEqual({
+      item_id: "item_1",
+      name: "shell",
+      arguments: "{\"command\":\"ls -lrt\"}",
+      status: "pending",
+      content: null,
+    });
+  });
+
+  test("item.completed tool_result marks the tool call done", () => {
+    const next = reduceTurnsSequence(INITIAL_TURNS_STATE, [
+      {
+        type: "turn.started",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+      },
+      {
+        type: "item.started",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+        item_id: "item_1",
+        item_kind: "tool_call",
+        name: "shell",
+        arguments: null,
+      },
+      {
+        type: "item.completed",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+        item_id: "item_1",
+        item_kind: "tool_result",
+        content: "stdout:\nfile.txt",
+      },
+    ]);
+
+    expect(next.turns[0]?.toolCalls["item_1"]).toEqual({
+      item_id: "item_1",
+      name: "shell",
+      arguments: null,
+      status: "done",
+      content: "stdout:\nfile.txt",
+    });
+  });
+
+  test("assistant message items do not create tool call entries", () => {
+    const next = reduceTurnsSequence(INITIAL_TURNS_STATE, [
+      {
+        type: "turn.started",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+      },
+      {
+        type: "item.started",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+        item_id: "item_assistant",
+        item_kind: "assistant_message",
+        name: null,
+        arguments: null,
+      },
+    ]);
+
+    expect(Object.keys(next.turns[0]?.toolCalls ?? {})).toHaveLength(0);
+  });
+
   test("item.updated.batch applies multiple deltas in order", () => {
     const started = reduceTurns(INITIAL_TURNS_STATE, {
       type: "turn.started",

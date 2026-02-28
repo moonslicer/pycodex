@@ -301,4 +301,30 @@ describe("index main lifecycle", () => {
     harness.child.emit("exit", 0, null);
     expect(harness.processRef.exitCalls).toEqual([0]);
   });
+
+  test("passes debug flag to app handlers from environment", () => {
+    const harness = createHarness();
+    harness.processRef.env.PYCODEX_TUI_DEBUG = "true";
+
+    let seenDebug = false;
+
+    main({
+      resolveRepoRoot: () => "/repo/root",
+      spawnProcess: () => harness.child as unknown as ChildProcess,
+      buildPycodexArgs: () => ["-m", "pycodex", "--tui-mode"],
+      makeReader: () => harness.reader,
+      makeWriter: () => harness.writer,
+      renderApp: (_reader, _writer, handlers) => {
+        seenDebug = handlers.debug;
+        return {
+          unmount: () => {
+            harness.renderUnmountCount += 1;
+          },
+        };
+      },
+      processRef: harness.processRef,
+    });
+
+    expect(seenDebug).toBe(true);
+  });
 });

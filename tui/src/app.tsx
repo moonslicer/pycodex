@@ -13,6 +13,7 @@ import type { ProtocolReader } from "./protocol/reader.js";
 import type { ProtocolWriter } from "./protocol/writer.js";
 
 type AppProps = {
+  debug?: boolean;
   onExitRequested: () => void;
   reader: ProtocolReader;
   writer: ProtocolWriter;
@@ -26,7 +27,7 @@ export function isInputDisabled(
   return hasActiveTurn || queueLength > 0;
 }
 
-export function App({ onExitRequested, reader, writer }: AppProps) {
+export function App({ debug = false, onExitRequested, reader, writer }: AppProps) {
   const { events } = useProtocolEvents(reader);
   const { turns, threadId, setUserText } = useTurns(events);
   const { currentRequest, queueLength, respond } = useApprovalQueue(events, writer);
@@ -56,12 +57,12 @@ export function App({ onExitRequested, reader, writer }: AppProps) {
 
   return (
     <Box flexDirection="column">
+      <Box flexDirection="column" flexGrow={1}>
+        <ChatView showToolCallSummary={debug} turns={turns} />
+      </Box>
       {currentRequest !== null ? (
         <ApprovalModal onRespond={respond} request={currentRequest} />
       ) : null}
-      <Box flexDirection="column" flexGrow={1}>
-        <ChatView turns={turns} />
-      </Box>
       <InputArea
         disabled={inputDisabled}
         onExit={onExitRequested}
