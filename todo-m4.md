@@ -163,7 +163,7 @@ TypeScript:
   - Verify:
     - `pytest tests/core/test_tui_bridge.py -k "user_input or interrupt or unknown or thread_started" -v`
 
-- [ ] T6: M4B baseline Ink shell (`index.ts`, `app.tsx`, base components/hooks)
+- [x] T6: M4B baseline Ink shell (`index.ts`, `app.tsx`, base components/hooks)
   - Implement multi-turn shell without streaming/approval modal/tool panels.
   - **Build order**: hooks first → `index.ts` entry point → components last.
   - **Spawn**: use `spawn()` not `exec()` — `exec()` buffers stdout and breaks JSONL streaming.
