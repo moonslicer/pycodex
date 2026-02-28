@@ -127,7 +127,7 @@ TypeScript:
 
 ## TODO Tasks
 
-- [ ] T1: M4A toolchain scaffold (`tui/package.json`, `tsconfig.json`, `jest.config.ts`, `eslint.config.js`)
+- [x] T1: M4A toolchain scaffold (`tui/package.json`, `tsconfig.json`, `jest.config.ts`, `eslint.config.js`)
   - Enforce strict TS and ESLint 9 flat config.
   - Add scripts: `build`, `dev`, `start`, `typecheck`, `lint`, `test`.
   - Verify:
