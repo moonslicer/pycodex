@@ -35,8 +35,8 @@ export type ItemStartedEvent = {
   turn_id: string;
   item_id: string;
   item_kind: "tool_call" | "assistant_message";
-  name?: string;
-  arguments?: string;
+  name?: string | null;
+  arguments?: string | null;
 };
 
 export type ItemCompletedEvent = {

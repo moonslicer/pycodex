@@ -67,6 +67,7 @@ function isProtocolEvent(value: unknown): value is ProtocolEvent {
       if (
         "name" in value &&
         value["name"] !== undefined &&
+        value["name"] !== null &&
         !isString(value["name"])
       ) {
         return false;
@@ -74,6 +75,7 @@ function isProtocolEvent(value: unknown): value is ProtocolEvent {
       if (
         "arguments" in value &&
         value["arguments"] !== undefined &&
+        value["arguments"] !== null &&
         !isString(value["arguments"])
       ) {
         return false;

@@ -143,7 +143,7 @@ TypeScript:
 
 - [x] T2.1: M4A stdio transport hardening (error handlers, stderr drain, readline cleanup, jest dist ignore)
 
-- [ ] T3: M4A protocol test baseline
+- [x] T3: M4A protocol test baseline
   - Add `reader.test.ts` + `writer.test.ts` for command/event shape and line framing.
   - Align TS/Python optional-null contract for `item.started`:
     - Accept `name: null` and `arguments: null` in `tui/src/protocol/types.ts` and stdio validator.
