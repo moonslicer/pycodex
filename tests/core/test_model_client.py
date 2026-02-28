@@ -5,6 +5,7 @@ from dataclasses import dataclass
 from typing import Any
 
 import pytest
+from openai.types.responses import ResponseCompletedEvent
 from pycodex.core.config import Config
 from pycodex.core.model_client import (
     Completed,
@@ -291,3 +292,97 @@ def test_response_event_dataclasses_are_constructible() -> None:
     assert delta.type == "output_text_delta"
     assert item_done.type == "output_item_done"
     assert completed.type == "completed"
+
+
+def test_model_client_maps_usage_on_completed_event() -> None:
+    responses = _FakeResponses(
+        streams=[
+            _FakeStream(
+                events=[
+                    {
+                        "type": "response.completed",
+                        "response": {
+                            "id": "resp_usage",
+                            "usage": {"input_tokens": 10, "output_tokens": 5},
+                        },
+                    }
+                ]
+            )
+        ]
+    )
+    client = ModelClient(
+        config=Config(model="gpt-test"),
+        openai_factory=lambda _config: _FakeOpenAIClient(responses=responses),
+    )
+
+    events = asyncio.run(_collect_events(client))
+
+    assert events == [
+        Completed(
+            response_id="resp_usage",
+            usage={"input_tokens": 10, "output_tokens": 5},
+        )
+    ]
+
+
+def test_model_client_uses_none_when_completed_usage_is_missing() -> None:
+    responses = _FakeResponses(
+        streams=[
+            _FakeStream(
+                events=[
+                    {
+                        "type": "response.completed",
+                        "response": {"id": "resp_no_usage"},
+                    }
+                ]
+            )
+        ]
+    )
+    client = ModelClient(
+        config=Config(model="gpt-test"),
+        openai_factory=lambda _config: _FakeOpenAIClient(responses=responses),
+    )
+
+    events = asyncio.run(_collect_events(client))
+
+    assert events == [Completed(response_id="resp_no_usage", usage=None)]
+
+
+def test_model_client_maps_usage_from_sdk_completed_event_object() -> None:
+    sdk_completed = ResponseCompletedEvent.model_validate(
+        {
+            "type": "response.completed",
+            "sequence_number": 1,
+            "response": {
+                "id": "resp_sdk_usage",
+                "created_at": 0,
+                "model": "gpt-4o-mini",
+                "object": "response",
+                "output": [],
+                "parallel_tool_calls": False,
+                "tool_choice": "auto",
+                "tools": [],
+                "usage": {
+                    "input_tokens": 10,
+                    "input_tokens_details": {"cached_tokens": 0},
+                    "output_tokens": 5,
+                    "output_tokens_details": {"reasoning_tokens": 0},
+                    "total_tokens": 15,
+                },
+            },
+        }
+    )
+    responses = _FakeResponses(streams=[_FakeStream(events=[sdk_completed])])
+    client = ModelClient(
+        config=Config(model="gpt-test"),
+        openai_factory=lambda _config: _FakeOpenAIClient(responses=responses),
+    )
+
+    events = asyncio.run(_collect_events(client))
+
+    assert events == [
+        Completed(
+            response_id="resp_sdk_usage",
+            usage={"input_tokens": 10, "output_tokens": 5},
+        )
+    ]

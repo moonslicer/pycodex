@@ -125,7 +125,7 @@ __main__.py            renderer: text mode or JSONL mode (--json flag)
     - `test_injectable_thread_id`: construct adapter with explicit `thread_id="test-thread-1"` → all emitted events carry that ID.
   - Verify: `pytest tests/core/test_event_adapter.py -v`
 
-- [ ] T3: `core/model_client.py` + `core/agent.py` — surface token usage through to `TurnCompleted`
+- [x] T3: `core/model_client.py` + `core/agent.py` — surface token usage through to `TurnCompleted`
   - Investigate `Completed` event in `model_client.py`: check whether `response.usage` is available on the Responses API stream completion object.
   - If available: add `usage: dict[str, int] | None` to the `Completed` dataclass; populate from `response.usage` (keys: `input_tokens`, `output_tokens`).
   - If not available: add the field defaulting to `None` and document the gap with a `# TODO` comment.

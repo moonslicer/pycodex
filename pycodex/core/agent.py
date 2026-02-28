@@ -9,6 +9,7 @@ from inspect import isawaitable
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+from pycodex.core.model_client import Completed as ModelCompleted
 from pycodex.core.model_client import OutputItemDone, OutputTextDelta
 from pycodex.core.session import PromptItem, Session
 from pycodex.tools.orchestrator import ToolAborted
@@ -49,6 +50,7 @@ class TurnCompleted:
     """Event emitted when the turn completes with final text."""
 
     final_text: str
+    usage: dict[str, int] | None = None
     type: Literal["turn_completed"] = "turn_completed"
 
 
@@ -109,10 +111,10 @@ class Agent:
         await self._emit(TurnStarted(user_input=user_input))
 
         while True:
-            tool_calls, text = await self._sample_model_once()
+            tool_calls, text, usage = await self._sample_model_once()
             if not tool_calls:
                 _log.info("turn completed: %d chars", len(text))
-                await self._emit(TurnCompleted(final_text=text))
+                await self._emit(TurnCompleted(final_text=text, usage=usage))
                 return text
 
             if text:
@@ -160,9 +162,10 @@ class Agent:
                     )
                 )
 
-    async def _sample_model_once(self) -> tuple[list[ParsedToolCall], str]:
+    async def _sample_model_once(self) -> tuple[list[ParsedToolCall], str, dict[str, int] | None]:
         text_parts: list[str] = []
         tool_calls: list[ParsedToolCall] = []
+        usage: dict[str, int] | None = None
 
         async for event in self.model_client.stream(
             messages=self.session.to_prompt(),
@@ -178,8 +181,10 @@ class Agent:
                     completed_text = _extract_assistant_text_from_item(event.item)
                     if completed_text is not None:
                         text_parts.append(completed_text)
+            elif isinstance(event, ModelCompleted):
+                usage = event.usage
 
-        return tool_calls, "".join(text_parts)
+        return tool_calls, "".join(text_parts), usage
 
     async def _emit(self, event: AgentEvent) -> None:
         if self.on_event is None:

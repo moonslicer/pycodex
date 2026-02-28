@@ -58,6 +58,7 @@ class Completed:
 
     type: Literal["completed"] = "completed"
     response_id: str | None = None
+    usage: dict[str, int] | None = None
 
 
 ResponseEvent = OutputTextDelta | OutputItemDone | Completed
@@ -192,7 +193,7 @@ def _map_response_event(raw_event: Any) -> ResponseEvent | None:
     if event_type == "response.completed":
         response = _event_get(raw_event, "response")
         response_id = _to_optional_str(_event_get(response, "id"))
-        return Completed(response_id=response_id)
+        return Completed(response_id=response_id, usage=_extract_usage(response))
 
     return None
 
@@ -331,6 +332,18 @@ def _extract_stream_error_message(raw_event: Any) -> str:
         return fallback
 
     return "unknown stream failure"
+
+
+def _extract_usage(response: Any) -> dict[str, int] | None:
+    usage = _event_get(response, "usage")
+    input_tokens = _to_optional_int(_event_get(usage, "input_tokens"))
+    output_tokens = _to_optional_int(_event_get(usage, "output_tokens"))
+    if input_tokens is None or output_tokens is None:
+        return None
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+    }
 
 
 def _is_transient_error(exc: Exception) -> bool:

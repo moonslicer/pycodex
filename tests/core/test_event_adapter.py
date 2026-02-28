@@ -5,7 +5,7 @@ import re
 import pytest
 from pycodex.core.agent import ToolCallDispatched, ToolResultReceived, TurnCompleted, TurnStarted
 from pycodex.core.event_adapter import EventAdapter
-from pycodex.protocol.events import ItemCompleted, ItemStarted
+from pycodex.protocol.events import ItemCompleted, ItemStarted, TokenUsage
 from pycodex.protocol.events import TurnCompleted as ProtocolTurnCompleted
 from pycodex.protocol.events import TurnStarted as ProtocolTurnStarted
 
@@ -138,6 +138,33 @@ def test_abort_turn_emits_turn_completed_not_failed() -> None:
     assert len(out) == 1
     assert isinstance(out[0], ProtocolTurnCompleted)
     assert out[0].type == "turn.completed"
+
+
+def test_usage_in_turn_completed() -> None:
+    adapter = EventAdapter(thread_id="thread_test")
+    adapter.on_agent_event(TurnStarted(user_input="hello"))
+
+    out = adapter.on_agent_event(
+        TurnCompleted(
+            final_text="done",
+            usage={"input_tokens": 10, "output_tokens": 5},
+        )
+    )
+
+    assert len(out) == 1
+    assert isinstance(out[0], ProtocolTurnCompleted)
+    assert out[0].usage == TokenUsage(input_tokens=10, output_tokens=5)
+
+
+def test_usage_none_when_absent() -> None:
+    adapter = EventAdapter(thread_id="thread_test")
+    adapter.on_agent_event(TurnStarted(user_input="hello"))
+
+    out = adapter.on_agent_event(TurnCompleted(final_text="done", usage=None))
+
+    assert len(out) == 1
+    assert isinstance(out[0], ProtocolTurnCompleted)
+    assert out[0].usage is None
 
 
 def test_injectable_thread_id() -> None:

@@ -8,7 +8,13 @@ from uuid import uuid4
 
 from pycodex.core.agent import AgentEvent, ToolCallDispatched, ToolResultReceived, TurnCompleted
 from pycodex.core.agent import TurnStarted as AgentTurnStarted
-from pycodex.protocol.events import ItemCompleted, ItemStarted, ProtocolEvent, TurnStarted
+from pycodex.protocol.events import (
+    ItemCompleted,
+    ItemStarted,
+    ProtocolEvent,
+    TokenUsage,
+    TurnStarted,
+)
 from pycodex.protocol.events import TurnCompleted as ProtocolTurnCompleted
 
 
@@ -71,12 +77,13 @@ class EventAdapter:
 
         if isinstance(event, TurnCompleted):
             turn_id = self._require_active_turn_id()
+            usage = _to_token_usage(event.usage)
             return [
                 ProtocolTurnCompleted(
                     thread_id=self.thread_id,
                     turn_id=turn_id,
                     final_text=event.final_text,
-                    usage=None,
+                    usage=usage,
                 )
             ]
 
@@ -90,3 +97,23 @@ class EventAdapter:
         if self._current_turn_id is None:
             raise RuntimeError("received non-start event without active turn")
         return self._current_turn_id
+
+
+def _to_token_usage(raw_usage: dict[str, int] | None) -> TokenUsage | None:
+    if raw_usage is None:
+        return None
+
+    input_tokens = raw_usage.get("input_tokens")
+    output_tokens = raw_usage.get("output_tokens")
+    if (
+        not isinstance(input_tokens, int)
+        or isinstance(input_tokens, bool)
+        or not isinstance(output_tokens, int)
+        or isinstance(output_tokens, bool)
+    ):
+        return None
+
+    return TokenUsage(
+        input_tokens=input_tokens,
+        output_tokens=output_tokens,
+    )

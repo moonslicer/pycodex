@@ -231,6 +231,42 @@ def test_run_turn_emits_lifecycle_events_in_order(tmp_path: Path) -> None:
     assert emitted[3].final_text == "final"
 
 
+def test_run_turn_threads_usage_to_turn_completed_event(tmp_path: Path) -> None:
+    session = Session()
+    model_client = _FakeModelClient(
+        turns=[
+            [
+                OutputTextDelta(delta="final"),
+                Completed(
+                    response_id="resp_usage",
+                    usage={"input_tokens": 10, "output_tokens": 5},
+                ),
+            ]
+        ]
+    )
+    router = _FakeToolRouter(specs=[], results=[])
+    emitted: list[AgentEvent] = []
+
+    async def on_event(event: AgentEvent) -> None:
+        emitted.append(event)
+
+    result = asyncio.run(
+        run_turn(
+            session=session,
+            model_client=model_client,
+            tool_router=router,
+            cwd=tmp_path,
+            user_input="say hi",
+            on_event=on_event,
+        )
+    )
+
+    assert result == "final"
+    assert [event.type for event in emitted] == ["turn_started", "turn_completed"]
+    assert isinstance(emitted[1], TurnCompleted)
+    assert emitted[1].usage == {"input_tokens": 10, "output_tokens": 5}
+
+
 def test_run_turn_keeps_error_tool_output_in_session(tmp_path: Path) -> None:
     session = Session()
     model_client = _FakeModelClient(
