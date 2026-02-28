@@ -29,9 +29,13 @@ class EventAdapter:
     _item_counter: int = 0
     _inflight: dict[str, str] = field(default_factory=dict)
     _current_turn_id: str | None = None
+    _thread_started: bool = False
 
     def start_thread(self) -> ThreadStarted:
         """Build the canonical thread-start event for this adapter instance."""
+        if self._thread_started:
+            raise RuntimeError("thread.started has already been emitted for this adapter")
+        self._thread_started = True
         return ThreadStarted(thread_id=self.thread_id)
 
     def on_agent_event(self, event: AgentEvent) -> list[ProtocolEvent]:

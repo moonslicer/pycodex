@@ -26,6 +26,14 @@ def test_start_thread_emits_adapter_thread_id() -> None:
     assert out.thread_id == "thread_test"
 
 
+def test_start_thread_raises_when_called_more_than_once() -> None:
+    adapter = EventAdapter(thread_id="thread_test")
+    adapter.start_thread()
+
+    with pytest.raises(RuntimeError, match="already been emitted"):
+        adapter.start_thread()
+
+
 def test_id_generation_and_reuse() -> None:
     adapter = EventAdapter(thread_id="thread_test")
     adapter.on_agent_event(TurnStarted(user_input="run"))

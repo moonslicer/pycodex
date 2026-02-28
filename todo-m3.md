@@ -156,7 +156,7 @@ __main__.py            renderer: text mode or JSONL mode (--json flag)
     - `test_text_mode_unchanged`: no `--json` flag; assert stdout does not contain JSON lines; assert existing text output behavior is preserved.
   - Verify: `pytest tests/test_main.py -k json -v`
 
-- [ ] T5: Quality gates + milestone verification
+- [x] T5: Quality gates + milestone verification
   - Run `ruff check . --fix` — must be clean.
   - Run `ruff format .` — must be clean.
   - Run `mypy --strict pycodex/` — must pass on all source files including `protocol/` and `core/event_adapter.py`.
@@ -165,7 +165,9 @@ __main__.py            renderer: text mode or JSONL mode (--json flag)
   - Verify: `python3 -m pycodex --json "what is 2+2" | python3 -c "import sys,json; [print(json.loads(l)['type']) for l in sys.stdin]"` (requires local OpenAI endpoint).
 
 ## Completion Checklist
-- [ ] All T1–T5 done
-- [ ] Quality gates all pass (`ruff check`, `ruff format`, `mypy --strict`, `pytest tests/ -v`)
-- [ ] Milestone verification command passes (or blocked by local runtime — document if so)
-- [ ] Milestone report includes: files changed, gate results, verification output, risks/assumptions, next milestone recommendation
+- [x] All T1–T5 done
+- [x] Quality gates all pass (`ruff check`, `ruff format`, `mypy --strict`, `pytest tests/ -v`)
+- [x] Milestone verification command passes (or blocked by local runtime — document if so)
+- [x] Milestone report includes: files changed, gate results, verification output, risks/assumptions, next milestone recommendation
+  - 2026-02-28 gate run results: `ruff check . --fix` PASS, `ruff format .` PASS, `mypy --strict pycodex/` PASS, `pytest tests/ -v` PASS (`187 passed, 1 skipped`).
+  - 2026-02-28 latest local milestone verification now passes: `python3 -m pycodex --json "what is 2+2"` emits `thread.started`, `turn.started`, `turn.completed` with usage populated.
