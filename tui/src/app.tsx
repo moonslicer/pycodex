@@ -1,3 +1,4 @@
+import { useCallback } from "react";
 import { Box } from "ink";
 
 import { ChatView } from "./components/ChatView.js";
@@ -15,17 +16,26 @@ type AppProps = {
 
 export function App({ reader, writer }: AppProps) {
   const { events } = useProtocolEvents(reader);
-  const { turns, threadId } = useTurns(events);
+  const { turns, threadId, setUserText } = useTurns(events);
 
   const isBusy = turns.some((turn) => turn.status === "active");
 
-  function handleSubmit(text: string): void {
-    writer.sendUserInput(text);
-  }
+  // Find the active turn_id so we can stamp userText before sending.
+  const activeTurnId = turns.find((t) => t.status === "active")?.turn_id;
 
-  function handleInterrupt(): void {
+  const handleSubmit = useCallback(
+    (text: string): void => {
+      if (activeTurnId !== undefined) {
+        setUserText(activeTurnId, text);
+      }
+      writer.sendUserInput(text);
+    },
+    [activeTurnId, setUserText, writer],
+  );
+
+  const handleInterrupt = useCallback((): void => {
     writer.sendInterrupt();
-  }
+  }, [writer]);
 
   return (
     <Box flexDirection="column">

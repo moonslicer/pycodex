@@ -39,14 +39,15 @@ function main(): void {
 
   reader.start();
 
-  const app = render(React.createElement(App, { reader, writer }), {
-    exitOnCtrlC: false,
-  });
-
   let shutdownRequested = false;
   let didUnmount = false;
   let forceKillTimer: NodeJS.Timeout | null = null;
   let overrideExitCode: number | null = null;
+
+  // app is assigned below after render(); unmountOnce guards against it being
+  // called before assignment by checking didUnmount first.
+  // eslint-disable-next-line prefer-const
+  let app: ReturnType<typeof render>;
 
   function unmountOnce(): void {
     if (didUnmount) {
@@ -87,8 +88,18 @@ function main(): void {
     process.exit(overrideExitCode ?? child.exitCode);
   }
 
+  // Register signal handlers before render() so no SIGINT can slip through
+  // during the Ink initialisation window.
+  process.once("SIGINT", () => {
+    requestShutdown({ interrupt: true });
+  });
+
+  process.once("SIGTERM", () => {
+    requestShutdown();
+  });
+
   child.once("error", (error) => {
-    process.stderr.write(`[tui] failed to start pycodex bridge: ${error.message}\n`);
+    process.stderr.write(`[tui] child process error: ${error.message}\n`);
     requestShutdown({ exitCode: 1 });
   });
 
@@ -106,12 +117,8 @@ function main(): void {
     requestShutdown();
   });
 
-  process.once("SIGINT", () => {
-    requestShutdown({ interrupt: true });
-  });
-
-  process.once("SIGTERM", () => {
-    requestShutdown();
+  app = render(React.createElement(App, { reader, writer }), {
+    exitOnCtrlC: false,
   });
 }
 

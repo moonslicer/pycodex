@@ -7,11 +7,16 @@ type ProtocolEventState = {
   events: ProtocolEvent[];
 };
 
+// Keep the last N events in memory. useTurns processes each event once via
+// processedEventCount, so trimming old entries does not cause re-processing.
+const MAX_EVENTS = 1000;
+
 export function appendProtocolEvent(
   events: readonly ProtocolEvent[],
   event: ProtocolEvent,
 ): ProtocolEvent[] {
-  return [...events, event];
+  const next = [...events, event];
+  return next.length > MAX_EVENTS ? next.slice(-MAX_EVENTS) : next;
 }
 
 export function useProtocolEvents(reader: ProtocolReader): ProtocolEventState {

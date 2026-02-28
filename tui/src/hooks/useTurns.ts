@@ -1,4 +1,4 @@
-import { useEffect, useReducer, useRef } from "react";
+import { useCallback, useEffect, useReducer, useRef } from "react";
 
 import type { ProtocolEvent, TokenUsage } from "../protocol/types.js";
 
@@ -15,7 +15,7 @@ export type TurnState = {
   userText: string;
   assistantLines: string[];
   partialLine: string;
-  toolCalls: Map<string, ToolCallState>;
+  toolCalls: Record<string, ToolCallState>;
   status: "active" | "completed" | "failed";
   error: string | null;
   usage: TokenUsage | null;
@@ -35,6 +35,11 @@ type TurnsAction =
   | {
       type: "event";
       event: ProtocolEvent;
+    }
+  | {
+      type: "user.input";
+      turn_id: string;
+      text: string;
     }
   | {
       type: "reset";
@@ -91,7 +96,7 @@ export function reduceTurns(
             userText: "",
             assistantLines: [],
             partialLine: "",
-            toolCalls: new Map<string, ToolCallState>(),
+            toolCalls: {},
             status: "active",
             error: null,
             usage: null,
@@ -160,10 +165,26 @@ function turnsReducer(state: TurnsViewState, action: TurnsAction): TurnsViewStat
   if (action.type === "reset") {
     return INITIAL_TURNS_STATE;
   }
+  if (action.type === "user.input") {
+    const nextTurns = updateTurn(state.turns, action.turn_id, (turn) => ({
+      ...turn,
+      userText: action.text,
+    }));
+    if (nextTurns === state.turns) {
+      return state;
+    }
+    return { ...state, turns: nextTurns };
+  }
   return reduceTurns(state, action.event);
 }
 
-export function useTurns(events: readonly ProtocolEvent[]): TurnsViewState {
+export type TurnsDispatch = {
+  setUserText: (turn_id: string, text: string) => void;
+};
+
+export function useTurns(
+  events: readonly ProtocolEvent[],
+): TurnsViewState & TurnsDispatch {
   const [state, dispatch] = useReducer(turnsReducer, INITIAL_TURNS_STATE);
   const processedEventCount = useRef(0);
 
@@ -192,5 +213,12 @@ export function useTurns(events: readonly ProtocolEvent[]): TurnsViewState {
     processedEventCount.current = events.length;
   }, [events]);
 
-  return state;
+  const setUserText = useCallback(
+    (turn_id: string, text: string) => {
+      dispatch({ type: "user.input", turn_id, text });
+    },
+    [],
+  );
+
+  return { ...state, setUserText };
 }
