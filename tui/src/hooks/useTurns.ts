@@ -238,7 +238,9 @@ export function reduceTurnsSequence(
   return nextState;
 }
 
-function turnsReducer(state: TurnsViewState, action: TurnsAction): TurnsViewState {
+export type { TurnsAction };
+
+export function turnsReducer(state: TurnsViewState, action: TurnsAction): TurnsViewState {
   if (action.type === "reset") {
     return INITIAL_TURNS_STATE;
   }

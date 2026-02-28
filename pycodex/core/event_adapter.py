@@ -112,6 +112,8 @@ class EventAdapter:
         if isinstance(event, TurnCompleted):
             turn_id = self._require_active_turn_id()
             usage = _to_token_usage(event.usage)
+            self._current_turn_id = None
+            self._assistant_item_id = None
             return [
                 ProtocolTurnCompleted(
                     thread_id=self.thread_id,

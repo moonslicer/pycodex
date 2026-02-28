@@ -117,8 +117,7 @@ class TuiBridge:
         except Exception as exc:
             self._emit_protocol_event(self._adapter.turn_failed(exc))
         finally:
-            if self._active_turn is asyncio.current_task():
-                self._active_turn = None
+            self._active_turn = None
 
     def _handle_approval_response(self, params: dict[str, Any]) -> None:
         # T5 baseline: parse and safely ignore until approval.request flow is added.

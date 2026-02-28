@@ -3,6 +3,7 @@ import {
   INITIAL_TURNS_STATE,
   reduceTurns,
   reduceTurnsSequence,
+  turnsReducer,
   type TurnsViewState,
 } from "../hooks/useTurns.js";
 
@@ -135,6 +136,31 @@ describe("reduceTurns", () => {
 
     expect(failed.turns[0]?.status).toBe("failed");
     expect(failed.turns[0]?.error).toBe("interrupted");
+  });
+
+  test("item.updated.batch applies multiple deltas in order", () => {
+    const started = reduceTurns(INITIAL_TURNS_STATE, {
+      type: "turn.started",
+      thread_id: "thread_1",
+      turn_id: "turn_1",
+    });
+
+    const result = turnsReducer(started, {
+      type: "item.updated.batch",
+      updates: [
+        { turn_id: "turn_1", delta: "hello\n" },
+        { turn_id: "turn_1", delta: "world" },
+      ],
+    });
+
+    expect(result.turns[0]?.assistantLines).toEqual(["hello"]);
+    expect(result.turns[0]?.partialLine).toBe("world");
+  });
+
+  test("item.updated.batch with empty updates returns same state reference", () => {
+    const state: TurnsViewState = { threadId: "thread_1", turns: [] };
+    const result = turnsReducer(state, { type: "item.updated.batch", updates: [] });
+    expect(result).toBe(state);
   });
 
   test("unknown event does not mutate state", () => {

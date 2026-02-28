@@ -318,6 +318,17 @@ def test_arguments_dict_are_serialized_as_stable_json() -> None:
     assert out[0].arguments == '{"a": 1, "b": 2}'
 
 
+def test_turn_id_cleared_after_turn_completed() -> None:
+    adapter = EventAdapter(thread_id="thread_test")
+    adapter.on_agent_event(TurnStarted(user_input="hello"))
+    adapter.on_agent_event(TurnCompleted(final_text="done"))
+
+    # After TurnCompleted, _current_turn_id must be None so a stale ID cannot
+    # be silently stamped onto approval or other post-turn events.
+    with pytest.raises(RuntimeError, match="without active turn"):
+        adapter.on_agent_event(TextDeltaReceived(delta="stale"))
+
+
 def test_non_start_events_require_active_turn() -> None:
     adapter = EventAdapter(thread_id="thread_test")
 
