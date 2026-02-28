@@ -5,6 +5,7 @@ from dataclasses import dataclass, field
 from pathlib import Path
 from typing import Any
 
+import pytest
 from pycodex.core.agent import (
     AgentEvent,
     TextDeltaReceived,
@@ -73,6 +74,22 @@ class _AbortingToolRouter:
     async def dispatch(self, *, name: str, arguments: str | dict[str, Any], cwd: Path) -> str:
         self.dispatch_calls.append({"name": name, "arguments": arguments, "cwd": cwd})
         raise ToolAborted(name)
+
+
+@dataclass(slots=True)
+class _BlockingToolRouter:
+    specs: list[dict[str, Any]]
+    dispatch_calls: list[dict[str, Any]] = field(default_factory=list, init=False)
+    started: asyncio.Event = field(default_factory=asyncio.Event, init=False)
+
+    def tool_specs(self) -> list[dict[str, Any]]:
+        return [dict(spec) for spec in self.specs]
+
+    async def dispatch(self, *, name: str, arguments: str | dict[str, Any], cwd: Path) -> str:
+        self.dispatch_calls.append({"name": name, "arguments": arguments, "cwd": cwd})
+        self.started.set()
+        await asyncio.Event().wait()
+        return "unreachable"
 
 
 def test_run_turn_returns_text_when_no_tool_calls(tmp_path: Path) -> None:
@@ -423,6 +440,7 @@ def test_run_turn_aborts_immediately_when_tool_aborted(tmp_path: Path) -> None:
             "name": "write_file",
             "arguments": '{"file_path":"x.txt","content":"hi"}',
         },
+        {"role": "tool", "tool_call_id": "call_abort", "content": "aborted by user"},
     ]
 
 
@@ -482,6 +500,64 @@ def test_run_turn_abort_stops_remaining_tool_calls_in_same_turn(tmp_path: Path) 
         "turn_completed",
     ]
     assert len(model_client.calls) == 1
+    assert session.to_prompt() == [
+        {"role": "user", "content": "write then shell"},
+        {
+            "type": "function_call",
+            "call_id": "call_abort_first",
+            "name": "write_file",
+            "arguments": '{"file_path":"x.txt","content":"hi"}',
+        },
+        {"role": "tool", "tool_call_id": "call_abort_first", "content": "aborted by user"},
+    ]
+
+
+def test_run_turn_cancellation_appends_interrupted_tool_output(tmp_path: Path) -> None:
+    session = Session()
+    model_client = _FakeModelClient(
+        turns=[
+            [
+                OutputItemDone(
+                    item={
+                        "type": "function_call",
+                        "name": "shell",
+                        "arguments": '{"command":"sleep 30"}',
+                        "call_id": "call_interrupt",
+                    }
+                ),
+                Completed(response_id="resp_tools"),
+            ]
+        ]
+    )
+    router = _BlockingToolRouter(specs=[{"type": "function", "function": {"name": "shell"}}])
+
+    async def scenario() -> None:
+        task = asyncio.create_task(
+            run_turn(
+                session=session,
+                model_client=model_client,
+                tool_router=router,
+                cwd=tmp_path,
+                user_input="run long command",
+            )
+        )
+        await router.started.wait()
+        task.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await task
+
+    asyncio.run(scenario())
+
+    assert session.to_prompt() == [
+        {"role": "user", "content": "run long command"},
+        {
+            "type": "function_call",
+            "call_id": "call_interrupt",
+            "name": "shell",
+            "arguments": '{"command":"sleep 30"}',
+        },
+        {"role": "tool", "tool_call_id": "call_interrupt", "content": "interrupted"},
+    ]
 
 
 def test_run_turn_uses_done_item_text_when_no_text_deltas(tmp_path: Path) -> None:

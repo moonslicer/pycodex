@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
@@ -121,58 +122,81 @@ class Agent:
         _log.debug("turn started: %r", user_input[:80])
         self.session.append_user_message(user_input)
         await self._emit(TurnStarted(user_input=user_input))
+        pending_tool_calls: dict[str, str] = {}
 
-        while True:
-            tool_calls, text, usage = await self._sample_model_once()
-            if not tool_calls:
-                _log.info("turn completed: %d chars", len(text))
-                await self._emit(TurnCompleted(final_text=text, usage=usage))
-                return text
+        try:
+            while True:
+                tool_calls, text, usage = await self._sample_model_once()
+                if not tool_calls:
+                    _log.info("turn completed: %d chars", len(text))
+                    await self._emit(TurnCompleted(final_text=text, usage=usage))
+                    return text
 
-            if text:
-                self.session.append_assistant_message(text)
+                if text:
+                    self.session.append_assistant_message(text)
 
-            for tool_call in tool_calls:
-                self.session.append_function_call(
-                    call_id=tool_call.call_id,
-                    name=tool_call.name,
-                    arguments=tool_call.arguments,
-                )
-                _log.debug(
-                    "dispatching tool %r (call_id=%s) args=%s",
-                    tool_call.name,
-                    tool_call.call_id,
-                    _summarize_args(tool_call.arguments),
-                )
-                await self._emit(
-                    ToolCallDispatched(
+                for tool_call in tool_calls:
+                    self.session.append_function_call(
                         call_id=tool_call.call_id,
                         name=tool_call.name,
                         arguments=tool_call.arguments,
                     )
-                )
-                try:
-                    result = await self.tool_router.dispatch(
-                        name=tool_call.name,
-                        arguments=tool_call.arguments,
-                        cwd=self.cwd,
+                    pending_tool_calls[tool_call.call_id] = tool_call.name
+                    _log.debug(
+                        "dispatching tool %r (call_id=%s) args=%s",
+                        tool_call.name,
+                        tool_call.call_id,
+                        _summarize_args(tool_call.arguments),
                     )
-                except ToolAborted:
-                    # ABORT is terminal for this turn: return immediately
-                    # without dispatching additional tool calls.
-                    abort_text = "Aborted by user."
-                    _log.info("turn aborted by user during tool %r", tool_call.name)
-                    await self._emit(TurnCompleted(final_text=abort_text))
-                    return abort_text
-                _log.debug("tool %r result: %d chars", tool_call.name, len(result))
-                self.session.append_tool_result(tool_call.call_id, result)
-                await self._emit(
-                    ToolResultReceived(
-                        call_id=tool_call.call_id,
-                        name=tool_call.name,
-                        result=result,
+                    await self._emit(
+                        ToolCallDispatched(
+                            call_id=tool_call.call_id,
+                            name=tool_call.name,
+                            arguments=tool_call.arguments,
+                        )
                     )
-                )
+                    try:
+                        result = await self.tool_router.dispatch(
+                            name=tool_call.name,
+                            arguments=tool_call.arguments,
+                            cwd=self.cwd,
+                        )
+                    except ToolAborted:
+                        # ABORT is terminal for this turn: return immediately
+                        # without dispatching additional tool calls.
+                        _append_pending_tool_outputs(
+                            session=self.session,
+                            pending_tool_calls=pending_tool_calls,
+                            outcome="aborted by user",
+                        )
+                        abort_text = "Aborted by user."
+                        _log.info("turn aborted by user during tool %r", tool_call.name)
+                        await self._emit(TurnCompleted(final_text=abort_text))
+                        return abort_text
+                    except asyncio.CancelledError:
+                        _append_pending_tool_outputs(
+                            session=self.session,
+                            pending_tool_calls=pending_tool_calls,
+                            outcome="interrupted",
+                        )
+                        raise
+                    pending_tool_calls.pop(tool_call.call_id, None)
+                    _log.debug("tool %r result: %d chars", tool_call.name, len(result))
+                    self.session.append_tool_result(tool_call.call_id, result)
+                    await self._emit(
+                        ToolResultReceived(
+                            call_id=tool_call.call_id,
+                            name=tool_call.name,
+                            result=result,
+                        )
+                    )
+        except asyncio.CancelledError:
+            _append_pending_tool_outputs(
+                session=self.session,
+                pending_tool_calls=pending_tool_calls,
+                outcome="interrupted",
+            )
+            raise
 
     async def _sample_model_once(self) -> tuple[list[ParsedToolCall], str, dict[str, int] | None]:
         text_parts: list[str] = []
@@ -288,6 +312,17 @@ def _extract_assistant_text_from_item(item: Any) -> str | None:
     if not text_parts:
         return None
     return "".join(text_parts)
+
+
+def _append_pending_tool_outputs(
+    *,
+    session: Session,
+    pending_tool_calls: dict[str, str],
+    outcome: str,
+) -> None:
+    for call_id in list(pending_tool_calls.keys()):
+        session.append_tool_result(call_id, outcome)
+    pending_tool_calls.clear()
 
 
 _SUMMARIZE_TRUNCATE = 120  # chars per value before truncating

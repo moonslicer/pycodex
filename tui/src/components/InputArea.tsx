@@ -3,6 +3,7 @@ import { Box, Text, useInput } from "ink";
 
 type InputAreaProps = {
   disabled: boolean;
+  hasActiveTurn: boolean;
   onExit: () => void;
   onInterrupt: () => void;
   onSubmit: (text: string) => void;
@@ -11,13 +12,17 @@ type InputAreaProps = {
 const BRACKETED_PASTE_START = "\u001b[200~";
 const BRACKETED_PASTE_END = "\u001b[201~";
 
-export function handleCtrlC(disabled: boolean, callbacks: {
-  onExit: () => void;
+export function handleCtrlC(hasActiveTurn: boolean, callbacks: {
   onInterrupt: () => void;
 }): void {
-  if (disabled) {
+  if (hasActiveTurn) {
     callbacks.onInterrupt();
   }
+}
+
+export function handleCtrlX(callbacks: {
+  onExit: () => void;
+}): void {
   callbacks.onExit();
 }
 
@@ -44,6 +49,7 @@ export function sanitizeInputChunk(input: string): string {
 
 export function InputArea({
   disabled,
+  hasActiveTurn,
   onExit,
   onInterrupt,
   onSubmit,
@@ -58,7 +64,12 @@ export function InputArea({
 
   useInput((input, key) => {
     if (key.ctrl && input.toLowerCase() === "c") {
-      handleCtrlC(disabled, { onExit, onInterrupt });
+      handleCtrlC(hasActiveTurn, { onInterrupt });
+      return;
+    }
+
+    if (key.ctrl && input.toLowerCase() === "x") {
+      handleCtrlX({ onExit });
       return;
     }
 

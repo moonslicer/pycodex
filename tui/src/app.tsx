@@ -113,6 +113,7 @@ export function App({
       ) : null}
       <InputArea
         disabled={inputDisabled}
+        hasActiveTurn={isBusy}
         onExit={onExitRequested}
         onInterrupt={handleInterrupt}
         onSubmit={handleSubmit}

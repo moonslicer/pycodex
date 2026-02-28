@@ -1,4 +1,4 @@
-import { handleCtrlC, sanitizeInputChunk } from "../components/InputArea.js";
+import { handleCtrlC, handleCtrlX, sanitizeInputChunk } from "../components/InputArea.js";
 
 describe("sanitizeInputChunk", () => {
   test("keeps ordinary printable text unchanged", () => {
@@ -17,26 +17,29 @@ describe("sanitizeInputChunk", () => {
 });
 
 describe("handleCtrlC", () => {
-  test("sends interrupt then exits while turn is active", () => {
+  test("sends interrupt while turn is active", () => {
     const onInterrupt = jest.fn();
-    const onExit = jest.fn();
 
-    handleCtrlC(true, { onExit, onInterrupt });
+    handleCtrlC(true, { onInterrupt });
 
     expect(onInterrupt).toHaveBeenCalledTimes(1);
-    expect(onExit).toHaveBeenCalledTimes(1);
-    expect(onInterrupt.mock.invocationCallOrder[0]).toBeLessThan(
-      onExit.mock.invocationCallOrder[0] ?? 0,
-    );
   });
 
-  test("exits directly when no turn is active", () => {
+  test("does nothing when no turn is active", () => {
     const onInterrupt = jest.fn();
-    const onExit = jest.fn();
 
-    handleCtrlC(false, { onExit, onInterrupt });
+    handleCtrlC(false, { onInterrupt });
 
     expect(onInterrupt).not.toHaveBeenCalled();
+  });
+});
+
+describe("handleCtrlX", () => {
+  test("exits directly", () => {
+    const onExit = jest.fn();
+
+    handleCtrlX({ onExit });
+
     expect(onExit).toHaveBeenCalledTimes(1);
   });
 });

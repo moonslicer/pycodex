@@ -43,7 +43,8 @@ def test_append_function_call_adds_function_call_item() -> None:
             "call_id": "call_1",
             "name": "read_file",
             "arguments": '{"file_path": "README.md"}',
-        }
+        },
+        {"role": "tool", "tool_call_id": "call_1", "content": "aborted"},
     ]
 
 
@@ -61,6 +62,47 @@ def test_session_preserves_append_order() -> None:
         {"type": "function_call", "call_id": "call_1", "name": "read_file", "arguments": "{}"},
         {"role": "tool", "tool_call_id": "call_1", "content": "result"},
         {"role": "user", "content": "second"},
+    ]
+
+
+def test_to_prompt_appends_missing_tool_output_for_unpaired_function_call() -> None:
+    session = Session()
+    session.append_user_message("first")
+    session.append_function_call(call_id="call_missing", name="read_file", arguments="{}")
+    session.append_user_message("second")
+
+    assert session.to_prompt() == [
+        {"role": "user", "content": "first"},
+        {
+            "type": "function_call",
+            "call_id": "call_missing",
+            "name": "read_file",
+            "arguments": "{}",
+        },
+        {"role": "tool", "tool_call_id": "call_missing", "content": "aborted"},
+        {"role": "user", "content": "second"},
+    ]
+
+
+def test_to_prompt_inserts_missing_outputs_after_each_unmatched_call() -> None:
+    session = Session()
+    session.append_function_call(call_id="call_1", name="read_file", arguments="{}")
+    session.append_user_message("middle")
+    session.append_function_call(call_id="call_2", name="shell", arguments='{"command":"pwd"}')
+    session.append_user_message("tail")
+
+    assert session.to_prompt() == [
+        {"type": "function_call", "call_id": "call_1", "name": "read_file", "arguments": "{}"},
+        {"role": "tool", "tool_call_id": "call_1", "content": "aborted"},
+        {"role": "user", "content": "middle"},
+        {
+            "type": "function_call",
+            "call_id": "call_2",
+            "name": "shell",
+            "arguments": '{"command":"pwd"}',
+        },
+        {"role": "tool", "tool_call_id": "call_2", "content": "aborted"},
+        {"role": "user", "content": "tail"},
     ]
 
 

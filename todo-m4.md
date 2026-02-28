@@ -218,7 +218,7 @@ TypeScript:
   - Verify:
     - `cd tui && npm test -- --runInBand --findRelatedTests src/components/ToolCallPanel.tsx src/components/StatusBar.tsx src/components/ChatView.tsx`
 
-- [ ] T13: M4E interrupt UX completion
+- [x] T13: M4E interrupt UX completion
   - Ensure Ctrl+C / `interrupt` path cancels active turn and emits interruption outcome once.
   - Keep approval-abort and explicit interrupt semantics distinct.
   - Verify:

@@ -3,12 +3,14 @@
 from __future__ import annotations
 
 import json
+from collections import deque
 from dataclasses import dataclass, field
 from typing import Any, Literal, TypedDict
 
 from pycodex.core.config import Config
 
 MAX_TOOL_RESULT_CHARS = 200_000
+_MISSING_TOOL_OUTPUT_PLACEHOLDER = "aborted"
 
 
 class UserMessageItem(TypedDict):
@@ -107,4 +109,48 @@ class Session:
 
     def to_prompt(self) -> list[PromptItem]:
         """Return a detached copy of history for model input payloads."""
-        return [item.copy() for item in self._history]
+        prompt = [item.copy() for item in self._history]
+        return _normalize_prompt_history(prompt)
+
+
+def _normalize_prompt_history(history: list[PromptItem]) -> list[PromptItem]:
+    pending_function_calls: dict[str, deque[int]] = {}
+
+    for index, item in enumerate(history):
+        item_type = item.get("type")
+        if item_type == "function_call":
+            call_id = item.get("call_id")
+            if isinstance(call_id, str) and call_id:
+                pending_function_calls.setdefault(call_id, deque()).append(index)
+            continue
+
+        role = item.get("role")
+        if role != "tool":
+            continue
+
+        call_id = item.get("tool_call_id")
+        if not isinstance(call_id, str) or not call_id:
+            continue
+        pending_indices = pending_function_calls.get(call_id)
+        if pending_indices is None or len(pending_indices) == 0:
+            continue
+        pending_indices.popleft()
+        if len(pending_indices) == 0:
+            pending_function_calls.pop(call_id, None)
+
+    missing_outputs: list[tuple[int, str]] = []
+    for call_id, pending_indices in pending_function_calls.items():
+        for pending_index in pending_indices:
+            missing_outputs.append((pending_index, call_id))
+
+    for pending_index, call_id in sorted(missing_outputs, reverse=True):
+        history.insert(
+            pending_index + 1,
+            {
+                "role": "tool",
+                "tool_call_id": call_id,
+                "content": _MISSING_TOOL_OUTPUT_PLACEHOLDER,
+            },
+        )
+
+    return history
