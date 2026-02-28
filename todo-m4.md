@@ -206,7 +206,7 @@ TypeScript:
     - `pytest tests/protocol/test_events.py -k "approval" -v`
     - `pytest tests/core/test_tui_bridge.py -k "approval" -v`
 
-- [ ] T11: M4D approval queue + modal UI
+- [x] T11: M4D approval queue + modal UI
   - Implement `useApprovalQueue` and `ApprovalModal` (`y/n/s/a`).
   - Disable input while approval queue is non-empty.
   - Verify:

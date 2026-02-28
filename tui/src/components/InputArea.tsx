@@ -97,7 +97,9 @@ export function InputArea({
   return (
     <Box borderStyle="single" paddingX={1}>
       {disabled ? (
-        <Text color="yellow">Input disabled while turn is active</Text>
+        <Text color="yellow">
+          Input disabled while a turn is active or approval is pending
+        </Text>
       ) : (
         <Text>{`> ${value}`}</Text>
       )}

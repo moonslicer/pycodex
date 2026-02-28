@@ -10,6 +10,7 @@
  * is wired up.
  */
 import type { ProtocolEvent } from "../protocol/types.js";
+import { isInputDisabled } from "../app.js";
 import {
   INITIAL_TURNS_STATE,
   reduceTurns,
@@ -130,5 +131,28 @@ describe("App state integration smoke", () => {
 
     // Should be capped at 1000
     expect(events.length).toBe(1000);
+  });
+
+  test("input is disabled while approval queue has pending requests", () => {
+    const idleTurns = reduceTurnsSequence(INITIAL_TURNS_STATE, [
+      { type: "thread.started", thread_id: "thread_1" },
+    ]).turns;
+    expect(isInputDisabled(idleTurns, 1)).toBe(true);
+  });
+
+  test("input is enabled only when no active turn and no approvals", () => {
+    const completedTurns = reduceTurnsSequence(INITIAL_TURNS_STATE, [
+      { type: "thread.started", thread_id: "thread_1" },
+      { type: "turn.started", thread_id: "thread_1", turn_id: "turn_1" },
+      {
+        type: "turn.completed",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+        final_text: "done",
+        usage: null,
+      },
+    ]).turns;
+
+    expect(isInputDisabled(completedTurns, 0)).toBe(false);
   });
 });

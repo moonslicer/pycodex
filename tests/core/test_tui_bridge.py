@@ -451,6 +451,49 @@ def test_approval_response_ignores_unknown_request_id_and_invalid_decision(tmp_p
     asyncio.run(scenario())
 
 
+def test_approval_response_logs_unknown_request_id(
+    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+) -> None:
+    bridge = TuiBridge(
+        session=_session(tmp_path),
+        model_client=_FakeModelClient(),
+        tool_router=_FakeToolRouter(),
+        cwd=tmp_path,
+        emit_event=lambda _: None,
+    )
+
+    bridge._handle_approval_response({"request_id": "unknown", "decision": "approved"})
+
+    captured = capsys.readouterr()
+    assert "unknown request_id 'unknown'" in captured.err
+
+
+def test_request_approval_denies_when_pending_queue_full(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    bridge = TuiBridge(
+        session=_session(tmp_path),
+        model_client=_FakeModelClient(),
+        tool_router=_FakeToolRouter(),
+        cwd=tmp_path,
+        emit_event=lambda _: None,
+    )
+    bridge._active_turn_id = "turn_1"
+    monkeypatch.setattr(tui_bridge_module, "_MAX_PENDING_APPROVALS", 0)
+
+    async def scenario() -> None:
+        decision = await bridge.request_approval(_FakeTool("shell"), {"command": "pwd"})
+        assert decision == ReviewDecision.DENIED
+        assert bridge._pending_approvals == {}
+
+    asyncio.run(scenario())
+
+    captured = capsys.readouterr()
+    assert "approval queue full" in captured.err
+
+
 def test_approval_request_requires_active_turn(tmp_path: Path) -> None:
     bridge = TuiBridge(
         session=_session(tmp_path),

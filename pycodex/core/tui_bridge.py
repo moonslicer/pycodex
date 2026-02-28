@@ -18,6 +18,8 @@ from pycodex.core.event_adapter import EventAdapter
 from pycodex.core.session import Session
 from pycodex.protocol.events import ApprovalRequested, ProtocolEvent
 
+_MAX_PENDING_APPROVALS = 100
+
 
 class SupportsLineReader(Protocol):
     async def readline(self) -> bytes: ...
@@ -140,7 +142,12 @@ class TuiBridge:
         if decision is None:
             return
         pending = self._pending_approvals.get(request_id)
-        if pending is None or pending.decision is not None:
+        if pending is None:
+            sys.stderr.write(
+                f"[bridge] approval response for unknown request_id {request_id!r}; ignoring\n"
+            )
+            return
+        if pending.decision is not None:
             return
         pending.decision = decision
         pending.event.set()
@@ -148,6 +155,12 @@ class TuiBridge:
     async def request_approval(self, tool: Any, args: dict[str, Any]) -> ReviewDecision:
         if self._active_turn_id is None:
             raise RuntimeError("approval requested outside active turn")
+
+        if len(self._pending_approvals) >= _MAX_PENDING_APPROVALS:
+            sys.stderr.write(
+                f"[bridge] approval queue full ({_MAX_PENDING_APPROVALS} pending); denying request\n"
+            )
+            return ReviewDecision.DENIED
 
         request_id = str(uuid4())
         pending = _PendingApproval()
