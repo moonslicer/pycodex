@@ -34,7 +34,7 @@ def _build_parser() -> argparse.ArgumentParser:
         prog="pycodex",
         description="Run one non-interactive pycodex turn.",
     )
-    parser.add_argument("prompt", help="User prompt for the model.")
+    parser.add_argument("prompt", nargs="?", help="User prompt for the model.")
     parser.add_argument(
         "--approval",
         default=ApprovalPolicy.NEVER.value,
@@ -61,6 +61,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "--json",
         action="store_true",
         help="Emit line-delimited protocol JSON events to stdout.",
+    )
+    parser.add_argument(
+        "--tui-mode",
+        action="store_true",
+        help="Run in interactive TUI bridge mode.",
     )
     return parser
 
@@ -139,6 +144,11 @@ async def _run_prompt_json(prompt: str, *, approval_policy: ApprovalPolicy) -> i
     return 0
 
 
+async def _run_tui_mode(*, approval_policy: ApprovalPolicy) -> int:
+    _ = approval_policy
+    raise NotImplementedError("TUI mode bridge is not implemented yet.")
+
+
 def _parse_review_decision(raw_value: str) -> ReviewDecision:
     normalized = raw_value.strip().lower()
     if normalized in {"y", "yes"}:
@@ -176,11 +186,31 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         logging.getLogger().handlers[0].addFilter(_PrefixFilter())
     approval_policy = ApprovalPolicy(args.approval)
+    if args.tui_mode:
+        if args.json:
+            parser.error("--json cannot be used with --tui-mode")
+        if args.prompt is not None:
+            parser.error("prompt is not accepted with --tui-mode")
+        try:
+            return asyncio.run(
+                _run_tui_mode(
+                    approval_policy=approval_policy,
+                )
+            )
+        except Exception as exc:
+            message = _render_error_message(exc)
+            print(f"[ERROR] {message}", file=sys.stderr)
+            return 1
+
+    if args.prompt is None:
+        parser.error("the following arguments are required: prompt")
+    prompt: str = args.prompt
+
     if args.json:
         try:
             return asyncio.run(
                 _run_prompt_json(
-                    args.prompt,
+                    prompt,
                     approval_policy=approval_policy,
                 )
             )
@@ -192,7 +222,7 @@ def main(argv: Sequence[str] | None = None) -> int:
     try:
         final_text = asyncio.run(
             _run_prompt(
-                args.prompt,
+                prompt,
                 approval_policy=approval_policy,
             )
         )

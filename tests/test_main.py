@@ -39,6 +39,77 @@ def test_main_missing_prompt_exits_with_parser_error(capsys: pytest.CaptureFixtu
     assert "usage:" in captured.err
 
 
+def test_main_json_missing_prompt_exits_with_parser_error(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main_module.main(["--json"])
+
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "usage:" in captured.err
+
+
+def test_tui_mode_runs_tui_dispatch(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    seen: dict[str, object] = {}
+
+    async def fake_run_tui_mode(*, approval_policy: main_module.ApprovalPolicy) -> int:
+        seen["approval_policy"] = approval_policy
+        return 0
+
+    monkeypatch.setattr(main_module, "_run_tui_mode", fake_run_tui_mode)
+
+    exit_code = main_module.main(["--tui-mode", "--approval", "on-request"])
+
+    assert exit_code == 0
+    assert seen == {"approval_policy": main_module.ApprovalPolicy.ON_REQUEST}
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_tui_mode_with_prompt_exits_with_parser_error(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main_module.main(["--tui-mode", "hello from cli"])
+
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "usage:" in captured.err
+
+
+def test_tui_mode_with_json_exits_with_parser_error(capsys: pytest.CaptureFixture[str]) -> None:
+    with pytest.raises(SystemExit) as exc_info:
+        main_module.main(["--tui-mode", "--json"])
+
+    assert exc_info.value.code == 2
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "usage:" in captured.err
+
+
+def test_tui_mode_top_level_exception_reports_stderr(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    async def failing_run_tui_mode(*, approval_policy: main_module.ApprovalPolicy) -> int:
+        _ = approval_policy
+        raise RuntimeError()
+
+    monkeypatch.setattr(main_module, "_run_tui_mode", failing_run_tui_mode)
+
+    exit_code = main_module.main(["--tui-mode"])
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err.strip() == "[ERROR] RuntimeError"
+
+
 def test_main_runs_turn_and_prints_output(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

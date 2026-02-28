@@ -151,7 +151,7 @@ TypeScript:
   - Verify:
     - `cd tui && npm test -- --runInBand --findRelatedTests src/__tests__/reader.test.ts src/__tests__/writer.test.ts`
 
-- [ ] T4: M4B Python `--tui-mode` entrypoint wiring
+- [x] T4: M4B Python `--tui-mode` entrypoint wiring
   - Update `pycodex/__main__.py` parser/mode dispatch.
   - Ensure positional prompt text mode and `--json` behavior remain unchanged.
   - Verify:
