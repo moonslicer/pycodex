@@ -178,7 +178,7 @@ TypeScript:
   - Verify:
     - `cd tui && npm test -- --runInBand --findRelatedTests src/app.tsx src/hooks/useTurns.ts`
 
-- [ ] T7: M4B smoke + integration stabilization
+- [x] T7: M4B smoke + integration stabilization
   - Add one end-to-end app smoke (turn started/completed) and input-disable assertion.
   - Ensure process cleanup/exit handling in `index.ts` is deterministic.
   - Verify:

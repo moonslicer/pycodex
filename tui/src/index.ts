@@ -1,60 +1,160 @@
 import { spawn } from "node:child_process";
+import type { ChildProcess } from "node:child_process";
 import * as path from "node:path";
-import { fileURLToPath } from "node:url";
 
 import { render } from "ink";
 import * as React from "react";
 
 import { App } from "./app.js";
 import { StdioReader, StdioWriter } from "./protocol/transports/stdio.js";
+import type { ProtocolReader } from "./protocol/reader.js";
+import type { ProtocolWriter } from "./protocol/writer.js";
 import { buildPycodexArgs } from "./runtime/launch.js";
 
 const SHUTDOWN_TIMEOUT_MS = 5000;
 
-function resolveRepoRoot(): string {
-  const dirname = path.dirname(fileURLToPath(import.meta.url));
+function resolveRepoRoot(argv: readonly string[] = process.argv): string {
+  const entryPath = argv[1];
+  if (entryPath === undefined) {
+    return process.cwd();
+  }
+  const dirname = path.dirname(path.resolve(entryPath));
   return path.resolve(dirname, "..", "..", "..");
 }
 
-function isMainModule(): boolean {
-  const entryPath = process.argv[1];
+function isMainModule(argv: readonly string[] = process.argv): boolean {
+  const entryPath = argv[1];
   if (entryPath === undefined) {
     return false;
   }
-  const modulePath = fileURLToPath(import.meta.url);
-  return path.resolve(entryPath) === modulePath;
+
+  return isSupportedEntrypointPath(path.resolve(entryPath));
 }
 
-function main(): void {
-  const repoRoot = resolveRepoRoot();
-  const pythonCommand = process.env.PYCODEX_PYTHON ?? "python3";
-  const child = spawn(pythonCommand, buildPycodexArgs(), {
-    cwd: repoRoot,
-    env: process.env,
-    stdio: ["pipe", "pipe", "pipe"],
-  });
+export function isSupportedEntrypointPath(normalizedPath: string): boolean {
+  return (
+    normalizedPath.endsWith(`${path.sep}dist${path.sep}src${path.sep}index.js`) ||
+    normalizedPath.endsWith(`${path.sep}dist${path.sep}index.js`) ||
+    normalizedPath.endsWith(`${path.sep}src${path.sep}index.ts`)
+  );
+}
 
-  const reader = new StdioReader(child);
-  const writer = new StdioWriter(child);
+type ProcessRef = {
+  argv: string[];
+  env: NodeJS.ProcessEnv;
+  once: (signal: "SIGINT" | "SIGTERM", listener: () => void) => void;
+  exit: (code?: number) => void;
+  stderr: {
+    write: (message: string) => unknown;
+  };
+};
+
+type RenderApp = (reader: ProtocolReader, writer: ProtocolWriter) => {
+  unmount: () => void;
+};
+
+type MainDependencies = {
+  resolveRepoRoot: (argv: readonly string[]) => string;
+  spawnProcess: (
+    command: string,
+    args: readonly string[],
+    options: {
+      cwd: string;
+      env: NodeJS.ProcessEnv;
+      stdio: ["pipe", "pipe", "pipe"];
+    },
+  ) => ChildProcess;
+  buildPycodexArgs: (env?: NodeJS.ProcessEnv) => string[];
+  makeReader: (child: ChildProcess) => ProtocolReader;
+  makeWriter: (child: ChildProcess) => ProtocolWriter;
+  renderApp: RenderApp;
+  processRef: ProcessRef;
+  setTimeoutRef: typeof setTimeout;
+  clearTimeoutRef: typeof clearTimeout;
+};
+
+const DEFAULT_MAIN_DEPENDENCIES: MainDependencies = {
+  resolveRepoRoot,
+  spawnProcess: spawn,
+  buildPycodexArgs,
+  makeReader: (child: ChildProcess) => new StdioReader(child),
+  makeWriter: (child: ChildProcess) => new StdioWriter(child),
+  renderApp: (reader, writer) =>
+    render(React.createElement(App, { reader, writer }), {
+      exitOnCtrlC: false,
+    }),
+  processRef: {
+    argv: process.argv,
+    env: process.env,
+    once: (signal, listener) => {
+      process.once(signal, listener);
+    },
+    exit: (code?: number) => {
+      process.exit(code);
+    },
+    stderr: process.stderr,
+  },
+  setTimeoutRef: setTimeout,
+  clearTimeoutRef: clearTimeout,
+};
+
+export function main(dependencies: Partial<MainDependencies> = {}): void {
+  const deps: MainDependencies = {
+    ...DEFAULT_MAIN_DEPENDENCIES,
+    ...dependencies,
+  };
+
+  const repoRoot = deps.resolveRepoRoot(deps.processRef.argv);
+  const pythonCommand = deps.processRef.env.PYCODEX_PYTHON ?? "python3";
+  const child = deps.spawnProcess(
+    pythonCommand,
+    deps.buildPycodexArgs(deps.processRef.env),
+    {
+      cwd: repoRoot,
+      env: deps.processRef.env,
+      stdio: ["pipe", "pipe", "pipe"],
+    },
+  );
+
+  const reader = deps.makeReader(child);
+  const writer = deps.makeWriter(child);
 
   reader.start();
 
   let shutdownRequested = false;
+  let interruptRequested = false;
   let didUnmount = false;
-  let forceKillTimer: NodeJS.Timeout | null = null;
+  let didExit = false;
+  let forceKillTimer: ReturnType<typeof setTimeout> | null = null;
   let overrideExitCode: number | null = null;
-
-  // app is assigned below after render(); unmountOnce guards against it being
-  // called before assignment by checking didUnmount first.
-  // eslint-disable-next-line prefer-const
-  let app: ReturnType<typeof render>;
+  let appHandle: { unmount: () => void } | null = null;
 
   function unmountOnce(): void {
-    if (didUnmount) {
+    if (didUnmount || appHandle === null) {
       return;
     }
     didUnmount = true;
-    app.unmount();
+    appHandle.unmount();
+  }
+
+  function clearForceKillTimer(): void {
+    if (forceKillTimer === null) {
+      return;
+    }
+
+    deps.clearTimeoutRef(forceKillTimer);
+    forceKillTimer = null;
+  }
+
+  function exitOnce(code: number | null | undefined): void {
+    if (didExit) {
+      return;
+    }
+
+    didExit = true;
+    clearForceKillTimer();
+    unmountOnce();
+    deps.processRef.exit(overrideExitCode ?? code ?? 0);
   }
 
   function requestShutdown(options?: { interrupt?: boolean; exitCode?: number }): void {
@@ -62,7 +162,8 @@ function main(): void {
       overrideExitCode = options.exitCode;
     }
 
-    if (options?.interrupt === true) {
+    if (options?.interrupt === true && !interruptRequested) {
+      interruptRequested = true;
       writer.sendInterrupt();
     }
 
@@ -75,53 +176,53 @@ function main(): void {
 
     if (child.exitCode === null) {
       child.kill("SIGTERM");
-      forceKillTimer = setTimeout(() => {
+      forceKillTimer = deps.setTimeoutRef(() => {
         if (child.exitCode === null) {
           child.kill("SIGKILL");
         }
       }, SHUTDOWN_TIMEOUT_MS);
-      forceKillTimer.unref();
+      if (typeof forceKillTimer.unref === "function") {
+        forceKillTimer.unref();
+      }
       return;
     }
 
-    unmountOnce();
-    process.exit(overrideExitCode ?? child.exitCode);
+    exitOnce(child.exitCode);
+  }
+
+  function didExitBeforeRender(): boolean {
+    return didExit;
   }
 
   // Register signal handlers before render() so no SIGINT can slip through
   // during the Ink initialisation window.
-  process.once("SIGINT", () => {
+  deps.processRef.once("SIGINT", () => {
     requestShutdown({ interrupt: true });
   });
 
-  process.once("SIGTERM", () => {
+  deps.processRef.once("SIGTERM", () => {
     requestShutdown();
   });
 
   child.once("error", (error) => {
-    process.stderr.write(`[tui] child process error: ${error.message}\n`);
+    deps.processRef.stderr.write(`[tui] child process error: ${error.message}\n`);
     requestShutdown({ exitCode: 1 });
   });
 
   child.once("exit", (code) => {
-    if (forceKillTimer !== null) {
-      clearTimeout(forceKillTimer);
-      forceKillTimer = null;
-    }
-
-    unmountOnce();
-    process.exit(overrideExitCode ?? code ?? 0);
+    exitOnce(code);
   });
 
   reader.onClose(() => {
     requestShutdown();
   });
 
-  app = render(React.createElement(App, { reader, writer }), {
-    exitOnCtrlC: false,
-  });
+  appHandle = deps.renderApp(reader, writer);
+  if (didExitBeforeRender()) {
+    unmountOnce();
+  }
 }
 
-if (isMainModule()) {
+if (isMainModule(process.argv)) {
   main();
 }

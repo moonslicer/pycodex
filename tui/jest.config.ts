@@ -10,7 +10,10 @@ const config: Config = {
       "ts-jest",
       {
         useESM: true,
-        tsconfig: "<rootDir>/tsconfig.json"
+        tsconfig: "<rootDir>/tsconfig.json",
+        diagnostics: {
+          ignoreCodes: [151002]
+        }
       }
     ]
   },
@@ -23,6 +26,7 @@ const config: Config = {
     "^ink-testing-library$": "<rootDir>/src/__mocks__/ink-testing-library.ts"
   },
   passWithNoTests: true,
+  modulePathIgnorePatterns: ["/dist/"],
   // Prevent Jest from double-running compiled output in dist/
   testPathIgnorePatterns: ["/node_modules/", "/dist/"]
 };

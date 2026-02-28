@@ -5,9 +5,9 @@
  * wrapper, so this file tests the app's state logic using the exported pure
  * reducer functions rather than rendering a full component tree.
  *
- * Component render tests (ChatView, InputArea, StatusBar) will be added in T7
- * once a compatible render harness (jest-environment-node + experimental VM
- * modules) is wired up.
+ * Component render tests (ChatView, InputArea, StatusBar) are deferred until a
+ * compatible render harness (jest-environment-node + experimental VM modules)
+ * is wired up.
  */
 import type { ProtocolEvent } from "../protocol/types.js";
 import {
