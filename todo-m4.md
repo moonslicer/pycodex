@@ -157,7 +157,7 @@ TypeScript:
   - Verify:
     - `pytest tests/test_main.py -k "tui or json or prompt" -v`
 
-- [ ] T5: M4B add `core/tui_bridge.py` command loop
+- [x] T5: M4B add `core/tui_bridge.py` command loop
   - Build runtime dependencies (`Session`, `ModelClient`, `ToolRouter`) with TUI-specific `ask_user_fn` injection via orchestrator.
   - Read stdin JSON-RPC (`user.input`, `approval.response`, `interrupt`) and emit JSONL protocol events.
   - Verify:
@@ -165,6 +165,15 @@ TypeScript:
 
 - [ ] T6: M4B baseline Ink shell (`index.ts`, `app.tsx`, base components/hooks)
   - Implement multi-turn shell without streaming/approval modal/tool panels.
+  - **Build order**: hooks first → `index.ts` entry point → components last.
+  - **Spawn**: use `spawn()` not `exec()` — `exec()` buffers stdout and breaks JSONL streaming.
+  - **State**: use `useReducer` not `useState` for turn state — avoids stale closure bugs in event handlers.
+  - **Stable keys**: always `key={turn.turn_id}`, never `key={index}`.
+  - **Single subscription**: `useProtocolEvents` owns the one `reader.onEvent()` call; `useTurns` derives from `lastEvent` — no duplicate subscriptions.
+  - **Ctrl+C**: set `exitOnCtrlC: false` in Ink `render()` — app must own Ctrl+C to send `interrupt` before killing process.
+  - **Cleanup sequence**: `writer.close()` → `SIGTERM` → 5s timeout → `SIGKILL` — prevents zombie Python processes.
+  - **User text**: `TurnState.userText` has no protocol event source; track locally in `app.tsx`, keep empty string in M4B.
+  - **Effect cleanup**: always return the `reader.onEvent()` unsubscribe function from `useEffect` cleanup.
   - Keep visible-turn cap behavior and stable keys.
   - Verify:
     - `cd tui && npm test -- --runInBand --findRelatedTests src/app.tsx src/hooks/useTurns.ts`

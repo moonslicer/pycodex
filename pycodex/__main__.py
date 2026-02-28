@@ -8,7 +8,7 @@ import json
 import logging
 import os
 import sys
-from collections.abc import Sequence
+from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 from pycodex.approval.policy import ApprovalPolicy, ApprovalStore, ReviewDecision
@@ -17,6 +17,7 @@ from pycodex.core.config import Config, load_config
 from pycodex.core.event_adapter import EventAdapter
 from pycodex.core.model_client import ModelClient
 from pycodex.core.session import Session
+from pycodex.core.tui_bridge import TuiBridge
 from pycodex.protocol.events import ProtocolEvent
 from pycodex.tools.base import ToolRegistry, ToolRouter
 from pycodex.tools.grep_files import GrepFilesTool
@@ -27,6 +28,7 @@ from pycodex.tools.shell import ShellTool
 from pycodex.tools.write_file import WriteFileTool
 
 EXPECTED_TOOL_NAMES = {"shell", "read_file", "write_file", "list_dir", "grep_files"}
+AskUserFn = Callable[[Any, dict[str, Any]], Awaitable[ReviewDecision]]
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -74,11 +76,15 @@ def _build_parser() -> argparse.ArgumentParser:
     return parser
 
 
-def _build_tool_router(*, approval_policy: ApprovalPolicy) -> ToolRouter:
+def _build_tool_router(
+    *,
+    approval_policy: ApprovalPolicy,
+    ask_user_fn: AskUserFn | None = None,
+) -> ToolRouter:
     orchestrator = OrchestratorConfig(
         policy=approval_policy,
         store=ApprovalStore(),
-        ask_user_fn=_ask_user_for_review,
+        ask_user_fn=ask_user_fn if ask_user_fn is not None else _ask_user_for_review,
     )
     registry = ToolRegistry(orchestrator=orchestrator)
     _register_default_tools(registry)
@@ -149,8 +155,28 @@ async def _run_prompt_json(prompt: str, *, approval_policy: ApprovalPolicy) -> i
 
 
 async def _run_tui_mode(*, approval_policy: ApprovalPolicy) -> int:
-    _ = approval_policy
-    raise NotImplementedError("TUI mode bridge is not implemented yet.")
+    config = load_config()
+    session = Session(config=config)
+    model_client = ModelClient(config)
+
+    async def _tui_ask_user_fn(tool: Any, args: dict[str, Any]) -> ReviewDecision:
+        # T5 bridge baseline avoids blocking stdin prompts in TUI mode.
+        # Full approval request/response flow is added in T10.
+        _ = tool, args
+        return ReviewDecision.DENIED
+
+    tool_router = _build_tool_router(
+        approval_policy=approval_policy,
+        ask_user_fn=_tui_ask_user_fn,
+    )
+    bridge = TuiBridge(
+        session=session,
+        model_client=model_client,
+        tool_router=tool_router,
+        cwd=config.cwd,
+    )
+    await bridge.run()
+    return 0
 
 
 def _parse_review_decision(raw_value: str) -> ReviewDecision:
