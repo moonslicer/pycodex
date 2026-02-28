@@ -45,6 +45,80 @@ describe("reduceTurns", () => {
     });
   });
 
+  test("item.updated commits newline segments and keeps trailing partial", () => {
+    const next = reduceTurnsSequence(INITIAL_TURNS_STATE, [
+      {
+        type: "turn.started",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+      },
+      {
+        type: "item.updated",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+        item_id: "item_1",
+        delta: "line one\nline",
+      },
+      {
+        type: "item.updated",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+        item_id: "item_1",
+        delta: " two",
+      },
+    ]);
+
+    expect(next.turns[0]?.assistantLines).toEqual(["line one"]);
+    expect(next.turns[0]?.partialLine).toBe("line two");
+  });
+
+  test("turn.completed with empty final text flushes buffered partial", () => {
+    const next = reduceTurnsSequence(INITIAL_TURNS_STATE, [
+      {
+        type: "turn.started",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+      },
+      {
+        type: "item.updated",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+        item_id: "item_1",
+        delta: "line one\n\nline",
+      },
+      {
+        type: "turn.completed",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+        final_text: "",
+        usage: null,
+      },
+    ]);
+
+    expect(next.turns[0]?.assistantLines).toEqual(["line one", "", "line"]);
+    expect(next.turns[0]?.partialLine).toBe("");
+    expect(next.turns[0]?.status).toBe("completed");
+  });
+
+  test("turn.completed final text drops trailing empty partial line", () => {
+    const next = reduceTurnsSequence(INITIAL_TURNS_STATE, [
+      {
+        type: "turn.started",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+      },
+      {
+        type: "turn.completed",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+        final_text: "line one\n",
+        usage: null,
+      },
+    ]);
+
+    expect(next.turns[0]?.assistantLines).toEqual(["line one"]);
+  });
+
   test("turn.failed stores error and marks failed state", () => {
     const started = reduceTurns(INITIAL_TURNS_STATE, {
       type: "turn.started",

@@ -192,7 +192,7 @@ TypeScript:
   - Verify:
     - `pytest tests/protocol/test_events.py tests/core/test_event_adapter.py -k "updated" -v`
 
-- [ ] T9: M4C streaming state reducer + frame-gating
+- [x] T9: M4C streaming state reducer + frame-gating
   - Implement `useLineBuffer` reducer (`push`, `flush`, `reset`) and integrate with `useTurns`.
   - Preserve blank lines for committed segments; drop only trailing empty partial at flush end.
   - Add `setImmediate` batching guard in high-rate delta path.

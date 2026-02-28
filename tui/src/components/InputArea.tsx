@@ -7,6 +7,30 @@ type InputAreaProps = {
   onSubmit: (text: string) => void;
 };
 
+const BRACKETED_PASTE_START = "\u001b[200~";
+const BRACKETED_PASTE_END = "\u001b[201~";
+
+export function sanitizeInputChunk(input: string): string {
+  const withoutPasteMarkers = input
+    .replaceAll(BRACKETED_PASTE_START, "")
+    .replaceAll(BRACKETED_PASTE_END, "")
+    .replace(/[\r\n]+/g, "");
+
+  let sanitized = "";
+  for (const char of withoutPasteMarkers) {
+    const codepoint = char.codePointAt(0);
+    if (codepoint === undefined) {
+      continue;
+    }
+    if (codepoint <= 0x1f || codepoint === 0x7f) {
+      continue;
+    }
+    sanitized += char;
+  }
+
+  return sanitized;
+}
+
 export function InputArea({
   disabled,
   onInterrupt,
@@ -50,7 +74,12 @@ export function InputArea({
       return;
     }
 
-    setValue((current) => `${current}${input}`);
+    const sanitizedChunk = sanitizeInputChunk(input);
+    if (sanitizedChunk.length === 0) {
+      return;
+    }
+
+    setValue((current) => `${current}${sanitizedChunk}`);
   });
 
   return (

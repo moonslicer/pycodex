@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useReducer, useRef } from "react";
 
 import type { ProtocolEvent, TokenUsage } from "../protocol/types.js";
+import {
+  INITIAL_LINE_BUFFER_STATE,
+  reduceLineBuffer,
+} from "./useLineBuffer.js";
 
 export type ToolCallState = {
   item_id: string;
@@ -37,6 +41,10 @@ type TurnsAction =
       event: ProtocolEvent;
     }
   | {
+      type: "item.updated.batch";
+      updates: BufferedItemUpdate[];
+    }
+  | {
       type: "user.input";
       turn_id: string;
       text: string;
@@ -65,11 +73,54 @@ function updateTurn(
   return nextTurns;
 }
 
-function splitFinalText(finalText: string): string[] {
-  if (finalText.length === 0) {
-    return [];
+type BufferedItemUpdate = {
+  turn_id: string;
+  delta: string;
+};
+
+function toFinalLines(finalText: string): string[] {
+  const pushed = reduceLineBuffer(INITIAL_LINE_BUFFER_STATE, {
+    type: "push",
+    delta: finalText,
+  });
+  return reduceLineBuffer(pushed, { type: "flush" }).committed;
+}
+
+function applyItemUpdatedDelta(
+  state: TurnsViewState,
+  update: BufferedItemUpdate,
+): TurnsViewState {
+  if (update.delta.length === 0) {
+    return state;
   }
-  return finalText.split("\n");
+
+  const nextTurns = updateTurn(state.turns, update.turn_id, (turn) => {
+    const nextBuffer = reduceLineBuffer(
+      {
+        committed: turn.assistantLines,
+        partial: turn.partialLine,
+      },
+      {
+        type: "push",
+        delta: update.delta,
+      },
+    );
+
+    return {
+      ...turn,
+      assistantLines: nextBuffer.committed,
+      partialLine: nextBuffer.partial,
+    };
+  });
+
+  if (nextTurns === state.turns) {
+    return state;
+  }
+
+  return {
+    ...state,
+    turns: nextTurns,
+  };
 }
 
 export function reduceTurns(
@@ -107,7 +158,16 @@ export function reduceTurns(
     case "turn.completed": {
       const nextTurns = updateTurn(state.turns, event.turn_id, (turn) => ({
         ...turn,
-        assistantLines: splitFinalText(event.final_text),
+        assistantLines:
+          event.final_text.length > 0
+            ? toFinalLines(event.final_text)
+            : reduceLineBuffer(
+                {
+                  committed: turn.assistantLines,
+                  partial: turn.partialLine,
+                },
+                { type: "flush" },
+              ).committed,
         partialLine: "",
         status: "completed",
         error: null,
@@ -124,11 +184,23 @@ export function reduceTurns(
       };
     }
     case "turn.failed": {
-      const nextTurns = updateTurn(state.turns, event.turn_id, (turn) => ({
-        ...turn,
-        status: "failed",
-        error: event.error,
-      }));
+      const nextTurns = updateTurn(state.turns, event.turn_id, (turn) => {
+        const nextBuffer = reduceLineBuffer(
+          {
+            committed: turn.assistantLines,
+            partial: turn.partialLine,
+          },
+          { type: "flush" },
+        );
+
+        return {
+          ...turn,
+          assistantLines: nextBuffer.committed,
+          partialLine: nextBuffer.partial,
+          status: "failed",
+          error: event.error,
+        };
+      });
 
       if (nextTurns === state.turns) {
         return state;
@@ -141,8 +213,12 @@ export function reduceTurns(
     }
     case "item.started":
     case "item.completed":
-    case "item.updated":
       return state;
+    case "item.updated":
+      return applyItemUpdatedDelta(state, {
+        turn_id: event.turn_id,
+        delta: event.delta,
+      });
     default: {
       const exhaustiveCheck: never = event;
       void exhaustiveCheck;
@@ -166,6 +242,13 @@ function turnsReducer(state: TurnsViewState, action: TurnsAction): TurnsViewStat
   if (action.type === "reset") {
     return INITIAL_TURNS_STATE;
   }
+  if (action.type === "item.updated.batch") {
+    let nextState = state;
+    for (const update of action.updates) {
+      nextState = applyItemUpdatedDelta(nextState, update);
+    }
+    return nextState;
+  }
   if (action.type === "user.input") {
     const nextTurns = updateTurn(state.turns, action.turn_id, (turn) => ({
       ...turn,
@@ -188,9 +271,63 @@ export function useTurns(
 ): TurnsViewState & TurnsDispatch {
   const [state, dispatch] = useReducer(turnsReducer, INITIAL_TURNS_STATE);
   const processedEventCount = useRef(0);
+  const pendingItemUpdates = useRef<Map<string, string>>(new Map());
+  const pendingFlushHandle = useRef<NodeJS.Immediate | null>(null);
+
+  const flushPendingItemUpdates = useCallback((): void => {
+    if (pendingItemUpdates.current.size === 0) {
+      return;
+    }
+
+    const updates: BufferedItemUpdate[] = [];
+    for (const [turn_id, delta] of pendingItemUpdates.current.entries()) {
+      if (delta.length > 0) {
+        updates.push({ turn_id, delta });
+      }
+    }
+    pendingItemUpdates.current.clear();
+
+    if (updates.length === 0) {
+      return;
+    }
+
+    dispatch({
+      type: "item.updated.batch",
+      updates,
+    });
+  }, []);
 
   useEffect(() => {
+    const cancelScheduledFlush = (): void => {
+      if (pendingFlushHandle.current === null) {
+        return;
+      }
+      clearImmediate(pendingFlushHandle.current);
+      pendingFlushHandle.current = null;
+    };
+
+    const flushPendingSynchronously = (): void => {
+      cancelScheduledFlush();
+      flushPendingItemUpdates();
+    };
+
+    const schedulePendingFlush = (): void => {
+      if (
+        pendingFlushHandle.current !== null ||
+        pendingItemUpdates.current.size === 0
+      ) {
+        return;
+      }
+
+      pendingFlushHandle.current = setImmediate(() => {
+        pendingFlushHandle.current = null;
+        flushPendingItemUpdates();
+      });
+    };
+
     if (events.length < processedEventCount.current) {
+      cancelScheduledFlush();
+      pendingItemUpdates.current.clear();
       dispatch({ type: "reset" });
       processedEventCount.current = 0;
     }
@@ -205,14 +342,33 @@ export function useTurns(
         continue;
       }
 
+      if (event.type === "item.updated") {
+        const currentDelta = pendingItemUpdates.current.get(event.turn_id) ?? "";
+        pendingItemUpdates.current.set(event.turn_id, `${currentDelta}${event.delta}`);
+        continue;
+      }
+
+      flushPendingSynchronously();
       dispatch({
         type: "event",
         event,
       });
     }
 
+    schedulePendingFlush();
     processedEventCount.current = events.length;
-  }, [events]);
+  }, [events, flushPendingItemUpdates]);
+
+  useEffect(
+    () => () => {
+      if (pendingFlushHandle.current !== null) {
+        clearImmediate(pendingFlushHandle.current);
+        pendingFlushHandle.current = null;
+      }
+      pendingItemUpdates.current.clear();
+    },
+    [],
+  );
 
   const setUserText = useCallback(
     (turn_id: string, text: string) => {
