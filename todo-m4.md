@@ -135,14 +135,19 @@ TypeScript:
     - `cd tui && npm run typecheck`
     - `cd tui && npm run lint`
 
-- [ ] T2: M4A protocol contracts + stdio transport
+- [x] T2: M4A protocol contracts + stdio transport
   - Implement `types.ts`, `reader.ts`, `writer.ts`, `transports/stdio.ts`.
   - Reader must ignore malformed JSONL safely.
   - Verify:
     - `cd tui && npm test -- --runInBand --findRelatedTests src/protocol`
 
+- [x] T2.1: M4A stdio transport hardening (error handlers, stderr drain, readline cleanup, jest dist ignore)
+
 - [ ] T3: M4A protocol test baseline
   - Add `reader.test.ts` + `writer.test.ts` for command/event shape and line framing.
+  - Align TS/Python optional-null contract for `item.started`:
+    - Accept `name: null` and `arguments: null` in `tui/src/protocol/types.ts` and stdio validator.
+    - Add regression coverage proving a valid `item.started` payload with null optional fields is not dropped.
   - Verify:
     - `cd tui && npm test -- --runInBand --findRelatedTests src/__tests__/reader.test.ts src/__tests__/writer.test.ts`
 
