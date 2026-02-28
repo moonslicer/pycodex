@@ -10,7 +10,7 @@ This document is the architecture map for agent behavior and contracts in this r
 ## Sources of Truth
 - Policy and workflow rules: `AGENTS.md`
 - Architecture and responsibilities: `engineering-plan.md`
-- Milestone tracking and completion evidence: `todo-m2.md`
+- Milestone tracking and completion evidence: `todo-m4.md` (active), `archive/todo-m2.md` (archived)
 - Evaluation and regression process: `docs/ai/harness.md`
 - Durable decisions and postmortems: `docs/ai/memory.md`
 
@@ -19,10 +19,13 @@ This document is the architecture map for agent behavior and contracts in this r
 - Capture acceptance criteria in the task/PR before coding non-trivial changes.
 - Update this map when contract ownership moves.
 
-## Ownership Map (Current: Milestones 1-2)
+## Ownership Map (Current)
 - Core agent loop and turn orchestration: `pycodex/core/agent.py`
 - Session and conversation state: `pycodex/core/session.py`
 - Model transport and streaming mapping: `pycodex/core/model_client.py`
+- Internal-to-protocol event mapping and IDs: `pycodex/core/event_adapter.py`
+- TUI mode JSON-RPC command bridge: `pycodex/core/tui_bridge.py`
+- Protocol event schemas and JSONL contracts: `pycodex/protocol/events.py`
 - Tool contracts, dispatch, and serialization boundary: `pycodex/tools/base.py`
 - Approval flow and prompt orchestration: `pycodex/tools/orchestrator.py`
 - Approval policy and session-scoped cache store: `pycodex/approval/policy.py`
@@ -32,9 +35,8 @@ This document is the architecture map for agent behavior and contracts in this r
   - `pycodex/tools/write_file.py`
   - `pycodex/tools/list_dir.py`
   - `pycodex/tools/grep_files.py`
-- Event protocol module `pycodex/protocol/events.py` is milestone 3 scope and not a current source of truth.
 
-## Key Runtime Contracts (Milestone 2)
+## Key Runtime Contracts (Current)
 - Mutating tool calls are gated in `execute_with_approval()` based on `tool.is_mutating(args)`.
 - Approval decisions are stateful only through `ApprovalStore`; only `APPROVED_FOR_SESSION` is cached.
 - `DENIED` returns `ToolError(code="denied")` and does not raise.
@@ -45,6 +47,8 @@ This document is the architecture map for agent behavior and contracts in this r
   - normalizes whitespace only for a strict safe token subset
   - preserves semantically sensitive inline shell forms as distinct keys
 - Tool handlers return typed outcomes (`ToolResult | ToolError`); JSON serialization happens in `ToolRegistry.dispatch()`.
+- In `--json` and `--tui-mode`, protocol payloads are emitted from typed models in `pycodex/protocol/events.py`.
+- `pycodex/core/tui_bridge.py` accepts `user.input`, `approval.response`, and `interrupt` JSON-RPC methods; unknown or malformed input is ignored safely.
 
 ## Update Criteria
 Update this file when any of the following change:

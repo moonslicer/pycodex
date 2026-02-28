@@ -13,7 +13,7 @@ Agentic Python project scaffold focused on explicit contracts, composable module
 python3 -m venv .venv
 source .venv/bin/activate
 python -m pip install --upgrade pip
-pip install ruff mypy pytest pytest-asyncio pydantic pre-commit
+pip install ruff mypy pytest pytest-asyncio pydantic pre-commit bandit pip-audit
 pip install openai
 ```
 
@@ -67,14 +67,43 @@ Type check:
 mypy --strict pycodex/
 ```
 
-## Full Quality Gate (CI Parity)
+## Local Default Gate
 
 ```bash
 ruff check . --fix
 ruff format . --check
 mypy --strict pycodex/
-pytest tests/ -v
+pytest tests/ --ignore=tests/agent_harness -m "not e2e" -v
 pytest tests/agent_harness/ -v
+```
+
+## CI-Complete Gate (Parity)
+
+Run this when you need close parity with `.github/workflows/ci.yml`:
+
+```bash
+# Python checks
+ruff check .
+ruff format . --check
+mypy --strict pycodex/
+pytest tests/ --ignore=tests/agent_harness -m "not e2e" -v
+pytest tests/agent_harness/ -v
+pip-audit
+bandit -r pycodex/ -ll -q
+
+# TUI checks
+cd tui
+npm ci
+npm run typecheck
+npm run lint
+npm test
+npm run build
+```
+
+Optional (matches CI behavior only for pull requests targeting `main`):
+
+```bash
+pytest tests/ -m "e2e" -v
 ```
 
 ## Pre-commit Hooks
@@ -105,5 +134,9 @@ It runs on push and pull request with:
 - Ruff lint
 - Ruff format check
 - Mypy strict
-- Full pytest suite
+- Pytest unit+integration (`not e2e`, harness excluded)
 - Agent harness tests
+- Dependency audit (`pip-audit`)
+- Security scan (`bandit`)
+- TUI checks (`npm run typecheck`, `npm run lint`, `npm test`, `npm run build`)
+- E2E tests on pull requests targeting `main`
