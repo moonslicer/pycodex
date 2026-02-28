@@ -68,7 +68,7 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install tooling
-        run: pip install ".[dev]"
+        run: pip install mypy pytest pytest-asyncio pydantic openai
 
       - name: Mypy strict
         run: mypy --strict pycodex/
@@ -91,7 +91,7 @@ jobs:
           cache-dependency-path: pyproject.toml
 
       - name: Install tooling
-        run: pip install ".[dev]"
+        run: pip install pytest pytest-asyncio pydantic openai pip-audit bandit
 
       - name: Agent harness
         run: pytest tests/agent_harness/ -v
