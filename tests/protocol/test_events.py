@@ -4,6 +4,7 @@ from typing import Any
 
 import pytest
 from pycodex.protocol.events import (
+    ApprovalRequested,
     ItemCompleted,
     ItemStarted,
     ItemUpdated,
@@ -68,6 +69,16 @@ from pydantic import TypeAdapter, ValidationError
                 delta="hel",
             ),
             ItemUpdated,
+        ),
+        (
+            ApprovalRequested(
+                thread_id="thread_1",
+                turn_id="turn_1",
+                request_id="req_1",
+                tool="write_file",
+                preview='{"file_path":"notes.txt"}',
+            ),
+            ApprovalRequested,
         ),
     ],
 )
@@ -135,6 +146,17 @@ def test_event_model_round_trip_json(event: Any, event_cls: type[Any]) -> None:
             },
             ItemUpdated,
         ),
+        (
+            {
+                "type": "approval.request",
+                "thread_id": "thread_1",
+                "turn_id": "turn_1",
+                "request_id": "req_1",
+                "tool": "shell",
+                "preview": "rm -f temp.txt",
+            },
+            ApprovalRequested,
+        ),
     ],
 )
 def test_protocol_event_union_resolves_type(
@@ -200,3 +222,33 @@ def test_protocol_event_union_resolves_item_updated() -> None:
     )
 
     assert isinstance(event, ItemUpdated)
+
+
+def test_approval_requested_round_trip_json() -> None:
+    event = ApprovalRequested(
+        thread_id="thread_1",
+        turn_id="turn_1",
+        request_id="req_1",
+        tool="shell",
+        preview="rm -f temp.txt",
+    )
+
+    encoded = event.model_dump_json()
+    decoded = ApprovalRequested.model_validate_json(encoded)
+    assert decoded == event
+
+
+def test_protocol_event_union_resolves_approval_requested() -> None:
+    adapter = TypeAdapter(ProtocolEvent)
+    event = adapter.validate_python(
+        {
+            "type": "approval.request",
+            "thread_id": "thread_1",
+            "turn_id": "turn_1",
+            "request_id": "req_1",
+            "tool": "shell",
+            "preview": "rm -f temp.txt",
+        }
+    )
+
+    assert isinstance(event, ApprovalRequested)

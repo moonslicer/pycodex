@@ -62,10 +62,25 @@ describe("StdioReader", () => {
         delta: "streaming text",
       })}\n`,
     );
+    stdout.write(
+      `${JSON.stringify({
+        type: "approval.request",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+        request_id: "req_1",
+        tool: "write_file",
+        preview: '{"arg_count":1,"arg_keys":["file_path"]}',
+      })}\n`,
+    );
 
     await waitForAsyncDispatch();
 
-    expect(seenTypes).toEqual(["thread.started", "item.started", "item.updated"]);
+    expect(seenTypes).toEqual([
+      "thread.started",
+      "item.started",
+      "item.updated",
+      "approval.request",
+    ]);
   });
 
   test("accepts item.started with nullable optional fields", async () => {

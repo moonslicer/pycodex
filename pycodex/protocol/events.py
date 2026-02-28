@@ -87,6 +87,17 @@ class ItemUpdated(_FrozenModel):
     delta: str
 
 
+class ApprovalRequested(_FrozenModel):
+    """Event emitted when a mutating tool call requires user approval."""
+
+    type: Literal["approval.request"] = "approval.request"
+    thread_id: str
+    turn_id: str
+    request_id: str
+    tool: str
+    preview: str
+
+
 ProtocolEvent: TypeAlias = Annotated[
     ThreadStarted
     | TurnStarted
@@ -94,6 +105,7 @@ ProtocolEvent: TypeAlias = Annotated[
     | TurnFailed
     | ItemStarted
     | ItemCompleted
-    | ItemUpdated,
+    | ItemUpdated
+    | ApprovalRequested,
     Field(discriminator="type"),
 ]

@@ -158,12 +158,11 @@ async def _run_tui_mode(*, approval_policy: ApprovalPolicy) -> int:
     config = load_config()
     session = Session(config=config)
     model_client = ModelClient(config)
+    bridge: TuiBridge | None = None
 
     async def _tui_ask_user_fn(tool: Any, args: dict[str, Any]) -> ReviewDecision:
-        # T5 bridge baseline avoids blocking stdin prompts in TUI mode.
-        # Full approval request/response flow is added in T10.
-        _ = tool, args
-        return ReviewDecision.DENIED
+        assert bridge is not None
+        return await bridge.request_approval(tool, args)
 
     tool_router = _build_tool_router(
         approval_policy=approval_policy,

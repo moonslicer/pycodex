@@ -56,6 +56,15 @@ export type ItemUpdatedEvent = {
   delta: string;
 };
 
+export type ApprovalRequestedEvent = {
+  type: "approval.request";
+  thread_id: string;
+  turn_id: string;
+  request_id: string;
+  tool: string;
+  preview: string;
+};
+
 export type ProtocolEvent =
   | ThreadStartedEvent
   | TurnStartedEvent
@@ -63,7 +72,8 @@ export type ProtocolEvent =
   | TurnFailedEvent
   | ItemStartedEvent
   | ItemCompletedEvent
-  | ItemUpdatedEvent;
+  | ItemUpdatedEvent
+  | ApprovalRequestedEvent;
 
 export type ApprovalDecision =
   | "approved"

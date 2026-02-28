@@ -97,6 +97,14 @@ function isProtocolEvent(value: unknown): value is ProtocolEvent {
         isString(itemId) &&
         isString(value["delta"])
       );
+    case "approval.request":
+      return (
+        isString(threadId) &&
+        isString(turnId) &&
+        isString(value["request_id"]) &&
+        isString(value["tool"]) &&
+        isString(value["preview"])
+      );
     default:
       return false;
   }

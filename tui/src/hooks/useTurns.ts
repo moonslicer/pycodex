@@ -213,6 +213,7 @@ export function reduceTurns(
     }
     case "item.started":
     case "item.completed":
+    case "approval.request":
       return state;
     case "item.updated":
       return applyItemUpdatedDelta(state, {

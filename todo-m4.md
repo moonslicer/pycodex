@@ -199,7 +199,7 @@ TypeScript:
   - Verify:
     - `cd tui && npm test -- --runInBand --findRelatedTests src/hooks/useLineBuffer.ts src/hooks/useTurns.ts`
 
-- [ ] T10: M4D protocol addition (`approval.request`) + bridge wait loop
+- [x] T10: M4D protocol addition (`approval.request`) + bridge wait loop
   - Add `ApprovalRequested` model in Python events.
   - In bridge: emit request with captured turn_id, await matching `approval.response` by `request_id`.
   - Verify:
