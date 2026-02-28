@@ -48,13 +48,22 @@ export type ItemCompletedEvent = {
   content: string;
 };
 
+export type ItemUpdatedEvent = {
+  type: "item.updated";
+  thread_id: string;
+  turn_id: string;
+  item_id: string;
+  delta: string;
+};
+
 export type ProtocolEvent =
   | ThreadStartedEvent
   | TurnStartedEvent
   | TurnCompletedEvent
   | TurnFailedEvent
   | ItemStartedEvent
-  | ItemCompletedEvent;
+  | ItemCompletedEvent
+  | ItemUpdatedEvent;
 
 export type ApprovalDecision =
   | "approved"

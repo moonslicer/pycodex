@@ -54,7 +54,19 @@ class TurnCompleted:
     type: Literal["turn_completed"] = "turn_completed"
 
 
-AgentEvent = TurnStarted | ToolCallDispatched | ToolResultReceived | TurnCompleted
+@dataclass(slots=True, frozen=True)
+class TextDeltaReceived:
+    """Event emitted for incremental assistant text output."""
+
+    delta: str
+    item_id: str | None = None
+    output_index: int | None = None
+    type: Literal["text_delta_received"] = "text_delta_received"
+
+
+AgentEvent = (
+    TurnStarted | ToolCallDispatched | ToolResultReceived | TurnCompleted | TextDeltaReceived
+)
 EventCallback = Callable[[AgentEvent], None | Awaitable[None]]
 
 
@@ -173,6 +185,13 @@ class Agent:
         ):
             if isinstance(event, OutputTextDelta):
                 text_parts.append(event.delta)
+                await self._emit(
+                    TextDeltaReceived(
+                        delta=event.delta,
+                        item_id=event.item_id,
+                        output_index=event.output_index,
+                    )
+                )
             elif isinstance(event, OutputItemDone):
                 parsed = _parse_tool_call_item(item=event.item, ordinal=len(tool_calls) + 1)
                 if parsed is not None:

@@ -6,11 +6,18 @@ import json
 from dataclasses import dataclass, field
 from uuid import uuid4
 
-from pycodex.core.agent import AgentEvent, ToolCallDispatched, ToolResultReceived, TurnCompleted
+from pycodex.core.agent import (
+    AgentEvent,
+    TextDeltaReceived,
+    ToolCallDispatched,
+    ToolResultReceived,
+    TurnCompleted,
+)
 from pycodex.core.agent import TurnStarted as AgentTurnStarted
 from pycodex.protocol.events import (
     ItemCompleted,
     ItemStarted,
+    ItemUpdated,
     ProtocolEvent,
     ThreadStarted,
     TokenUsage,
@@ -29,6 +36,7 @@ class EventAdapter:
     _item_counter: int = 0
     _inflight: dict[str, str] = field(default_factory=dict)
     _current_turn_id: str | None = None
+    _assistant_item_id: str | None = None
     _thread_started: bool = False
 
     def start_thread(self) -> ThreadStarted:
@@ -43,10 +51,26 @@ class EventAdapter:
         if isinstance(event, AgentTurnStarted):
             self._turn_counter += 1
             self._current_turn_id = f"turn_{self._turn_counter}"
+            self._assistant_item_id = None
             return [
                 TurnStarted(
                     thread_id=self.thread_id,
                     turn_id=self._current_turn_id,
+                )
+            ]
+
+        if isinstance(event, TextDeltaReceived):
+            turn_id = self._require_active_turn_id()
+            item_id = self._resolve_assistant_item_id(
+                turn_id=turn_id,
+                suggested_item_id=event.item_id,
+            )
+            return [
+                ItemUpdated(
+                    thread_id=self.thread_id,
+                    turn_id=turn_id,
+                    item_id=item_id,
+                    delta=event.delta,
                 )
             ]
 
@@ -125,6 +149,16 @@ class EventAdapter:
         if self._current_turn_id is None:
             raise RuntimeError("received non-start event without active turn")
         return self._current_turn_id
+
+    def _resolve_assistant_item_id(self, *, turn_id: str, suggested_item_id: str | None) -> str:
+        normalized = suggested_item_id.strip() if isinstance(suggested_item_id, str) else ""
+        if normalized:
+            self._assistant_item_id = normalized
+            return normalized
+
+        if self._assistant_item_id is None:
+            self._assistant_item_id = self._next_item_id(turn_id)
+        return self._assistant_item_id
 
 
 def _to_token_usage(raw_usage: dict[str, int] | None) -> TokenUsage | None:

@@ -3,11 +3,18 @@ from __future__ import annotations
 import re
 
 import pytest
-from pycodex.core.agent import ToolCallDispatched, ToolResultReceived, TurnCompleted, TurnStarted
+from pycodex.core.agent import (
+    TextDeltaReceived,
+    ToolCallDispatched,
+    ToolResultReceived,
+    TurnCompleted,
+    TurnStarted,
+)
 from pycodex.core.event_adapter import EventAdapter
 from pycodex.protocol.events import (
     ItemCompleted,
     ItemStarted,
+    ItemUpdated,
     ThreadStarted,
     TokenUsage,
     TurnFailed,
@@ -74,6 +81,54 @@ def test_no_tool_turn() -> None:
     out = [*out_started, *out_completed]
 
     assert [event.type for event in out] == ["turn.started", "turn.completed"]
+
+
+def test_item_updated_emits_with_model_item_id() -> None:
+    adapter = EventAdapter(thread_id="thread_test")
+    adapter.on_agent_event(TurnStarted(user_input="hello"))
+
+    out = adapter.on_agent_event(
+        TextDeltaReceived(
+            delta="hel",
+            item_id="msg_1",
+        )
+    )
+
+    assert len(out) == 1
+    assert isinstance(out[0], ItemUpdated)
+    assert out[0].item_id == "msg_1"
+    assert out[0].delta == "hel"
+
+
+def test_item_updated_reuses_generated_item_id_for_missing_source_id() -> None:
+    adapter = EventAdapter(thread_id="thread_test")
+    adapter.on_agent_event(TurnStarted(user_input="hello"))
+
+    first = adapter.on_agent_event(TextDeltaReceived(delta="line one"))
+    second = adapter.on_agent_event(TextDeltaReceived(delta="line two"))
+
+    assert len(first) == 1
+    assert len(second) == 1
+    assert isinstance(first[0], ItemUpdated)
+    assert isinstance(second[0], ItemUpdated)
+    assert first[0].item_id == second[0].item_id
+    assert first[0].delta == "line one"
+    assert second[0].delta == "line two"
+
+
+def test_item_updated_generated_item_id_resets_between_turns() -> None:
+    adapter = EventAdapter(thread_id="thread_test")
+    adapter.on_agent_event(TurnStarted(user_input="hello"))
+    first = adapter.on_agent_event(TextDeltaReceived(delta="turn one"))
+    adapter.on_agent_event(TurnCompleted(final_text="done"))
+    adapter.on_agent_event(TurnStarted(user_input="hello again"))
+    second = adapter.on_agent_event(TextDeltaReceived(delta="turn two"))
+
+    assert len(first) == 1
+    assert len(second) == 1
+    assert isinstance(first[0], ItemUpdated)
+    assert isinstance(second[0], ItemUpdated)
+    assert first[0].item_id != second[0].item_id
 
 
 def test_single_tool_call_turn() -> None:
@@ -277,6 +332,9 @@ def test_non_start_events_require_active_turn() -> None:
 
     with pytest.raises(RuntimeError, match="without active turn"):
         adapter.on_agent_event(ToolResultReceived(call_id="call_1", name="shell", result="ok"))
+
+    with pytest.raises(RuntimeError, match="without active turn"):
+        adapter.on_agent_event(TextDeltaReceived(delta="hi"))
 
     with pytest.raises(RuntimeError, match="without active turn"):
         adapter.on_agent_event(TurnCompleted(final_text="done"))

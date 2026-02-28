@@ -141,6 +141,7 @@ export function reduceTurns(
     }
     case "item.started":
     case "item.completed":
+    case "item.updated":
       return state;
     default: {
       const exhaustiveCheck: never = event;

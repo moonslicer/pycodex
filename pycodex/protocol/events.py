@@ -77,7 +77,23 @@ class ItemCompleted(_FrozenModel):
     content: str
 
 
+class ItemUpdated(_FrozenModel):
+    """Event emitted when an item receives incremental content updates."""
+
+    type: Literal["item.updated"] = "item.updated"
+    thread_id: str
+    turn_id: str
+    item_id: str
+    delta: str
+
+
 ProtocolEvent: TypeAlias = Annotated[
-    ThreadStarted | TurnStarted | TurnCompleted | TurnFailed | ItemStarted | ItemCompleted,
+    ThreadStarted
+    | TurnStarted
+    | TurnCompleted
+    | TurnFailed
+    | ItemStarted
+    | ItemCompleted
+    | ItemUpdated,
     Field(discriminator="type"),
 ]

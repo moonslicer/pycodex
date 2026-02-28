@@ -185,7 +185,7 @@ TypeScript:
     - `cd tui && npm run build`
     - `cd tui && npm test -- --runInBand --findRelatedTests src/index.ts src/__tests__/app.test.tsx`
 
-- [ ] T8: M4C protocol additions (`item.updated`)
+- [x] T8: M4C protocol additions (`item.updated`)
   - Add `ItemUpdated` model in Python events.
   - Emit agent text deltas through callback path and map in adapter.
   - Mirror new union variant in TypeScript protocol types.

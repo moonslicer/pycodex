@@ -51,10 +51,19 @@ describe("StdioReader", () => {
         usage: null,
       })}\n`,
     );
+    stdout.write(
+      `${JSON.stringify({
+        type: "item.updated",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+        item_id: "item_1",
+        delta: "chunk",
+      })}\n`,
+    );
 
     await waitForAsyncDispatch();
 
-    expect(seenTypes).toEqual(["thread.started", "turn.completed"]);
+    expect(seenTypes).toEqual(["thread.started", "turn.completed", "item.updated"]);
   });
 
   test("ignores malformed and unknown payloads without crashing", async () => {

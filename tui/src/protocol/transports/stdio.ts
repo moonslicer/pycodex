@@ -90,6 +90,13 @@ function isProtocolEvent(value: unknown): value is ProtocolEvent {
           value["item_kind"] === "assistant_message") &&
         isString(value["content"])
       );
+    case "item.updated":
+      return (
+        isString(threadId) &&
+        isString(turnId) &&
+        isString(itemId) &&
+        isString(value["delta"])
+      );
     default:
       return false;
   }

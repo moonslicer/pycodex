@@ -75,10 +75,13 @@ def test_cli_e2e_json_contract_event_sequence_and_required_fields(
         "turn.started",
         "item.started",
         "item.completed",
+        "item.updated",
         "turn.completed",
     ]
 
-    thread_started, turn_started, item_started, item_completed, turn_completed = events
+    thread_started, turn_started, item_started, item_completed, item_updated, turn_completed = (
+        events
+    )
 
     assert {"type", "thread_id"} <= set(thread_started)
 
@@ -100,6 +103,13 @@ def test_cli_e2e_json_contract_event_sequence_and_required_fields(
     assert item_completed["turn_id"] == turn_started["turn_id"]
     assert item_completed["item_id"] == "call_json_1"
     assert item_completed["item_kind"] == "tool_result"
+
+    assert {"type", "thread_id", "turn_id", "item_id", "delta"} <= set(item_updated)
+    assert item_updated["thread_id"] == thread_started["thread_id"]
+    assert item_updated["turn_id"] == turn_started["turn_id"]
+    assert isinstance(item_updated["item_id"], str)
+    assert item_updated["item_id"]
+    assert item_updated["delta"] == "json mode complete"
 
     assert {"type", "thread_id", "turn_id", "final_text", "usage"} <= set(turn_completed)
     assert turn_completed["thread_id"] == thread_started["thread_id"]

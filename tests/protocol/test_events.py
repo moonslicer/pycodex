@@ -6,6 +6,7 @@ import pytest
 from pycodex.protocol.events import (
     ItemCompleted,
     ItemStarted,
+    ItemUpdated,
     ProtocolEvent,
     ThreadStarted,
     TokenUsage,
@@ -58,6 +59,15 @@ from pydantic import TypeAdapter, ValidationError
                 content="ok",
             ),
             ItemCompleted,
+        ),
+        (
+            ItemUpdated(
+                thread_id="thread_1",
+                turn_id="turn_1",
+                item_id="msg_1",
+                delta="hel",
+            ),
+            ItemUpdated,
         ),
     ],
 )
@@ -115,6 +125,16 @@ def test_event_model_round_trip_json(event: Any, event_cls: type[Any]) -> None:
             },
             ItemCompleted,
         ),
+        (
+            {
+                "type": "item.updated",
+                "thread_id": "thread_1",
+                "turn_id": "turn_1",
+                "item_id": "msg_1",
+                "delta": "hel",
+            },
+            ItemUpdated,
+        ),
     ],
 )
 def test_protocol_event_union_resolves_type(
@@ -152,3 +172,31 @@ def test_protocol_event_union_rejects_unknown_type() -> None:
                 "thread_id": "thread_1",
             }
         )
+
+
+def test_item_updated_round_trip_json() -> None:
+    event = ItemUpdated(
+        thread_id="thread_1",
+        turn_id="turn_1",
+        item_id="msg_1",
+        delta="hel",
+    )
+
+    encoded = event.model_dump_json()
+    decoded = ItemUpdated.model_validate_json(encoded)
+    assert decoded == event
+
+
+def test_protocol_event_union_resolves_item_updated() -> None:
+    adapter = TypeAdapter(ProtocolEvent)
+    event = adapter.validate_python(
+        {
+            "type": "item.updated",
+            "thread_id": "thread_1",
+            "turn_id": "turn_1",
+            "item_id": "msg_1",
+            "delta": "hel",
+        }
+    )
+
+    assert isinstance(event, ItemUpdated)

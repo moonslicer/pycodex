@@ -7,6 +7,7 @@ from typing import Any
 
 from pycodex.core.agent import (
     AgentEvent,
+    TextDeltaReceived,
     ToolCallDispatched,
     ToolResultReceived,
     TurnCompleted,
@@ -218,6 +219,7 @@ def test_run_turn_emits_lifecycle_events_in_order(tmp_path: Path) -> None:
         "turn_started",
         "tool_call_dispatched",
         "tool_result_received",
+        "text_delta_received",
         "turn_completed",
     ]
     assert isinstance(emitted[0], TurnStarted)
@@ -227,8 +229,10 @@ def test_run_turn_emits_lifecycle_events_in_order(tmp_path: Path) -> None:
     assert emitted[1].name == "shell"
     assert isinstance(emitted[2], ToolResultReceived)
     assert emitted[2].result == "stdout:\nhi"
-    assert isinstance(emitted[3], TurnCompleted)
-    assert emitted[3].final_text == "final"
+    assert isinstance(emitted[3], TextDeltaReceived)
+    assert emitted[3].delta == "final"
+    assert isinstance(emitted[4], TurnCompleted)
+    assert emitted[4].final_text == "final"
 
 
 def test_run_turn_threads_usage_to_turn_completed_event(tmp_path: Path) -> None:
@@ -262,9 +266,54 @@ def test_run_turn_threads_usage_to_turn_completed_event(tmp_path: Path) -> None:
     )
 
     assert result == "final"
-    assert [event.type for event in emitted] == ["turn_started", "turn_completed"]
-    assert isinstance(emitted[1], TurnCompleted)
-    assert emitted[1].usage == {"input_tokens": 10, "output_tokens": 5}
+    assert [event.type for event in emitted] == [
+        "turn_started",
+        "text_delta_received",
+        "turn_completed",
+    ]
+    assert isinstance(emitted[1], TextDeltaReceived)
+    assert emitted[1].delta == "final"
+    assert isinstance(emitted[2], TurnCompleted)
+    assert emitted[2].usage == {"input_tokens": 10, "output_tokens": 5}
+
+
+def test_run_turn_emits_text_delta_metadata_from_model_stream(tmp_path: Path) -> None:
+    session = Session()
+    model_client = _FakeModelClient(
+        turns=[
+            [
+                OutputTextDelta(delta="hi", item_id="msg_1", output_index=2),
+                Completed(response_id="resp_usage"),
+            ]
+        ]
+    )
+    router = _FakeToolRouter(specs=[], results=[])
+    emitted: list[AgentEvent] = []
+
+    async def on_event(event: AgentEvent) -> None:
+        emitted.append(event)
+
+    result = asyncio.run(
+        run_turn(
+            session=session,
+            model_client=model_client,
+            tool_router=router,
+            cwd=tmp_path,
+            user_input="say hi",
+            on_event=on_event,
+        )
+    )
+
+    assert result == "hi"
+    assert [event.type for event in emitted] == [
+        "turn_started",
+        "text_delta_received",
+        "turn_completed",
+    ]
+    assert isinstance(emitted[1], TextDeltaReceived)
+    assert emitted[1].delta == "hi"
+    assert emitted[1].item_id == "msg_1"
+    assert emitted[1].output_index == 2
 
 
 def test_run_turn_keeps_error_tool_output_in_session(tmp_path: Path) -> None:
