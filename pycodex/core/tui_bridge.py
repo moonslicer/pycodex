@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import re
 import sys
 from collections.abc import Callable
 from contextlib import suppress
@@ -19,6 +20,17 @@ from pycodex.core.session import Session
 from pycodex.protocol.events import ApprovalRequested, ProtocolEvent
 
 _MAX_PENDING_APPROVALS = 100
+_MAX_SHELL_COMMAND_PREVIEW_CHARS = 240
+_SENSITIVE_ENV_KEY_PATTERN = re.compile(
+    r"(?i)(?:token|secret|password|passwd|api[_-]?key|auth(?:orization)?|cookie)"
+)
+_SENSITIVE_FLAG_VALUE_PATTERN = re.compile(
+    r"(?i)(--?(?:token|secret|password|passwd|api[_-]?key|auth(?:orization)?|cookie)\s*=?\s*)(\S+)"
+)
+_SENSITIVE_ENV_ASSIGNMENT_PATTERN = re.compile(
+    r"(?i)\b([A-Za-z_][A-Za-z0-9_]*(?:token|secret|password|passwd|api[_-]?key|auth(?:orization)?|cookie)[A-Za-z0-9_]*)=(\S+)"
+)
+_SENSITIVE_BEARER_PATTERN = re.compile(r"(?i)\bbearer\s+\S+")
 
 
 class SupportsLineReader(Protocol):
@@ -175,7 +187,7 @@ class TuiBridge:
                     turn_id=self._active_turn_id,
                     request_id=request_id,
                     tool=normalized_tool_name,
-                    preview=_render_approval_preview(args),
+                    preview=_render_approval_preview(tool_name=normalized_tool_name, args=args),
                 )
             )
             await pending.event.wait()
@@ -209,10 +221,68 @@ def _parse_approval_decision(raw_decision: Any) -> ReviewDecision | None:
     return None
 
 
-def _render_approval_preview(args: dict[str, Any]) -> str:
-    # Strict redaction: expose only shape metadata, never argument values.
+def _render_approval_preview(*, tool_name: str, args: dict[str, Any]) -> str:
+    if tool_name == "shell":
+        return _render_shell_approval_preview(args=args)
+
+    # Default strict redaction for non-shell tools: expose only shape metadata.
     preview = {
         "arg_count": len(args),
         "arg_keys": sorted(args.keys()),
     }
     return json.dumps(preview, sort_keys=True, ensure_ascii=True)
+
+
+def _render_shell_approval_preview(*, args: dict[str, Any]) -> str:
+    preview: dict[str, Any] = {
+        "arg_count": len(args),
+        "arg_keys": sorted(args.keys()),
+        "mode": "shell",
+    }
+
+    command = args.get("command")
+    if isinstance(command, str) and command.strip():
+        preview["command_preview"] = _sanitize_shell_command_preview(command)
+
+    timeout_ms = args.get("timeout_ms")
+    if isinstance(timeout_ms, int) and not isinstance(timeout_ms, bool) and timeout_ms > 0:
+        preview["timeout_ms"] = timeout_ms
+
+    return json.dumps(preview, sort_keys=True, ensure_ascii=True)
+
+
+def _sanitize_shell_command_preview(command: str) -> str:
+    compact = " ".join(command.strip().split())
+    if not compact:
+        return compact
+
+    preview = _SENSITIVE_ENV_ASSIGNMENT_PATTERN.sub(r"\1=***REDACTED***", compact)
+    preview = _SENSITIVE_FLAG_VALUE_PATTERN.sub(r"\1***REDACTED***", preview)
+    preview = _SENSITIVE_BEARER_PATTERN.sub("Bearer ***REDACTED***", preview)
+    preview = _redact_sensitive_env_prefix_assignments(preview)
+
+    if len(preview) <= _MAX_SHELL_COMMAND_PREVIEW_CHARS:
+        return preview
+    return f"{preview[:_MAX_SHELL_COMMAND_PREVIEW_CHARS]}..."
+
+
+def _redact_sensitive_env_prefix_assignments(command: str) -> str:
+    tokens = command.split(" ")
+    if len(tokens) == 0:
+        return command
+
+    redacted_tokens: list[str] = []
+    for token in tokens:
+        if "=" not in token:
+            redacted_tokens.append(token)
+            continue
+
+        key, _, value = token.partition("=")
+        if _SENSITIVE_ENV_KEY_PATTERN.search(key) is None:
+            redacted_tokens.append(token)
+            continue
+
+        _ = value
+        redacted_tokens.append(f"{key}=***REDACTED***")
+
+    return " ".join(redacted_tokens)

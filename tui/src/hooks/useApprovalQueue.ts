@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import type { ProtocolEvent, ApprovalDecision } from "../protocol/types.js";
 import type { ProtocolWriter } from "../protocol/writer.js";
@@ -13,6 +13,15 @@ export type ApprovalRequest = {
 
 export type ApprovalQueueState = {
   queue: ApprovalRequest[];
+};
+
+export type ApprovalDecisionLog = {
+  request_id: string;
+  turn_id: string;
+  tool: string;
+  preview: string;
+  decision: ApprovalDecision;
+  source: "fresh_prompt";
 };
 
 export const INITIAL_APPROVAL_QUEUE_STATE: ApprovalQueueState = {
@@ -134,6 +143,7 @@ export function approvalQueueReducer(
 
 export type ApprovalQueueDispatch = {
   currentRequest: ApprovalRequest | null;
+  decisionLog: readonly ApprovalDecisionLog[];
   queueLength: number;
   respond: (decision: ApprovalDecision) => void;
 };
@@ -169,6 +179,7 @@ export function useApprovalQueue(
     INITIAL_APPROVAL_QUEUE_STATE,
   );
   const processedEventCount = useRef(0);
+  const [decisionLog, setDecisionLog] = useState<ApprovalDecisionLog[]>([]);
 
   const currentRequest = state.queue[0] ?? null;
 
@@ -177,6 +188,7 @@ export function useApprovalQueue(
 
     if (events.length < processedEventCount.current) {
       dispatch({ type: "reset" });
+      setDecisionLog([]);
       processedEventCount.current = 0;
       nextState = INITIAL_APPROVAL_QUEUE_STATE;
     }
@@ -249,6 +261,22 @@ export function useApprovalQueue(
         type: "dequeue",
         request_id: requestId,
       });
+      if (currentRequest !== null) {
+        setDecisionLog((current) => {
+          const next = [
+            ...current,
+            {
+              request_id: currentRequest.request_id,
+              turn_id: currentRequest.turn_id,
+              tool: currentRequest.tool,
+              preview: currentRequest.preview,
+              decision,
+              source: "fresh_prompt" as const,
+            },
+          ];
+          return next.length > 500 ? next.slice(-500) : next;
+        });
+      }
     },
     [currentRequest, writer],
   );
@@ -256,6 +284,7 @@ export function useApprovalQueue(
   return {
     ...state,
     currentRequest,
+    decisionLog,
     queueLength: state.queue.length,
     respond,
   };

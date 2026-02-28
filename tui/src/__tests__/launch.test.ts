@@ -1,4 +1,8 @@
-import { buildPycodexArgs, isTuiDebugEnabled } from "../runtime/launch.js";
+import {
+  buildPycodexArgs,
+  isTuiDebugEnabled,
+  resolveApprovalPolicy,
+} from "../runtime/launch.js";
 
 describe("buildPycodexArgs", () => {
   test("defaults to on-request approval", () => {
@@ -25,6 +29,14 @@ describe("buildPycodexArgs", () => {
       "--approval",
       "never",
     ]);
+  });
+});
+
+describe("resolveApprovalPolicy", () => {
+  test("defaults to on-request for unknown values", () => {
+    expect(resolveApprovalPolicy({ PYCODEX_TUI_APPROVAL: "invalid" })).toBe(
+      "on-request",
+    );
   });
 });
 

@@ -1,4 +1,8 @@
-import { summarizeToolCallsForTurn } from "../components/ChatView.js";
+import {
+  summarizeApprovalDebugLinesForTurn,
+  summarizeToolCallsForTurn,
+} from "../components/ChatView.js";
+import type { ApprovalDecisionLog } from "../hooks/useApprovalQueue.js";
 import type { TurnState } from "../hooks/useTurns.js";
 
 function baseTurn(overrides: Partial<TurnState> = {}): TurnState {
@@ -72,5 +76,66 @@ describe("summarizeToolCallsForTurn", () => {
         }),
       ),
     ).toBe("Tool calls: shell, write_file");
+  });
+});
+
+describe("summarizeApprovalDebugLinesForTurn", () => {
+  test("shows fresh prompt approval decision with shell command preview", () => {
+    const decisionLog: ApprovalDecisionLog[] = [
+      {
+        request_id: "req_1",
+        turn_id: "turn_1",
+        tool: "shell",
+        preview: JSON.stringify({
+          mode: "shell",
+          command_preview: "ls -lrt",
+          timeout_ms: 5000,
+        }),
+        decision: "approved",
+        source: "fresh_prompt",
+      },
+    ];
+
+    expect(
+      summarizeApprovalDebugLinesForTurn(
+        baseTurn({
+          toolCalls: {
+            item_1: {
+              item_id: "item_1",
+              name: "shell",
+              arguments: "{\"command\":\"ls -lrt\"}",
+              status: "done",
+              content: "stdout:\n...",
+            },
+          },
+        }),
+        decisionLog,
+        "on-request",
+      ),
+    ).toEqual([
+      'Approval (fresh_prompt): approved once for shell command="ls -lrt"',
+    ]);
+  });
+
+  test("shows likely cache-hit line when shell call has no prompt log", () => {
+    expect(
+      summarizeApprovalDebugLinesForTurn(
+        baseTurn({
+          toolCalls: {
+            item_1: {
+              item_id: "item_1",
+              name: "shell",
+              arguments: "{\"command\":\"ls -lrt\"}",
+              status: "done",
+              content: "stdout:\n...",
+            },
+          },
+        }),
+        [],
+        "on-request",
+      ),
+    ).toEqual([
+      "Approval: no prompt for shell (likely session-cache hit)",
+    ]);
   });
 });

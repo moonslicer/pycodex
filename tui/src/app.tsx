@@ -1,6 +1,7 @@
 import { useCallback } from "react";
 import { Box } from "ink";
 
+import type { ApprovalPolicyValue } from "./runtime/launch.js";
 import { ApprovalModal } from "./components/ApprovalModal.js";
 import { ChatView } from "./components/ChatView.js";
 import { InputArea } from "./components/InputArea.js";
@@ -13,6 +14,7 @@ import type { ProtocolReader } from "./protocol/reader.js";
 import type { ProtocolWriter } from "./protocol/writer.js";
 
 type AppProps = {
+  approvalPolicy?: ApprovalPolicyValue;
   debug?: boolean;
   onExitRequested: () => void;
   reader: ProtocolReader;
@@ -27,10 +29,16 @@ export function isInputDisabled(
   return hasActiveTurn || queueLength > 0;
 }
 
-export function App({ debug = false, onExitRequested, reader, writer }: AppProps) {
+export function App({
+  approvalPolicy = "on-request",
+  debug = false,
+  onExitRequested,
+  reader,
+  writer,
+}: AppProps) {
   const { events } = useProtocolEvents(reader);
   const { turns, threadId, setUserText } = useTurns(events);
-  const { currentRequest, queueLength, respond } = useApprovalQueue(events, writer);
+  const { currentRequest, decisionLog, queueLength, respond } = useApprovalQueue(events, writer);
 
   const isBusy = turns.some((turn) => turn.status === "active");
   const inputDisabled = isInputDisabled(turns, queueLength);
@@ -58,7 +66,12 @@ export function App({ debug = false, onExitRequested, reader, writer }: AppProps
   return (
     <Box flexDirection="column">
       <Box flexDirection="column" flexGrow={1}>
-        <ChatView showToolCallSummary={debug} turns={turns} />
+        <ChatView
+          approvalDecisionLog={decisionLog}
+          approvalPolicy={approvalPolicy}
+          showToolCallSummary={debug}
+          turns={turns}
+        />
       </Box>
       {currentRequest !== null ? (
         <ApprovalModal onRespond={respond} request={currentRequest} />

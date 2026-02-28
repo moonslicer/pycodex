@@ -58,6 +58,22 @@ def _reader_with_lines(lines: list[str]) -> _LineReader:
     return _LineReader(lines)
 
 
+def _make_approval_response_line(request_id: str, decision: str) -> str:
+    """Build a JSON-RPC approval.response line for use in tests."""
+    return json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "method": "approval.response",
+            "params": {"request_id": request_id, "decision": decision},
+        }
+    )
+
+
+def _event_types(events: list[Any]) -> list[str]:
+    """Extract event type strings for compact assertions."""
+    return [e.type for e in events]
+
+
 def test_thread_started_emitted_on_init(tmp_path: Path) -> None:
     events: list[Any] = []
 
@@ -535,3 +551,251 @@ def test_request_approval_cleans_pending_on_emit_failure(
         assert bridge._pending_approvals == {}
 
     asyncio.run(scenario())
+
+
+def test_render_approval_preview_shell_includes_command_preview_and_timeout() -> None:
+    preview_json = tui_bridge_module._render_approval_preview(
+        tool_name="shell",
+        args={"command": "ls   -lrt", "timeout_ms": 5000},
+    )
+    preview = json.loads(preview_json)
+
+    assert preview["mode"] == "shell"
+    assert preview["command_preview"] == "ls -lrt"
+    assert preview["timeout_ms"] == 5000
+    assert preview["arg_count"] == 2
+    assert preview["arg_keys"] == ["command", "timeout_ms"]
+
+
+def test_render_approval_preview_shell_redacts_sensitive_tokens() -> None:
+    preview_json = tui_bridge_module._render_approval_preview(
+        tool_name="shell",
+        args={
+            "command": (
+                "API_KEY=abc123 curl -H Authorization:BearerToken --password hunter2 "
+                "--token=xyz --cookie session=abcdef"
+            )
+        },
+    )
+    preview = json.loads(preview_json)
+    command_preview = preview.get("command_preview")
+    assert isinstance(command_preview, str)
+    assert "abc123" not in command_preview
+    assert "hunter2" not in command_preview
+    assert "xyz" not in command_preview
+    assert "abcdef" not in command_preview
+    assert "***REDACTED***" in command_preview
+
+
+def test_render_approval_preview_non_shell_remains_shape_only() -> None:
+    preview_json = tui_bridge_module._render_approval_preview(
+        tool_name="write_file",
+        args={"file_path": "notes.txt", "content": "hello"},
+    )
+    preview = json.loads(preview_json)
+
+    assert preview == {
+        "arg_count": 2,
+        "arg_keys": ["content", "file_path"],
+    }
+
+
+# ---------------------------------------------------------------------------
+# _sanitize_shell_command_preview - truncation boundary
+# ---------------------------------------------------------------------------
+
+
+def test_sanitize_shell_command_preview_truncates_at_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tui_bridge_module, "_MAX_SHELL_COMMAND_PREVIEW_CHARS", 10)
+    long_cmd = "echo " + "a" * 20
+    result = tui_bridge_module._sanitize_shell_command_preview(long_cmd)
+    assert len(result) == 13  # 10 chars + "..."
+    assert result.endswith("...")
+
+
+def test_sanitize_shell_command_preview_no_truncation_at_exact_limit(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(tui_bridge_module, "_MAX_SHELL_COMMAND_PREVIEW_CHARS", 10)
+    cmd = "a" * 10
+    result = tui_bridge_module._sanitize_shell_command_preview(cmd)
+    assert result == cmd
+    assert not result.endswith("...")
+
+
+# ---------------------------------------------------------------------------
+# Shell preview - empty / whitespace-only command omits command_preview
+# ---------------------------------------------------------------------------
+
+
+def test_render_approval_preview_shell_empty_command_omits_preview() -> None:
+    preview = json.loads(
+        tui_bridge_module._render_approval_preview(tool_name="shell", args={"command": ""})
+    )
+    assert "command_preview" not in preview
+
+
+def test_render_approval_preview_shell_whitespace_command_omits_preview() -> None:
+    preview = json.loads(
+        tui_bridge_module._render_approval_preview(tool_name="shell", args={"command": "   "})
+    )
+    assert "command_preview" not in preview
+
+
+def test_render_approval_preview_shell_missing_command_omits_preview() -> None:
+    preview = json.loads(tui_bridge_module._render_approval_preview(tool_name="shell", args={}))
+    assert "command_preview" not in preview
+
+
+# ---------------------------------------------------------------------------
+# Shell preview - timeout_ms edge cases
+# ---------------------------------------------------------------------------
+
+
+def test_render_approval_preview_shell_zero_timeout_omitted() -> None:
+    preview = json.loads(
+        tui_bridge_module._render_approval_preview(
+            tool_name="shell", args={"command": "pwd", "timeout_ms": 0}
+        )
+    )
+    assert "timeout_ms" not in preview
+
+
+def test_render_approval_preview_shell_negative_timeout_omitted() -> None:
+    preview = json.loads(
+        tui_bridge_module._render_approval_preview(
+            tool_name="shell", args={"command": "pwd", "timeout_ms": -1}
+        )
+    )
+    assert "timeout_ms" not in preview
+
+
+def test_render_approval_preview_shell_boolean_timeout_omitted() -> None:
+    # bool is a subclass of int; True == 1 but must be excluded.
+    preview = json.loads(
+        tui_bridge_module._render_approval_preview(
+            tool_name="shell", args={"command": "pwd", "timeout_ms": True}
+        )
+    )
+    assert "timeout_ms" not in preview
+
+
+# ---------------------------------------------------------------------------
+# Approval response - duplicate response to same request_id is ignored
+# ---------------------------------------------------------------------------
+
+
+def test_approval_response_duplicate_is_ignored(tmp_path: Path) -> None:
+    async def scenario() -> None:
+        bridge = TuiBridge(
+            session=_session(tmp_path),
+            model_client=_FakeModelClient(),
+            tool_router=_FakeToolRouter(),
+            cwd=tmp_path,
+            emit_event=lambda _: None,
+        )
+        bridge._active_turn_id = "turn_1"
+        decision_task = asyncio.create_task(
+            bridge.request_approval(_FakeTool("shell"), {"command": "pwd"})
+        )
+        await asyncio.sleep(0)
+        pending = next(iter(bridge._pending_approvals.values()))
+
+        # First response: approved
+        await bridge._handle_line(
+            _make_approval_response_line(next(iter(bridge._pending_approvals.keys())), "approved")
+        )
+        first_decision = pending.decision
+
+        # Second response: denied - should be ignored
+        await bridge._handle_line(
+            _make_approval_response_line(next(iter(bridge._pending_approvals.keys())), "denied")
+        )
+        assert await decision_task == ReviewDecision.APPROVED
+        assert first_decision == ReviewDecision.APPROVED
+
+    asyncio.run(scenario())
+
+
+# ---------------------------------------------------------------------------
+# request_approval - tool name normalization
+# ---------------------------------------------------------------------------
+
+
+def test_request_approval_tool_without_name_attr_uses_unknown(tmp_path: Path) -> None:
+    """An object with no 'name' attribute should normalize to 'unknown'."""
+
+    class _NoNameTool:
+        pass
+
+    async def scenario() -> None:
+        events: list[Any] = []
+        bridge = TuiBridge(
+            session=_session(tmp_path),
+            model_client=_FakeModelClient(),
+            tool_router=_FakeToolRouter(),
+            cwd=tmp_path,
+            emit_event=events.append,
+        )
+        bridge._active_turn_id = "turn_1"
+        decision_task = asyncio.create_task(bridge.request_approval(_NoNameTool(), {"x": 1}))
+        await asyncio.sleep(0)
+        approval_event = events[-1]
+        assert approval_event.tool == "unknown"
+
+        await bridge._handle_line(_make_approval_response_line(approval_event.request_id, "denied"))
+        assert await decision_task == ReviewDecision.DENIED
+
+    asyncio.run(scenario())
+
+
+def test_request_approval_non_string_name_attr_uses_unknown(tmp_path: Path) -> None:
+    """A tool whose 'name' attribute is not a string should normalize to 'unknown'."""
+
+    class _IntNameTool:
+        name = 42
+
+    async def scenario() -> None:
+        events: list[Any] = []
+        bridge = TuiBridge(
+            session=_session(tmp_path),
+            model_client=_FakeModelClient(),
+            tool_router=_FakeToolRouter(),
+            cwd=tmp_path,
+            emit_event=events.append,
+        )
+        bridge._active_turn_id = "turn_1"
+        decision_task = asyncio.create_task(bridge.request_approval(_IntNameTool(), {"x": 1}))
+        await asyncio.sleep(0)
+        approval_event = events[-1]
+        assert approval_event.tool == "unknown"
+
+        await bridge._handle_line(_make_approval_response_line(approval_event.request_id, "denied"))
+        assert await decision_task == ReviewDecision.DENIED
+
+    asyncio.run(scenario())
+
+
+# ---------------------------------------------------------------------------
+# _parse_approval_decision - direct unit tests for all branches
+# ---------------------------------------------------------------------------
+
+
+@pytest.mark.parametrize(
+    ("raw", "expected"),
+    [
+        ("approved", ReviewDecision.APPROVED),
+        ("denied", ReviewDecision.DENIED),
+        ("approved_for_session", ReviewDecision.APPROVED_FOR_SESSION),
+        ("abort", ReviewDecision.ABORT),
+        ("maybe", None),
+        ("", None),
+        (None, None),
+        (123, None),
+        (True, None),
+    ],
+)
+def test_parse_approval_decision(raw: Any, expected: ReviewDecision | None) -> None:
+    assert tui_bridge_module._parse_approval_decision(raw) == expected
