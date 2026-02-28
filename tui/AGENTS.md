@@ -53,11 +53,46 @@ Applies in addition to root `AGENTS.md`. Root rules take precedence when they co
   - deterministic rendering for tool panels and status bar.
 - Tests must be deterministic and local-only (no live network, no real TTY dependency beyond ink-testing-library fakes).
 
+## Validation Checks
+- Validate inbound protocol events at the transport boundary before reducer/hook state updates.
+- Treat unknown event types and malformed payloads as non-fatal: ignore safely and continue loop.
+- Require exhaustive event/command handling in reducers/switches with an explicit `never`-style fallback.
+- Require request/response identity checks (`request_id`, `turn_id`, `item_id`) before mutating queued or active state.
+- For cross-language protocol edits, update Python event models and TypeScript protocol types in the same change.
+
 ## Quality Gates for TUI Changes
 - `cd tui && npm run typecheck`
 - `cd tui && npm run lint`
 - `cd tui && npm test`
 - For cross-boundary changes touching Python protocol/events, also run matching Python tests plus repo gates required by root `AGENTS.md`.
+
+## Must-Pass Command Matrix
+- Documentation-only changes in `tui/`:
+  - No mandatory runtime gates.
+  - If command examples or scripts are changed, run the directly affected command once and record result.
+- Type-only or protocol-type changes (`src/protocol/types.ts`, shared TS types):
+  - `cd tui && npm run typecheck`
+  - `cd tui && npm run lint`
+  - `cd tui && npm test -- --runInBand --findRelatedTests src/protocol/types.ts`
+- Hook or reducer changes (`src/hooks/*`):
+  - `cd tui && npm run typecheck`
+  - `cd tui && npm run lint`
+  - `cd tui && npm test -- --runInBand --findRelatedTests src/hooks`
+- Component changes (`src/components/*`, `src/app.tsx`):
+  - `cd tui && npm run typecheck`
+  - `cd tui && npm run lint`
+  - `cd tui && npm test -- --runInBand --findRelatedTests src/components src/app.tsx`
+- Transport or entrypoint changes (`src/protocol/transports/*`, `src/index.ts`):
+  - `cd tui && npm run typecheck`
+  - `cd tui && npm run lint`
+  - `cd tui && npm test`
+  - Add or update at least one integration test that exercises the transport/entrypoint path.
+- Cross-boundary protocol/event changes (Python + TUI):
+  - `cd tui && npm run typecheck`
+  - `cd tui && npm run lint`
+  - `cd tui && npm test`
+  - `pytest tests/core/test_tui_bridge.py -q`
+  - Targeted Python protocol/event tests (`tests/protocol/`, `tests/core/test_event_adapter.py`, `tests/test_main.py`) matching touched contracts.
 
 ## Non-goals Guardrail
 - Do not add web-only abstractions or browser dependencies in M4.

@@ -301,8 +301,8 @@ Python stdout → JSONL (one ProtocolEvent per line, M3 format + new events)
 TypeScript stdin write → JSON-RPC commands
 
 Python emits:   thread.started, turn.started, turn.completed, turn.failed,
-                item.started, item.completed, item.updated (M4B),
-                approval.request (M4C)
+                item.started, item.completed, item.updated (M4C),
+                approval.request (M4D)
 
 TypeScript sends: user.input, approval.response, interrupt
 ```
@@ -311,25 +311,30 @@ Detailed sub-milestone breakdown is in `tui-plan.md`. Summary of execution plan:
 
 #### Milestone 4 execution plan (clear, incremental, verifiable)
 
-1. **M4A — Python pipe protocol + TypeScript Ink shell**
+1. **M4A — Protocol scaffold (TypeScript)**
+   - TypeScript: scaffold `tui/` package (React + Ink + Yoga), strict TS config, and protocol layer (`types.ts`, `reader.ts`, `writer.ts`, stdio transport) with focused protocol tests.
+   - Value: verifies toolchain + protocol boundary before introducing Python bridge or UI lifecycle complexity.
+   - Verification: `cd tui && tsc --noEmit && eslint src/ && jest`
+
+2. **M4B — Python pipe protocol + TypeScript Ink shell**
    - Python: add `--tui-mode` flag; implement `core/tui_bridge.py` (asyncio stdin reader + JSON-RPC command dispatcher; routes `user.input` → `run_turn()`, `interrupt` → task cancel).
-   - TypeScript: scaffold `tui/` package (React + Ink + Yoga); implement `protocol/reader.ts` (JSONL line reader), `protocol/writer.ts` (JSON-RPC serializer), `src/index.ts` (spawn Python, pipe lifecycle), `app.tsx` (root Ink component), `ChatView`, `InputArea`, `StatusBar`.
-   - Value: runnable multi-turn Ink chat; full pipe architecture established; all later sub-milestones are additions.
+   - TypeScript: implement `src/index.ts` (spawn Python, pipe lifecycle), `app.tsx` (root Ink component), `ChatView`, `InputArea`, `StatusBar`.
+   - Value: runnable multi-turn Ink chat over stdio; full bidirectional architecture established.
    - Verification: `pytest tests/core/test_tui_bridge.py -q` + `jest tui/ -q` + `node tui/dist/index.js` multi-turn chat works.
 
-2. **M4B — Streaming text (`item.updated`)**
+3. **M4C — Streaming text (`item.updated`)**
    - Python: add `ItemUpdated` event to `protocol/events.py`; surface `OutputTextDelta` through adapter as `item.updated`.
    - TypeScript: add `item.updated` to `types.ts`; implement `LineBuffer` in `ChatView.tsx` (newline-gated commit; simpler than Codex's 3-layer `StreamController`).
    - Value: model response text appears progressively; `item.updated` is now part of the stable protocol (existing `--json` consumers see it too).
    - Verification: `pytest tests/protocol/test_events.py tests/core/test_event_adapter.py -k updated -q` + `jest tui/ -q`
 
-3. **M4C — Approval modal**
+4. **M4D — Approval modal**
    - Python: add `ApprovalRequested` event to `protocol/events.py`; implement `tui_ask_user_fn` in `tui_bridge.py` (emits `approval.request`, awaits `approval.response` via `asyncio.Event`, returns `ReviewDecision`).
    - TypeScript: add `ApprovalModal.tsx` (key bindings: `y/n/s/a`; queue of pending requests); route `approval.request` event → modal state; on key press send `approval.response` command.
    - Value: removes blocking `input()` path; approval is now a first-class UI event with a clean request/response ID protocol.
    - Verification: `pytest tests/core/test_tui_bridge.py -k approval -q` + `jest tui/ -q` + manual tool-call approval test.
 
-4. **M4D — Tool call panels + interrupt + status polish**
+5. **M4E — Tool call panels + interrupt + status polish**
    - TypeScript: extend `ChatView` to render `item.started`/`item.completed` as inline bordered tool panels (keyed by `item_id`); extend `StatusBar` with cumulative token usage from `turn.completed.usage`; wire Ctrl+C → `writer.sendInterrupt()`.
    - Python: `tui_bridge.py` handles `interrupt` command → cancel active turn task.
    - Value: full visibility into tool call lifecycle; clean Ctrl+C cancellation; token budget visible.

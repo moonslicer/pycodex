@@ -31,11 +31,11 @@ pycodex/                          ← existing Python package (unchanged except 
 ├── pycodex/
 │   ├── __main__.py               ← modify: add --tui-mode flag
 │   ├── core/
-│   │   ├── tui_bridge.py         ← NEW (M4A): asyncio stdin reader + command dispatcher
-│   │   ├── agent.py              ← modify (M4B): surface OutputTextDelta
-│   │   └── event_adapter.py      ← modify (M4B): emit ItemUpdated
+│   │   ├── tui_bridge.py         ← NEW (M4B): asyncio stdin reader + command dispatcher
+│   │   ├── agent.py              ← modify (M4C): surface OutputTextDelta
+│   │   └── event_adapter.py      ← modify (M4C): emit ItemUpdated
 │   └── protocol/
-│       └── events.py             ← modify (M4B, M4C): add ItemUpdated, ApprovalRequested
+│       └── events.py             ← modify (M4C, M4D): add ItemUpdated, ApprovalRequested
 │
 ├── tui/                          ← NEW TypeScript package (M4)
 │   ├── package.json
@@ -50,12 +50,12 @@ pycodex/                          ← existing Python package (unchanged except 
 │       │   ├── ChatView.tsx      ← Scrollable message + tool-call history
 │       │   ├── InputArea.tsx     ← Single-line prompt input
 │       │   ├── StatusBar.tsx     ← Model, turns, token usage, cwd
-│       │   ├── ApprovalModal.tsx ← Approval overlay (M4C)
-│       │   ├── ToolCallPanel.tsx ← Bordered tool call row (M4D)
+│       │   ├── ApprovalModal.tsx ← Approval overlay (M4D)
+│       │   ├── ToolCallPanel.tsx ← Bordered tool call row (M4E)
 │       │   └── Spinner.tsx       ← Animated "thinking" indicator
 │       │
 │       ├── hooks/                ← Custom React hooks; no UI logic in index.ts or app.tsx
-│       │   ├── useProtocolEvents.ts  ← Subscribes to ProtocolEvent stream; returns typed events
+│       │   ├── useProtocolEvents.ts  ← Single canonical reader.onEvent subscription; other hooks derive from it
 │       │   ├── useTurns.ts           ← Derives Turn[] state from event stream
 │       │   ├── useApprovalQueue.ts   ← Manages pending ApprovalRequest queue
 │       │   └── useLineBuffer.ts      ← Newline-gated streaming text buffer
@@ -65,15 +65,12 @@ pycodex/                          ← existing Python package (unchanged except 
 │       │   ├── reader.ts         ← Abstract: ProtocolReader interface
 │       │   ├── writer.ts         ← Abstract: ProtocolWriter interface
 │       │   └── transports/
-│       │       ├── stdio.ts      ← Concrete: readline over child.stdout/stdin (M4)
-│       │       └── websocket.ts  ← Concrete: ws client (M6 stub, not implemented yet)
+│       │       └── stdio.ts      ← Concrete: readline over child.stdout/stdin (M4)
 │       │
 │       └── __tests__/
 │           ├── reader.test.ts
 │           ├── writer.test.ts
 │           ├── app.test.tsx
-│           ├── chatView.test.tsx
-│           ├── inputArea.test.tsx
 │           ├── approvalModal.test.tsx
 │           ├── toolCallPanel.test.tsx
 │           ├── statusBar.test.tsx
@@ -83,8 +80,8 @@ pycodex/                          ← existing Python package (unchanged except 
 │
 └── tests/                        ← existing Python tests
     ├── core/
-    │   └── test_tui_bridge.py    ← NEW (M4A)
-    └── test_main.py              ← extend (M4A): --tui-mode flag
+    │   └── test_tui_bridge.py    ← NEW (M4B)
+    └── test_main.py              ← extend (M4B): --tui-mode flag
 ```
 
 ---
@@ -115,9 +112,9 @@ export type ProtocolEvent =
   | { type: "item.completed";    thread_id: string; turn_id: string;
       item_id: string; item_kind: "tool_result" | "assistant_message"; content: string }
   | { type: "item.updated";      thread_id: string; turn_id: string;
-      item_id: string; delta: string }                              // M4B
+      item_id: string; delta: string }                              // M4C
   | { type: "approval.request";  thread_id: string; turn_id: string;
-      request_id: string; tool: string; preview: string }          // M4C
+      request_id: string; tool: string; preview: string }          // M4D
 
 // ── Commands: TypeScript → Python (JSON-RPC 2.0, one per line) ─────────────
 
@@ -216,16 +213,7 @@ export class StdioWriter implements ProtocolWriter {
 }
 ```
 
-### `protocol/transports/websocket.ts` — M6 stub
-
-```typescript
-// NOT IMPLEMENTED — M6 transport upgrade.
-// StdioReader/StdioWriter are swapped for WebSocketReader/WebSocketWriter here.
-// The ProtocolReader / ProtocolWriter interfaces are identical.
-// All hooks, components, and Python bridge code are unchanged.
-export class WebSocketReader implements ProtocolReader { /* M6 */ }
-export class WebSocketWriter implements ProtocolWriter { /* M6 */ }
-```
+> **Note**: `websocket.ts` is not created in M4. The WebSocket transport is planned for M6. Add `tui/src/protocol/transports/websocket.ts` to M6's file table when that milestone is planned.
 
 **Why this matters for future clients**: A web frontend (React in browser), VS Code extension (webview), or remote CLI connects by implementing `ProtocolReader`/`ProtocolWriter` against their own transport (fetch EventSource, postMessage, WebSocket). The Python agent, protocol types, and all UI hook logic are reused without modification.
 
@@ -312,10 +300,14 @@ export function useLineBuffer(): {
 export function useProtocolEvents(reader: ProtocolReader): {
   lastEvent: ProtocolEvent | null;
 } {
-  // Low-level: exposes raw event stream for components that need
-  // specific events not covered by useTurns or useApprovalQueue.
+  // Single canonical subscription to reader.onEvent.
+  // useTurns and useApprovalQueue both derive from this rather than
+  // independently registering their own reader.onEvent subscriptions.
+  // Cleanup (unsubscribe) happens automatically on unmount via useEffect return.
 }
 ```
+
+This is intentionally kept. `useTurns` and `useApprovalQueue` both need the event stream. A single canonical subscription point means one `useEffect` cleanup, one test surface for the subscription contract, and a reuse point for any future hook (status events, debug log, etc.) without duplicating `reader.onEvent` wiring. The hook is ~10 lines — the cost of keeping it is minimal; the cost of wiring subscriptions independently in every consumer hook is not.
 
 ---
 
@@ -349,7 +341,8 @@ import { ChatView } from "./components/ChatView.js";
 import { InputArea } from "./components/InputArea.js";
 import { StatusBar } from "./components/StatusBar.js";
 import { ApprovalModal } from "./components/ApprovalModal.js";
-import type { ProtocolReader, ProtocolWriter } from "./protocol/reader.js";
+import type { ProtocolReader } from "./protocol/reader.js";
+import type { ProtocolWriter } from "./protocol/writer.js";
 
 type AppProps = {
   reader: ProtocolReader;
@@ -407,10 +400,19 @@ import { Spinner } from "./Spinner.js";
 
 type Props = { turns: TurnState[] };
 
+const VISIBLE_TURNS = 20;
+
 export function ChatView({ turns }: Props) {
+  const visible = turns.slice(-VISIBLE_TURNS);
   return (
     <Box flexDirection="column">
-      {turns.map((turn) => (
+      {turns.length > VISIBLE_TURNS && (
+        <Text dimColor>
+          ↑ {turns.length - VISIBLE_TURNS} earlier turn
+          {turns.length - VISIBLE_TURNS === 1 ? "" : "s"} hidden
+        </Text>
+      )}
+      {visible.map((turn) => (
         <TurnRow key={turn.turn_id} turn={turn} />
       ))}
     </Box>
@@ -562,8 +564,9 @@ export function ToolCallPanel({ toolCall }: Props) {
       {args && <Text dimColor>$ {args}</Text>}
       {status === "done" && (
         <>
+          {/* key scoped to stable item_id; positional index within a fixed panel is safe */}
           {outputLines.map((line, i) => (
-            <Text key={i} dimColor>{line}</Text>
+            <Text key={`${toolCall.item_id}-line-${i}`} dimColor>{line}</Text>
           ))}
           {truncated && <Text dimColor>… (truncated)</Text>}
         </>
@@ -617,7 +620,9 @@ function main() {
 
   function cleanup() {
     writer.close();
-    child.kill("SIGTERM");
+    if (child.exitCode === null) {
+      child.kill("SIGTERM");
+    }
   }
 
   const { unmount } = render(
@@ -636,8 +641,13 @@ function main() {
 
   process.on("SIGINT", () => {
     writer.sendInterrupt();
-    // Give Python a moment to emit turn.failed before we exit
-    setTimeout(() => { cleanup(); unmount(); process.exit(0); }, 300);
+    // Python will emit turn.failed then exit cleanly; child "exit" handler below drives unmount.
+    // Force-kill only if Python becomes unresponsive after 5s.
+    const forceKill = setTimeout(() => {
+      child.kill("SIGKILL");
+      process.exit(1);
+    }, 5000);
+    forceKill.unref(); // don't hold the event loop open
   });
 }
 
@@ -672,28 +682,52 @@ from dataclasses import dataclass, field
 from typing import Any
 from uuid import uuid4
 
-from pycodex.approval.policy import ApprovalStore, ReviewDecision
-from pycodex.core.agent import run_turn
-from pycodex.core.config import Config
+from pathlib import Path
+
+from pycodex.approval.policy import ApprovalPolicy, ApprovalStore, ReviewDecision
+from pycodex.core.agent import run_turn, Session
 from pycodex.core.event_adapter import EventAdapter
+from pycodex.core.model_client import ModelClient
+from pycodex.tools.base import ToolRegistry, ToolRouter
+from pycodex.tools.orchestrator import OrchestratorConfig
 from pycodex.protocol.events import ApprovalRequested
-from pycodex.tools.base import ToolRegistry
 
 
 @dataclass
 class TuiBridge:
-    config: Config
-    tool_registry: ToolRegistry
+    """
+    Wires the TUI protocol loop to the existing pycodex runtime.
+
+    Caller passes pre-built session, model_client, and cwd (same as __main__.py's
+    _build_runtime). TuiBridge builds its own ToolRouter so it can substitute
+    _tui_ask_user_fn for the blocking input() used in non-TUI modes.
+    This is the only way to inject the async approval hook — run_turn does not
+    accept an ask_user_fn parameter.
+    """
+    session: Session
+    model_client: ModelClient
+    cwd: Path
+    approval_policy: ApprovalPolicy
+    _tool_router: ToolRouter = field(init=False)
     _adapter: EventAdapter = field(init=False)
     _active_turn: asyncio.Task[None] | None = field(default=None, init=False)
+    _active_turn_id: str | None = field(default=None, init=False)
     _pending_approvals: dict[str, tuple[asyncio.Event, list[ReviewDecision]]] = field(
         default_factory=dict, init=False
     )
-    _approval_store: ApprovalStore = field(default_factory=ApprovalStore, init=False)
 
     def __post_init__(self) -> None:
+        # Build ToolRouter with TUI ask function substituted for blocking input().
+        # This is the only injection point — run_turn does not accept ask_user_fn.
+        orchestrator = OrchestratorConfig(
+            policy=self.approval_policy,
+            store=ApprovalStore(),
+            ask_user_fn=self._tui_ask_user_fn,
+        )
+        registry = ToolRegistry(orchestrator=orchestrator)
+        _register_default_tools(registry)   # same helper as __main__.py
+        self._tool_router = ToolRouter(registry)
         self._adapter = EventAdapter()
-        # Emit thread.started immediately
         thread_event = self._adapter.start_thread()
         self._emit(thread_event)
 
@@ -748,21 +782,30 @@ class TuiBridge:
     async def _run_turn(self, text: str) -> None:
         def on_event(agent_event: Any) -> None:
             for protocol_event in self._adapter.on_agent_event(agent_event):
+                # Capture the real turn_id as soon as the adapter emits turn.started.
+                # This avoids touching adapter internals and uses the protocol event
+                # we're already iterating — the same event TypeScript will receive.
+                if (
+                    self._active_turn_id is None
+                    and protocol_event.type == "turn.started"
+                ):
+                    self._active_turn_id = protocol_event.turn_id
                 self._emit(protocol_event)
 
         try:
             await run_turn(
+                session=self.session,
+                model_client=self.model_client,
+                tool_router=self._tool_router,
+                cwd=self.cwd,
                 user_input=text,
-                config=self.config,
-                tool_registry=self.tool_registry,
                 on_event=on_event,
-                ask_user_fn=self._tui_ask_user_fn,
             )
         except asyncio.CancelledError:
-            # Emit turn.failed with error="interrupted"
-            turn_id = self._adapter.failure_turn_id()
-            failed = self._adapter.turn_failed(turn_id, "interrupted")
+            failed = self._adapter.turn_failed("interrupted")
             self._emit(failed)
+        finally:
+            self._active_turn_id = None
 
     async def _tui_ask_user_fn(self, tool: Any, args: dict[str, Any]) -> ReviewDecision:
         """Replace blocking input() with approval.request protocol event."""
@@ -771,7 +814,8 @@ class TuiBridge:
         result_box: list[ReviewDecision] = []
         self._pending_approvals[request_id] = (event_obj, result_box)
 
-        turn_id = self._adapter.failure_turn_id()  # current turn_id
+        assert self._active_turn_id is not None, "approval requested outside active turn"
+        turn_id = self._active_turn_id
         approval_event = ApprovalRequested(
             type="approval.request",
             thread_id=self._adapter.thread_id,
@@ -821,6 +865,11 @@ class TuiBridge:
             return args.get("file_path", "")
         return str(args)[:200]
 ```
+
+> **Key design decisions**:
+> 1. **Approval wiring**: `run_turn` does not accept `ask_user_fn`. The only injection point is `OrchestratorConfig` at `ToolRouter` construction. `TuiBridge.__post_init__` builds its own `ToolRouter` with `_tui_ask_user_fn` substituted for the blocking `input()` used in non-TUI modes — mirroring exactly what `_build_tool_router` does in `__main__.py`.
+> 2. **Turn ID capture**: `_active_turn_id` is set when the adapter emits a `turn.started` protocol event, reading `protocol_event.turn_id` directly. This avoids touching `EventAdapter` internals and uses the same event TypeScript receives — the two sides always agree on the ID.
+> 3. **`_register_default_tools`**: Import and reuse the same helper from `__main__.py`; do not duplicate the tool registration list.
 
 ---
 
@@ -881,9 +930,9 @@ Strict TypeScript (`strict: true` + `exactOptionalPropertyTypes` + `noUncheckedI
   "devDependencies": {
     "@jest/globals":        "^29.0.0",
     "@types/react":         "^18.3.0",
-    "@typescript-eslint/eslint-plugin": "^7.0.0",
-    "@typescript-eslint/parser":        "^7.0.0",
-    "eslint":               "^8.0.0",
+    "@typescript-eslint/eslint-plugin": "^8.0.0",
+    "@typescript-eslint/parser":        "^8.0.0",
+    "eslint":               "^9.0.0",
     "ink-testing-library":  "^3.0.0",
     "jest":                 "^29.0.0",
     "ts-jest":              "^29.0.0",
@@ -908,12 +957,35 @@ const config: Config = {
   transform: {
     "^.+\\.tsx?$": ["ts-jest", { useESM: true }],
   },
-  testPathPattern: "src/__tests__",
+  testMatch: ["<rootDir>/src/__tests__/**/*.{test,spec}.{ts,tsx}"],
   collectCoverageFrom: ["src/**/*.{ts,tsx}", "!src/__tests__/**"],
 };
 
 export default config;
 ```
+
+### `tui/eslint.config.js`
+
+```javascript
+// tui/eslint.config.js  (ESLint 9 flat config)
+import tseslint from "@typescript-eslint/eslint-plugin";
+import tsparser from "@typescript-eslint/parser";
+
+export default [
+  {
+    files: ["src/**/*.{ts,tsx}"],
+    languageOptions: { parser: tsparser },
+    plugins: { "@typescript-eslint": tseslint },
+    rules: {
+      ...tseslint.configs.recommended.rules,
+      "@typescript-eslint/no-explicit-any": "error",
+      "@typescript-eslint/no-unused-vars": ["error", { argsIgnorePattern: "^_" }],
+    },
+  },
+];
+```
+
+ESLint 9 uses flat config (`eslint.config.js`). The `@typescript-eslint` plugin v8 is required for ESLint 9 compatibility — v7 targets ESLint 8 and will fail to load.
 
 ---
 
@@ -924,76 +996,101 @@ export default config;
 | `tui/package.json` | M4A | new |
 | `tui/tsconfig.json` | M4A | new |
 | `tui/jest.config.ts` | M4A | new |
-| `tui/src/index.ts` | M4A | new |
-| `tui/src/app.tsx` | M4A | new |
+| `tui/eslint.config.js` | M4A | new |
 | `tui/src/protocol/types.ts` | M4A | new |
 | `tui/src/protocol/reader.ts` | M4A | new |
 | `tui/src/protocol/writer.ts` | M4A | new |
 | `tui/src/protocol/transports/stdio.ts` | M4A | new |
-| `tui/src/protocol/transports/websocket.ts` | M4A | stub (M6) |
-| `tui/src/hooks/useProtocolEvents.ts` | M4A | new |
-| `tui/src/hooks/useTurns.ts` | M4A | new |
-| `tui/src/components/ChatView.tsx` | M4A | new |
-| `tui/src/components/InputArea.tsx` | M4A | new |
-| `tui/src/components/StatusBar.tsx` | M4A | new |
-| `tui/src/components/Spinner.tsx` | M4A | new |
 | `tui/src/__tests__/reader.test.ts` | M4A | new |
 | `tui/src/__tests__/writer.test.ts` | M4A | new |
-| `tui/src/__tests__/app.test.tsx` | M4A | new |
-| `tui/src/__tests__/useTurns.test.ts` | M4A | new |
-| `pycodex/core/tui_bridge.py` | M4A | new |
-| `pycodex/__main__.py` | M4A | modify |
-| `tests/core/test_tui_bridge.py` | M4A | new |
-| `tui/src/hooks/useLineBuffer.ts` | M4B | new |
-| `tui/src/__tests__/useLineBuffer.test.ts` | M4B | new |
-| `pycodex/protocol/events.py` | M4B | modify (add `ItemUpdated`) |
-| `pycodex/core/event_adapter.py` | M4B | modify |
-| `pycodex/core/agent.py` | M4B | modify |
-| `tui/src/hooks/useApprovalQueue.ts` | M4C | new |
-| `tui/src/components/ApprovalModal.tsx` | M4C | new |
-| `tui/src/__tests__/approvalModal.test.tsx` | M4C | new |
-| `tui/src/__tests__/useApprovalQueue.test.ts` | M4C | new |
-| `pycodex/protocol/events.py` | M4C | modify (add `ApprovalRequested`) |
-| `tui/src/components/ToolCallPanel.tsx` | M4D | new |
-| `tui/src/__tests__/toolCallPanel.test.tsx` | M4D | new |
-| `tui/src/__tests__/statusBar.test.tsx` | M4D | new |
+| `tui/src/index.ts` | M4B | new |
+| `tui/src/app.tsx` | M4B | new |
+| `tui/src/hooks/useProtocolEvents.ts` | M4B | new |
+| `tui/src/hooks/useTurns.ts` | M4B | new |
+| `tui/src/components/ChatView.tsx` | M4B | new |
+| `tui/src/components/InputArea.tsx` | M4B | new |
+| `tui/src/components/StatusBar.tsx` | M4B | new |
+| `tui/src/components/Spinner.tsx` | M4B | new |
+| `tui/src/__tests__/app.test.tsx` | M4B | new |
+| `tui/src/__tests__/useTurns.test.ts` | M4B | new |
+| `pycodex/core/tui_bridge.py` | M4B | new |
+| `pycodex/__main__.py` | M4B | modify |
+| `tests/core/test_tui_bridge.py` | M4B | new |
+| `tui/src/hooks/useLineBuffer.ts` | M4C | new |
+| `tui/src/__tests__/useLineBuffer.test.ts` | M4C | new |
+| `pycodex/protocol/events.py` | M4C | modify (add `ItemUpdated`) |
+| `pycodex/core/event_adapter.py` | M4C | modify |
+| `pycodex/core/agent.py` | M4C | modify |
+| `tui/src/hooks/useApprovalQueue.ts` | M4D | new |
+| `tui/src/components/ApprovalModal.tsx` | M4D | new |
+| `tui/src/__tests__/approvalModal.test.tsx` | M4D | new |
+| `tui/src/__tests__/useApprovalQueue.test.ts` | M4D | new |
+| `pycodex/protocol/events.py` | M4D | modify (add `ApprovalRequested`) |
+| `tui/src/components/ToolCallPanel.tsx` | M4E | new |
+| `tui/src/__tests__/toolCallPanel.test.tsx` | M4E | new |
+| `tui/src/__tests__/statusBar.test.tsx` | M4E | new |
+| `tui/src/__tests__/chatView.test.tsx` | M4E | new |
+| `tui/src/__tests__/inputArea.test.tsx` | M4E | new |
 
 ---
 
-## Sub-milestone M4A: Python Pipe Protocol + TypeScript Ink Shell
+## Sub-milestone M4A: Protocol Scaffold
+
+---
+
+### M4A — Protocol Scaffold
+
+**Goal**: TypeScript package compiles and tests pass with no UI and no Python changes. Establishes the typed protocol boundary that all subsequent sub-milestones build on.
+
+**Files**: `tui/package.json`, `tui/tsconfig.json`, `tui/jest.config.ts`, `tui/eslint.config.js`, `tui/src/protocol/types.ts`, `tui/src/protocol/reader.ts`, `tui/src/protocol/writer.ts`, `tui/src/protocol/transports/stdio.ts`, `tui/src/__tests__/reader.test.ts`, `tui/src/__tests__/writer.test.ts`
+
+**Non-goals**: No UI components, no hooks, no Python changes.
+
+#### Done criteria
+- `tsc --noEmit`, `eslint src/`, `jest` all pass against just the protocol layer.
+- No Python changes required; Python quality gates unchanged.
+
+#### TypeScript tests
+- `reader.test.ts`: parses valid JSONL, ignores malformed lines, emits `close` on stream end.
+- `writer.test.ts`: `sendUserInput` → correct JSON-RPC line, `sendInterrupt` → correct line.
+
+---
+
+## Sub-milestone M4B: Python Bridge + Ink Shell
 
 **Goal**: `node tui/dist/index.js` spawns Python, reads JSONL events, renders a working multi-turn Ink chat. Text appears after each full `turn.completed`. No streaming, no approval modal.
 
-**Non-goals**: No streaming, no approval modal, no tool call panels, no `item.updated` or `approval.request` events.
+**Non-goals**: No streaming, no approval modal, no tool call panels, no `item.updated` or `approval.request` events. Full scroll navigation is M5 polish — M4 renders the most recent 20 turns with a hidden-count indicator.
 
-### Done criteria
+#### Done criteria
 - `node tui/dist/index.js` launches Ink app; multi-turn chat works end to end.
-- `python -m pycodex -p "…"` and `python -m pycodex --json "…"` unchanged.
+- `python -m pycodex "…"` and `python -m pycodex --json "…"` unchanged.
 - `mypy --strict pycodex/`, `ruff check`, `ruff format`, `pytest tests/ -v` all pass.
-- `tsc --noEmit`, `eslint`, `jest` all pass.
+- `tsc --noEmit`, `eslint src/`, `jest` all pass.
 
 **Test it**: `node tui/dist/index.js` → type "what is 2+2" → see response after `turn.completed`.
 
-### Python tests (`tests/core/test_tui_bridge.py`)
+#### Python tests (`tests/core/test_tui_bridge.py`)
 - `test_user_input_command_starts_turn` — `user.input` → `run_turn` invoked.
 - `test_interrupt_cancels_active_turn` — `interrupt` while turn running → task cancelled.
 - `test_jsonl_emitted_for_each_event` — agent events → valid JSON lines on stdout.
 - `test_unknown_command_ignored` — unrecognized method → no crash.
 - `test_thread_started_emitted_on_init` — `thread.started` line on bridge construction.
 
-### TypeScript tests
-- `reader.test.ts`: parses valid JSONL, ignores malformed lines, emits `close` on stream end.
-- `writer.test.ts`: `sendUserInput` → correct JSON-RPC line, `sendInterrupt` → correct line.
-- `useTurns.test.ts`: `turn.started` → appends turn; `turn.completed` → fills `final_text`; `turn.failed` → sets `status: "failed"`.
-- `app.test.tsx` (ink-testing-library): `turn.completed` renders text; input disabled during active turn.
+#### TypeScript tests
+
+Priority is hook/state correctness first, one integration smoke test second. Component-specific tests (ChatView, InputArea, StatusBar rendering) are deferred to M4E when behavior has stabilized.
+
+- `useTurns.test.ts`: `turn.started` appends turn; `turn.completed` fills `final_text` and marks status `"completed"`; `turn.failed` sets `status: "failed"` and `error`; unknown event type → no state mutation (default branch).
+- `app.test.tsx` (ink-testing-library, 1 test): end-to-end smoke — simulate `turn.started` + `turn.completed` events → response text visible in output; input is disabled while a turn is active.
 
 ---
 
-## Sub-milestone M4B: Streaming Text (`item.updated`)
+## Sub-milestone M4C: Streaming Text (`item.updated`)
 
 **Goal**: Model response text appears line-by-line as the model generates it.
 
-**Non-goals**: No approval modal, no tool call panels, no animation tick.
+**Non-goals**: No approval modal, no tool call panels, no smooth animation tick (Codex-style adaptive streaming). Frame-gating via `setImmediate` prevents CPU spin at high token rates but is not a visual polish feature.
 
 ### Protocol changes
 - Python `protocol/events.py`: add `ItemUpdated` (`type="item.updated"`, `delta: str`).
@@ -1005,40 +1102,91 @@ export default config;
 
 ```typescript
 // tui/src/hooks/useLineBuffer.ts
+import { useReducer } from "react";
+
+type LineBufferState = { committed: string[]; partial: string };
+type LineBufferAction =
+  | { type: "push"; delta: string }
+  | { type: "flush" }
+  | { type: "reset" };
+
+function lineBufferReducer(
+  state: LineBufferState,
+  action: LineBufferAction,
+): LineBufferState {
+  switch (action.type) {
+    case "push": {
+      const raw = state.partial + action.delta;
+      const lines = raw.split("\n");
+      const partial = lines.pop() ?? "";
+      // Preserve intentional blank lines from model output.
+      return { committed: [...state.committed, ...lines], partial };
+    }
+    case "flush":
+      return {
+        // Drop only trailing empty partial at turn end (avoid phantom final blank line).
+        committed: [...state.committed, state.partial].filter(Boolean),
+        partial: "",
+      };
+    case "reset":
+      return { committed: [], partial: "" };
+    default: {
+      const _exhaustive: never = action;
+      return state;
+    }
+  }
+}
+
 export function useLineBuffer() {
-  const buf = useRef("");
-  return {
-    push(delta: string): string[] {
-      buf.current += delta;
-      const lines = buf.current.split("\n");
-      buf.current = lines.pop() ?? "";
-      return lines;
-    },
-    flush(): string {
-      const remaining = buf.current;
-      buf.current = "";
-      return remaining;
-    },
-    reset(): void { buf.current = ""; },
-  };
+  return useReducer(lineBufferReducer, { committed: [], partial: "" });
 }
 ```
+
+`useTurns` dispatches `push` / `flush` / `reset` actions; `committed` and `partial` are reactive state — no imperative method calls.
+
+### Frame-gating for high token rates
+
+At high generation rates, `item.updated` events can arrive faster than Ink re-renders. Batch deltas within a single event-loop tick using `setImmediate` to avoid CPU spin:
+
+```typescript
+// In useTurns.ts — applied per active turn
+const pendingDelta = useRef<string>("");
+const flushScheduled = useRef(false);
+
+function scheduleDeltaFlush(turnId: string) {
+  if (flushScheduled.current) return;
+  flushScheduled.current = true;
+  setImmediate(() => {
+    if (pendingDelta.current) {
+      dispatch({ type: "item.updated", turn_id: turnId, delta: pendingDelta.current });
+      pendingDelta.current = "";
+    }
+    flushScheduled.current = false;
+  });
+}
+
+// On each item.updated event from the reader:
+pendingDelta.current += event.delta;
+scheduleDeltaFlush(event.turn_id);
+```
+
+This is not a smooth animation tick — it is a correctness guard. The non-goal remains: no Codex-style adaptive streaming tick.
 
 ### Done criteria
 - Streaming text appears line-by-line.
 - `item.updated` in `--json` standalone mode (existing JSONL consumers see it).
-- All M4A tests still pass.
+- All M4A and M4B tests still pass.
 
 **Test it**: `node tui/dist/index.js` → prompt producing long answer → lines appear progressively.
 
 ### Tests
-- `useLineBuffer.test.ts`: commits on `\n`, holds partial, flush returns partial, reset clears.
+- `useLineBuffer.test.ts`: `push` commits on `\n` and holds partial; `flush` moves partial into committed; `reset` clears all; exhaustive action switch enforced by TypeScript `never` check.
 - `useTurns.test.ts` extend: `item.updated` deltas accumulate in `partialLine`; committed on `\n`.
 - Python `test_event_adapter.py` extend: `test_text_delta_emits_item_updated`, `test_multiple_deltas_same_item_id`, `test_item_id_cleared_between_turns`.
 
 ---
 
-## Sub-milestone M4C: Approval Modal
+## Sub-milestone M4D: Approval Modal
 
 **Goal**: Mutating tool calls emit `approval.request` from Python. TypeScript shows `ApprovalModal`. User presses key, TypeScript sends `approval.response`, Python unblocks.
 
@@ -1060,7 +1208,7 @@ export function useLineBuffer() {
 
 ---
 
-## Sub-milestone M4D: Tool Call Panels + Status + Interrupt
+## Sub-milestone M4E: Tool Call Panels + Status + Interrupt
 
 **Goal**: Tool calls render as inline bordered panels. Status bar shows token usage. Ctrl+C sends `interrupt` command to Python cleanly.
 
@@ -1075,10 +1223,57 @@ export function useLineBuffer() {
 **Test it**: `node tui/dist/index.js` → "list python files and read pyproject.toml" → shell + read_file panels populate in real time.
 
 ### Tests
-- `toolCallPanel.test.tsx`: `item.started` inserts placeholder; `item.completed` fills result; two calls → two distinct panels.
-- `statusBar.test.tsx`: `turn.completed` with `usage` → token counts visible; cumulative across turns.
-- `app.test.tsx` extend: Ctrl+C → `sendInterrupt()` called; `turn.failed(error="interrupted")` → "⚡ interrupted" in ChatView.
+
+Component tests for ChatView, InputArea, and StatusBar land here once behavior has stabilized across M4A-D. This avoids rewriting tests as protocol and hook contracts evolve.
+
+- `toolCallPanel.test.tsx`: `item.started` inserts placeholder; `item.completed` fills result; two calls → two distinct panels keyed by `item_id`.
+- `statusBar.test.tsx`: `turn.completed` with `usage` → `↑ input ↓ output` token counts visible; cumulative across turns.
+- `chatView.test.tsx`: renders last 20 turns; hidden-count indicator appears above turn 21+; `turn.failed` with `error="interrupted"` renders `⚡` not a red error.
+- `inputArea.test.tsx`: text entry, submit clears input, Ctrl+C fires `onInterrupt`, input is visually disabled when `disabled=true`.
+- `app.test.tsx` extend: Ctrl+C → `sendInterrupt()` called; `turn.failed(error="interrupted")` → "⚡ interrupted" rendered.
 - Python `test_tui_bridge.py` extend: `interrupt` → active task cancelled.
+
+---
+
+## Protocol Contract Clarity
+
+These behaviors must be explicit and consistent across Python and TypeScript.
+
+### Interrupt semantics
+
+- `interrupt` command → Python cancels active `asyncio.Task` via `_active_turn.cancel()`.
+- Cancelled task catches `asyncio.CancelledError` → emits `turn.failed` with `error="interrupted"`.
+- TypeScript `TurnRow` renders `turn.failed` with `error="interrupted"` as `⚡ interrupted` (not an error state — a user-driven stop).
+- If no turn is active when `interrupt` arrives, it is silently ignored.
+- `turn.completed` is never emitted for an interrupted turn.
+
+### `--tui-mode` parser flag
+
+- `--tui-mode` is a boolean flag with no positional prompt argument. It must not conflict with the existing `PROMPT` positional used by the default and `--json` modes.
+- In `__main__.py`, wire as a mutually exclusive group or a simple `add_argument("--tui-mode", action="store_true")` that routes to `TuiBridge.run()` instead of `_run_prompt()` / `_run_prompt_json()`.
+- When `--tui-mode` is active, the positional `PROMPT` argument must be declared optional (or excluded) to avoid argparse errors when no prompt is provided on the command line.
+
+### Unknown event / command fallback
+
+**Python side** (`tui_bridge.py`): Unknown `method` values in JSON-RPC commands are silently ignored — `_handle_line` falls through all `if/elif` branches with no action.
+
+**TypeScript side** (`StdioReader`): Unknown `type` values in inbound JSONL events are passed to all `onEvent` handlers as-is (typed as `ProtocolEvent`). Hooks that switch on `event.type` must include a `default` no-op branch so unknown events cause no state mutation. Example:
+
+```typescript
+// In useTurns reducer:
+default:
+  return state; // unknown event type — ignore safely
+```
+
+### `turn_failed` vs `turn.completed` on abort
+
+When approval decision is `"abort"`:
+- Python resolves `_tui_ask_user_fn` with `ReviewDecision.ABORT`.
+- The orchestrator raises `ToolAborted`.
+- `run_turn` catches `ToolAborted`, emits `TurnCompleted(final_text=\"Aborted by user.\")`, and returns.
+- Adapter maps that to protocol `turn.completed` (not `turn.failed`) to preserve the existing M3 contract.
+
+`turn.failed(error=\"interrupted\")` remains reserved for explicit cancellation/interruption paths (for example Ctrl+C / `interrupt` command), not approval abort.
 
 ---
 
@@ -1129,6 +1324,26 @@ jest --coverage
 
 Both must be clean before any sub-milestone is marked done.
 
+**Root-level composite gate** (cross-boundary changes):
+
+```makefile
+# Makefile (root) — run both sides in one command
+.PHONY: check check-py check-ts
+
+check: check-py check-ts
+
+check-py:
+	ruff check . --fix
+	ruff format .
+	mypy --strict pycodex/
+	pytest tests/ -v
+
+check-ts:
+	cd tui && npm run typecheck && npm run lint && npm test -- --coverage
+```
+
+Run `make check` before marking any cross-boundary sub-milestone complete. CI calls this target once.
+
 ---
 
 ## Dependency Notes
@@ -1146,7 +1361,17 @@ Both must be clean before any sub-milestone is marked done.
 | `ink-testing-library ^3` | Component unit tests without real TTY |
 | `ts-jest ^29` | Jest TypeScript transformer |
 | `tsx ^4` | Dev-time `ts-node` alternative (faster) |
-| `eslint + @typescript-eslint ^7` | Linting |
+| `eslint + @typescript-eslint ^8` | Linting |
+
+### TypeScript Toolchain Known Issues
+
+**ESM + ts-jest + Ink**: Ink and ink-testing-library ship as ESM-only packages. ts-jest excludes `node_modules` from transformation by default, causing `SyntaxError: Cannot use import statement` at test time. Add to `jest.config.ts`:
+
+```typescript
+transformIgnorePatterns: ["node_modules/(?!(ink|ink-testing-library)/)"],
+```
+
+Pin exact versions in `package-lock.json` and validate with `npm ci` before starting M4A. If `jest` fails with import errors after an `npm update`, check whether `ink` or `ink-testing-library` changed their ESM export map — the `transformIgnorePatterns` list may need updating.
 
 ---
 
