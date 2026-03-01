@@ -137,7 +137,7 @@ describe("App state integration smoke", () => {
     const idleTurns = reduceTurnsSequence(INITIAL_TURNS_STATE, [
       { type: "thread.started", thread_id: "thread_1" },
     ]).turns;
-    expect(isInputDisabled(idleTurns, 1)).toBe(true);
+    expect(isInputDisabled(idleTurns, 1, false)).toBe(true);
   });
 
   test("input is enabled only when no active turn and no approvals", () => {
@@ -153,6 +153,13 @@ describe("App state integration smoke", () => {
       },
     ]).turns;
 
-    expect(isInputDisabled(completedTurns, 0)).toBe(false);
+    expect(isInputDisabled(completedTurns, 0, false)).toBe(false);
+  });
+
+  test("input is disabled while waiting for turn.started after submit", () => {
+    const idleTurns = reduceTurnsSequence(INITIAL_TURNS_STATE, [
+      { type: "thread.started", thread_id: "thread_1" },
+    ]).turns;
+    expect(isInputDisabled(idleTurns, 0, true)).toBe(true);
   });
 });

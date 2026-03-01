@@ -25,9 +25,10 @@ type AppProps = {
 export function isInputDisabled(
   turns: readonly TurnState[],
   queueLength: number,
+  hasPendingUserInput: boolean,
 ): boolean {
   const hasActiveTurn = turns.some((turn) => turn.status === "active");
-  return hasActiveTurn || queueLength > 0;
+  return hasActiveTurn || queueLength > 0 || hasPendingUserInput;
 }
 
 export function summarizeUsageForTurns(
@@ -71,27 +72,31 @@ export function App({
   writer,
 }: AppProps) {
   const { events } = useProtocolEvents(reader);
-  const { turns, threadId, setUserText } = useTurns(events);
+  const {
+    turns,
+    threadId,
+    hasPendingUserInput,
+    pendingUserInputWarning,
+    queueUserInput,
+  } = useTurns(events);
   const { currentRequest, decisionLog, queueLength, respond } = useApprovalQueue(events, writer);
 
   const isBusy = turns.some((turn) => turn.status === "active");
-  const inputDisabled = isInputDisabled(turns, queueLength);
+  const inputDisabled = isInputDisabled(turns, queueLength, hasPendingUserInput);
   const usageSummary = summarizeUsageForTurns(turns);
-
-  // Find the active turn_id so we can stamp userText before sending.
-  const activeTurnId = turns.find((t) => t.status === "active")?.turn_id;
 
   const handleSubmit = useCallback(
     (text: string): void => {
       if (inputDisabled) {
         return;
       }
-      if (activeTurnId !== undefined) {
-        setUserText(activeTurnId, text);
+      const queued = queueUserInput(text);
+      if (!queued) {
+        return;
       }
       writer.sendUserInput(text);
     },
-    [activeTurnId, inputDisabled, setUserText, writer],
+    [inputDisabled, queueUserInput, writer],
   );
 
   const handleInterrupt = useCallback((): void => {
@@ -104,6 +109,7 @@ export function App({
         <ChatView
           approvalDecisionLog={decisionLog}
           approvalPolicy={approvalPolicy}
+          pendingUserInputWarning={pendingUserInputWarning}
           showToolCallSummary={debug}
           turns={turns}
         />

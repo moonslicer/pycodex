@@ -1,6 +1,8 @@
 import {
   previewToolCallContent,
+  statusDotColorForToolCall,
   statusLabelForToolCall,
+  summarizeToolCall,
 } from "../components/ToolCallPanel.js";
 
 describe("statusLabelForToolCall", () => {
@@ -14,6 +16,46 @@ describe("statusLabelForToolCall", () => {
 
   test("maps error status", () => {
     expect(statusLabelForToolCall("error")).toBe("error");
+  });
+});
+
+describe("statusDotColorForToolCall", () => {
+  test("maps pending to yellow", () => {
+    expect(statusDotColorForToolCall("pending")).toBe("yellow");
+  });
+
+  test("maps done to green", () => {
+    expect(statusDotColorForToolCall("done")).toBe("green");
+  });
+
+  test("maps error to red", () => {
+    expect(statusDotColorForToolCall("error")).toBe("red");
+  });
+});
+
+describe("summarizeToolCall", () => {
+  test("summarizes shell command with command preview", () => {
+    expect(
+      summarizeToolCall({
+        item_id: "item_1",
+        name: "shell",
+        arguments: JSON.stringify({ command: "ls -lrt" }),
+        status: "done",
+        content: "ok",
+      }),
+    ).toBe("Ran shell: ls -lrt");
+  });
+
+  test("summarizes read_file with compact label", () => {
+    expect(
+      summarizeToolCall({
+        item_id: "item_1",
+        name: "read_file",
+        arguments: JSON.stringify({ path: "README.md" }),
+        status: "done",
+        content: "ok",
+      }),
+    ).toBe("Read 1 file");
   });
 });
 

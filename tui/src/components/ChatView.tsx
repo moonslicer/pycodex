@@ -1,4 +1,5 @@
-import { Box, Text } from "ink";
+import { useState } from "react";
+import { Box, Text, useInput } from "ink";
 
 import type { ApprovalDecisionLog } from "../hooks/useApprovalQueue.js";
 import type { ToolCallState, TurnState } from "../hooks/useTurns.js";
@@ -11,6 +12,7 @@ const VISIBLE_TURNS = 20;
 type ChatViewProps = {
   approvalDecisionLog?: readonly ApprovalDecisionLog[];
   approvalPolicy?: ApprovalPolicyValue;
+  pendingUserInputWarning?: string | null;
   showToolCallSummary?: boolean;
   turns: TurnState[];
 };
@@ -18,14 +20,26 @@ type ChatViewProps = {
 export function ChatView({
   approvalDecisionLog = [],
   approvalPolicy = "on-request",
+  pendingUserInputWarning = null,
   showToolCallSummary = false,
   turns,
 }: ChatViewProps) {
+  const [showToolDetails, setShowToolDetails] = useState(false);
+
+  useInput((input, key) => {
+    if (key.ctrl && input.toLowerCase() === "o") {
+      setShowToolDetails((current) => !current);
+    }
+  });
+
   const hiddenTurnCount = Math.max(0, turns.length - VISIBLE_TURNS);
   const visibleTurns = turns.slice(-VISIBLE_TURNS);
 
   return (
     <Box flexDirection="column">
+      {pendingUserInputWarning !== null ? (
+        <Text color="yellow">{`Warning: ${pendingUserInputWarning}`}</Text>
+      ) : null}
       {hiddenTurnCount > 0 ? (
         <Text dimColor>{`... ${String(hiddenTurnCount)} earlier turns hidden`}</Text>
       ) : null}
@@ -34,6 +48,7 @@ export function ChatView({
           approvalDecisionLog={approvalDecisionLog}
           approvalPolicy={approvalPolicy}
           key={turn.turn_id}
+          showToolDetails={showToolDetails}
           showToolCallSummary={showToolCallSummary}
           turn={turn}
         />
@@ -45,9 +60,40 @@ export function ChatView({
 type TurnRowProps = {
   approvalDecisionLog: readonly ApprovalDecisionLog[];
   approvalPolicy: ApprovalPolicyValue;
+  showToolDetails: boolean;
   showToolCallSummary: boolean;
   turn: TurnState;
 };
+
+export type TurnRenderSection = "user" | "tool" | "assistant";
+
+export function formatUserMessageLines(text: string): string[] {
+  return text.split("\n").map((line) => `> ${line}`);
+}
+
+export function formatAssistantMessageLines(lines: readonly string[]): string[] {
+  const [first, ...rest] = lines;
+  if (first === undefined) {
+    return [];
+  }
+  return [`• ${first}`, ...rest.map((line) => `  ${line}`)];
+}
+
+export function renderSectionsForTurn(
+  turn: Pick<TurnState, "assistantLines" | "partialLine" | "toolCalls" | "userText">,
+): TurnRenderSection[] {
+  const sections: TurnRenderSection[] = [];
+  if (turn.userText.length > 0) {
+    sections.push("user");
+  }
+  if (Object.values(turn.toolCalls).length > 0) {
+    sections.push("tool");
+  }
+  if (turn.assistantLines.length > 0 || turn.partialLine.length > 0) {
+    sections.push("assistant");
+  }
+  return sections;
+}
 
 export function toolCallsInDisplayOrder(turn: TurnState): ToolCallState[] {
   return Object.values(turn.toolCalls);
@@ -143,15 +189,19 @@ export function summarizeApprovalDebugLinesForTurn(
 function TurnRow({
   approvalDecisionLog,
   approvalPolicy,
+  showToolDetails,
   showToolCallSummary,
   turn,
 }: TurnRowProps) {
   const toolCalls = toolCallsInDisplayOrder(turn);
+  const userLines =
+    turn.userText.length > 0 ? formatUserMessageLines(turn.userText) : [];
   const assistantLines = [...turn.assistantLines];
   if (turn.partialLine.length > 0) {
     assistantLines.push(turn.partialLine);
   }
-  const assistantText = assistantLines.join("\n");
+  const assistantDisplayLines = formatAssistantMessageLines(assistantLines);
+  const sectionOrder = renderSectionsForTurn(turn);
   const toolCallSummary = showToolCallSummary
     ? summarizeToolCallsForTurn(turn)
     : null;
@@ -161,14 +211,40 @@ function TurnRow({
 
   return (
     <Box flexDirection="column" marginBottom={1}>
-      {turn.userText.length > 0 ? (
-        <Text color="cyan">{`User: ${turn.userText}`}</Text>
-      ) : null}
+      {sectionOrder.map((section, sectionIndex) => (
+        <Box
+          flexDirection="column"
+          key={`${turn.turn_id}:section:${section}`}
+          marginTop={sectionIndex > 0 ? 1 : 0}
+        >
+          {section === "user"
+            ? userLines.map((line, index) => (
+                <Text
+                  backgroundColor="blackBright"
+                  color="white"
+                  key={`${turn.turn_id}:user:${String(index)}`}
+                >
+                  {` ${line} `}
+                </Text>
+              ))
+            : null}
 
-      {assistantText.length > 0 ? <Text>{assistantText}</Text> : null}
+          {section === "tool"
+            ? toolCalls.map((toolCall) => (
+                <ToolCallPanel
+                  key={toolCall.item_id}
+                  showDetails={showToolDetails}
+                  toolCall={toolCall}
+                />
+              ))
+            : null}
 
-      {toolCalls.map((toolCall) => (
-        <ToolCallPanel key={toolCall.item_id} toolCall={toolCall} />
+          {section === "assistant"
+            ? assistantDisplayLines.map((line, index) => (
+                <Text key={`${turn.turn_id}:assistant:${String(index)}`}>{line}</Text>
+              ))
+            : null}
+        </Box>
       ))}
 
       {toolCallSummary !== null ? <Text dimColor>{toolCallSummary}</Text> : null}

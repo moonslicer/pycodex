@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useReducer, useRef } from "react";
+import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
 import type { ProtocolEvent, TokenUsage } from "../protocol/types.js";
 import { sliceUnprocessedEvents } from "./eventCursor.js";
@@ -79,7 +79,15 @@ type BufferedItemUpdate = {
   delta: string;
 };
 
+type PendingUserInputDequeue = {
+  nextSlot: null;
+  text: string | null;
+};
+
 const UNKNOWN_TOOL_NAME = "unknown";
+const PENDING_USER_INPUT_TIMEOUT_MS = 7000;
+const PENDING_USER_INPUT_TIMEOUT_WARNING =
+  "Last input timed out waiting for a turn start; please retry.";
 
 function toFinalLines(finalText: string): string[] {
   const pushed = reduceLineBuffer(INITIAL_LINE_BUFFER_STATE, {
@@ -344,7 +352,38 @@ export function turnsReducer(state: TurnsViewState, action: TurnsAction): TurnsV
   return reduceTurns(state, action.event);
 }
 
+export function enqueuePendingUserInput(
+  slot: string | null,
+  text: string,
+): {
+  accepted: boolean;
+  nextSlot: string | null;
+} {
+  if (slot !== null) {
+    return {
+      accepted: false,
+      nextSlot: slot,
+    };
+  }
+  return {
+    accepted: true,
+    nextSlot: text,
+  };
+}
+
+export function dequeuePendingUserInput(
+  slot: string | null,
+): PendingUserInputDequeue {
+  return {
+    nextSlot: null,
+    text: slot,
+  };
+}
+
 export type TurnsDispatch = {
+  hasPendingUserInput: boolean;
+  pendingUserInputWarning: string | null;
+  queueUserInput: (text: string) => boolean;
   setUserText: (turn_id: string, text: string) => void;
 };
 
@@ -355,6 +394,10 @@ export function useTurns(
   const lastProcessedEvent = useRef<ProtocolEvent | null>(null);
   const pendingItemUpdates = useRef<Map<string, string>>(new Map());
   const pendingFlushHandle = useRef<NodeJS.Immediate | null>(null);
+  const pendingUserInput = useRef<string | null>(null);
+  const pendingUserInputTimeout = useRef<NodeJS.Timeout | null>(null);
+  const [hasPendingUserInput, setHasPendingUserInput] = useState(false);
+  const [pendingUserInputWarning, setPendingUserInputWarning] = useState<string | null>(null);
 
   const flushPendingItemUpdates = useCallback((): void => {
     if (pendingItemUpdates.current.size === 0) {
@@ -410,6 +453,13 @@ export function useTurns(
     if (events.length === 0) {
       cancelScheduledFlush();
       pendingItemUpdates.current.clear();
+      pendingUserInput.current = null;
+      if (pendingUserInputTimeout.current !== null) {
+        clearTimeout(pendingUserInputTimeout.current);
+        pendingUserInputTimeout.current = null;
+      }
+      setHasPendingUserInput(false);
+      setPendingUserInputWarning(null);
       if (lastProcessedEvent.current !== null) {
         dispatch({ type: "reset" });
       }
@@ -433,6 +483,25 @@ export function useTurns(
         type: "event",
         event,
       });
+      if (event.type === "turn.started") {
+        const { nextSlot, text } = dequeuePendingUserInput(
+          pendingUserInput.current,
+        );
+        pendingUserInput.current = nextSlot;
+        if (pendingUserInputTimeout.current !== null) {
+          clearTimeout(pendingUserInputTimeout.current);
+          pendingUserInputTimeout.current = null;
+        }
+        setHasPendingUserInput(false);
+        setPendingUserInputWarning(null);
+        if (text !== null) {
+          dispatch({
+            type: "user.input",
+            turn_id: event.turn_id,
+            text,
+          });
+        }
+      }
     }
 
     schedulePendingFlush();
@@ -447,9 +516,38 @@ export function useTurns(
         pendingFlushHandle.current = null;
       }
       pendingItemUpdates.current.clear();
+      pendingUserInput.current = null;
+      if (pendingUserInputTimeout.current !== null) {
+        clearTimeout(pendingUserInputTimeout.current);
+        pendingUserInputTimeout.current = null;
+      }
     },
     [],
   );
+
+  const queueUserInput = useCallback((text: string): boolean => {
+    const { accepted, nextSlot } = enqueuePendingUserInput(
+      pendingUserInput.current,
+      text,
+    );
+    pendingUserInput.current = nextSlot;
+    if (!accepted) {
+      return false;
+    }
+
+    setHasPendingUserInput(true);
+    setPendingUserInputWarning(null);
+    if (pendingUserInputTimeout.current !== null) {
+      clearTimeout(pendingUserInputTimeout.current);
+    }
+    pendingUserInputTimeout.current = setTimeout(() => {
+      pendingUserInput.current = null;
+      pendingUserInputTimeout.current = null;
+      setHasPendingUserInput(false);
+      setPendingUserInputWarning(PENDING_USER_INPUT_TIMEOUT_WARNING);
+    }, PENDING_USER_INPUT_TIMEOUT_MS);
+    return true;
+  }, []);
 
   const setUserText = useCallback(
     (turn_id: string, text: string) => {
@@ -458,5 +556,11 @@ export function useTurns(
     [],
   );
 
-  return { ...state, setUserText };
+  return {
+    ...state,
+    hasPendingUserInput,
+    pendingUserInputWarning,
+    queueUserInput,
+    setUserText,
+  };
 }

@@ -1,5 +1,7 @@
 import type { ProtocolEvent } from "../protocol/types.js";
 import {
+  dequeuePendingUserInput,
+  enqueuePendingUserInput,
   INITIAL_TURNS_STATE,
   reduceTurns,
   reduceTurnsSequence,
@@ -281,5 +283,37 @@ describe("reduceTurns", () => {
     expect(next.turns).toHaveLength(1);
     expect(next.turns[0]?.status).toBe("completed");
     expect(next.turns[0]?.assistantLines).toEqual(["done"]);
+  });
+
+  test("enqueuePendingUserInput appends user text in order", () => {
+    const queued = enqueuePendingUserInput(null, "first");
+    expect(queued).toEqual({
+      accepted: true,
+      nextSlot: "first",
+    });
+  });
+
+  test("enqueuePendingUserInput rejects second pending input", () => {
+    const queued = enqueuePendingUserInput("first", "second");
+    expect(queued).toEqual({
+      accepted: false,
+      nextSlot: "first",
+    });
+  });
+
+  test("dequeuePendingUserInput returns pending text and clears slot", () => {
+    const dequeued = dequeuePendingUserInput("first");
+    expect(dequeued).toEqual({
+      nextSlot: null,
+      text: "first",
+    });
+  });
+
+  test("dequeuePendingUserInput returns null text for empty slot", () => {
+    const dequeued = dequeuePendingUserInput(null);
+    expect(dequeued).toEqual({
+      nextSlot: null,
+      text: null,
+    });
   });
 });

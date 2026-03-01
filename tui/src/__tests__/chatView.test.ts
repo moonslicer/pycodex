@@ -1,4 +1,7 @@
 import {
+  formatAssistantMessageLines,
+  formatUserMessageLines,
+  renderSectionsForTurn,
   summarizeApprovalDebugLinesForTurn,
   toolCallsInDisplayOrder,
   summarizeToolCallsForTurn,
@@ -77,6 +80,60 @@ describe("summarizeToolCallsForTurn", () => {
         }),
       ),
     ).toBe("Tool calls: shell, write_file");
+  });
+});
+
+describe("formatUserMessageLines", () => {
+  test("prefixes each line with shell-style quote marker", () => {
+    expect(formatUserMessageLines("first line\nsecond line")).toEqual([
+      "> first line",
+      "> second line",
+    ]);
+  });
+});
+
+describe("formatAssistantMessageLines", () => {
+  test("prefixes first line and indents continuation lines", () => {
+    expect(formatAssistantMessageLines(["first", "second"])).toEqual([
+      "• first",
+      "  second",
+    ]);
+  });
+
+  test("returns empty list when there is no assistant output", () => {
+    expect(formatAssistantMessageLines([])).toEqual([]);
+  });
+});
+
+describe("renderSectionsForTurn", () => {
+  test("orders sections as user then assistant when no tool calls exist", () => {
+    expect(
+      renderSectionsForTurn(
+        baseTurn({
+          toolCalls: {},
+          assistantLines: ["hello"],
+        }),
+      ),
+    ).toEqual(["user", "assistant"]);
+  });
+
+  test("orders sections as user then tool then assistant", () => {
+    expect(
+      renderSectionsForTurn(
+        baseTurn({
+          toolCalls: {
+            item_1: {
+              item_id: "item_1",
+              name: "shell",
+              arguments: "{\"command\":\"ls -lrt\"}",
+              status: "done",
+              content: "ok",
+            },
+          },
+          assistantLines: ["done"],
+        }),
+      ),
+    ).toEqual(["user", "tool", "assistant"]);
   });
 });
 
