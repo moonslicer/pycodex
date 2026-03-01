@@ -85,3 +85,25 @@
   - Resolution: return `None` (treat as disabled loader output) instead of returning an empty/truncated marker string.
 - Should unreadable files fail the full load?
   - Resolution: no. Unreadable files are skipped so sibling/lower-level docs can still load.
+
+## T6 — Initial context assembly
+
+### What changed
+- Added `pycodex/core/initial_context.py` with:
+  - `build_initial_context(config)` ordering:
+    1. policy context,
+    2. project instructions,
+    3. environment context.
+  - `_policy_context(...)` handling for approval/sandbox metadata,
+  - `_env_context(...)` with cwd/shell/os/python details.
+- Added `tests/core/test_initial_context.py` covering:
+  - default env-only context,
+  - non-default policy context inclusion,
+  - default and custom profile filename loading,
+  - required item ordering.
+
+### Ambiguous decisions and resolutions
+- Should environment context be optional when no docs/policy are present?
+  - Resolution: no. Environment context is always included to provide deterministic runtime facts at session start.
+- Should policy context depend on `Config` owning policy fields directly?
+  - Resolution: no hard dependency. `_policy_context` reads attributes dynamically to keep this layer usable while policy fields remain CLI runtime concerns.
