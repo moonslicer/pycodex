@@ -36,3 +36,17 @@
   - Resolution: add `load_profile_from_mapping(...)` to avoid fake temp files and keep validation logic centralized.
 - Should `PYCODEX_INSTRUCTIONS` override the whole profile?
   - Resolution: no. It overrides instructions only and preserves profile identity (`name`, `instruction_filenames`, `enabled_tools`).
+
+## T3 — Session system-context mutation APIs
+
+### What changed
+- Updated `pycodex/core/session.py`:
+  - added `append_system_message(text)`,
+  - added `prepend_items(items)`.
+- Extended `tests/core/test_session.py` for:
+  - system-message append behavior,
+  - prepend ordering behavior with existing history.
+
+### Ambiguous decisions and resolutions
+- Should `prepend_items` deduplicate existing system items?
+  - Resolution: no. Prepend should be a simple ordered mutation; deduplication policy belongs to higher-level context assembly, not session storage.

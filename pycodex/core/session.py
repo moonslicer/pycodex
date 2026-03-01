@@ -71,6 +71,10 @@ class Session:
         """Append a user message to the conversation history."""
         self._history.append({"role": "user", "content": text})
 
+    def append_system_message(self, text: str) -> None:
+        """Append a system context message to the conversation history."""
+        self._history.append({"role": "system", "content": text})
+
     def append_assistant_message(self, text: str) -> None:
         """Append an assistant message to the conversation history."""
         self._history.append({"role": "assistant", "content": text})
@@ -106,6 +110,10 @@ class Session:
                 "arguments": normalized_arguments,
             }
         )
+
+    def prepend_items(self, items: list[PromptItem]) -> None:
+        """Prepend prompt items before existing session history."""
+        self._history = list(items) + self._history
 
     def to_prompt(self) -> list[PromptItem]:
         """Return a detached copy of history for model input payloads."""

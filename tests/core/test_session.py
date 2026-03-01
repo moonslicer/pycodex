@@ -22,6 +22,13 @@ def test_append_assistant_message_adds_assistant_item() -> None:
     assert session.to_prompt() == [{"role": "assistant", "content": "hello from assistant"}]
 
 
+def test_append_system_message_adds_system_item() -> None:
+    session = Session()
+    session.append_system_message("policy context")
+
+    assert session.to_prompt() == [{"role": "system", "content": "policy context"}]
+
+
 def test_append_tool_result_adds_tool_item() -> None:
     session = Session()
     session.append_tool_result("call_123", "ok")
@@ -115,6 +122,23 @@ def test_to_prompt_returns_detached_copy() -> None:
     prompt[0]["content"] = "changed"
 
     assert session.to_prompt() == [{"role": "user", "content": "original"}]
+
+
+def test_prepend_items_places_items_before_existing_history() -> None:
+    session = Session()
+    session.append_user_message("user message")
+    session.prepend_items(
+        [
+            {"role": "system", "content": "policy"},
+            {"role": "system", "content": "project docs"},
+        ]
+    )
+
+    assert session.to_prompt() == [
+        {"role": "system", "content": "policy"},
+        {"role": "system", "content": "project docs"},
+        {"role": "user", "content": "user message"},
+    ]
 
 
 def test_append_tool_result_truncates_oversized_content() -> None:
