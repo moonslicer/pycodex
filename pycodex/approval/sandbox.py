@@ -70,7 +70,7 @@ def _sandbox_exec_profile(*, policy: SandboxPolicy, cwd: Path) -> str:
             "(deny file-write*) "
             f'(allow file-write* (subpath "{escaped}"))'
         )
-    raise SandboxUnavailable(f"Unsupported policy for sandbox-exec profile: {policy!r}")
+    raise ValueError(f"Unsupported policy for sandbox-exec profile: {policy!r}")
 
 
 def _build_firejail_argv(*, command: str, policy: SandboxPolicy, cwd: Path) -> list[str]:
@@ -83,6 +83,10 @@ def _build_firejail_argv(*, command: str, policy: SandboxPolicy, cwd: Path) -> l
 def _build_bwrap_argv(*, command: str, policy: SandboxPolicy, cwd: Path) -> list[str]:
     argv = [
         "bwrap",
+        # --unshare-all additionally unshares the network namespace as a side effect.
+        # Commands that require network access (curl, git clone, etc.) will fail with
+        # a connection error rather than a file-write denial.  Dedicated network rules
+        # are deferred to a later milestone.
         "--unshare-all",
         "--die-with-parent",
         "--ro-bind",

@@ -25,10 +25,8 @@ DEFAULT_RULES: list[tuple[str, ExecDecision]] = [
 ]
 
 
-def default_heuristics(command: str) -> ExecDecision:
+def default_heuristics(_command: str) -> ExecDecision:
     """Default fallback policy for commands without explicit rules."""
-
-    _ = command
     return ExecDecision.PROMPT
 
 
@@ -47,6 +45,12 @@ def classify(
     Heuristics, when provided, receive the original *command* string
     (before leading-whitespace stripping) so callers observe a consistent
     contract regardless of internal normalisation.
+
+    .. note:: Only leading whitespace is stripped before matching; internal
+       whitespace sequences (e.g. ``"rm  -rf /"`` with double space) are **not**
+       normalised.  Rules must match the exact spacing of the incoming command.
+       Commands with non-standard internal spacing will not be matched by rules
+       that use single spaces.  This is a known limitation.
     """
 
     stripped_command = command.lstrip()

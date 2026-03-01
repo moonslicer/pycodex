@@ -215,7 +215,10 @@ async def _run_tui_mode(
     bridge: TuiBridge | None = None
 
     async def _tui_ask_user_fn(tool: Any, args: dict[str, Any]) -> ReviewDecision:
-        assert bridge is not None
+        if bridge is None:
+            raise RuntimeError(
+                "TUI bridge was not initialised before approval callback was invoked."
+            )
         return await bridge.request_approval(tool, args)
 
     tool_router = _build_tool_router(

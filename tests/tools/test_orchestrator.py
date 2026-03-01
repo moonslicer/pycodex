@@ -1010,3 +1010,143 @@ async def test_sandbox_unavailable_returns_error(tmp_path: Path) -> None:
     assert outcome.code == "sandbox_unavailable"
     assert ask_count == 0
     assert tool.sandbox_calls == 1
+
+
+async def test_sandbox_unavailable_on_failure_offers_retry_prompt(tmp_path: Path) -> None:
+    """SandboxUnavailable under ON_FAILURE triggers the retry prompt (fail-visible)."""
+    tool = _SandboxMutatingTool(
+        sandbox_raises=SandboxUnavailable("sandbox binary missing"),
+    )
+    store = ApprovalStore()
+    ask_count = 0
+
+    async def ask_user_fn(_tool: Any, _args: dict[str, Any]) -> ReviewDecision:
+        nonlocal ask_count
+        ask_count += 1
+        return ReviewDecision.APPROVED
+
+    outcome = await _execute_tool(
+        tool=tool,
+        args={"command": "echo hello"},
+        cwd=tmp_path,
+        policy=ApprovalPolicy.ON_FAILURE,
+        store=store,
+        ask_user_fn=ask_user_fn,
+        sandbox_policy=SandboxPolicy.READ_ONLY,
+    )
+
+    assert isinstance(outcome, ToolResult)
+    assert ask_count == 1
+    assert tool.sandbox_calls == 1
+    assert tool.calls == 1
+
+
+async def test_sandbox_workspace_write_never_runs_sandboxed(tmp_path: Path) -> None:
+    """WORKSPACE_WRITE + NEVER: sandbox_execute is called with the correct policy."""
+    tool = _SandboxMutatingTool()
+    store = ApprovalStore()
+
+    async def ask_user_fn(_tool: Any, _args: dict[str, Any]) -> ReviewDecision:
+        raise AssertionError("prompt should not be called under NEVER policy")
+
+    outcome = await _execute_tool(
+        tool=tool,
+        args={"command": "echo hello"},
+        cwd=tmp_path,
+        policy=ApprovalPolicy.NEVER,
+        store=store,
+        ask_user_fn=ask_user_fn,
+        sandbox_policy=SandboxPolicy.WORKSPACE_WRITE,
+    )
+
+    assert isinstance(outcome, ToolResult)
+    assert tool.sandbox_calls == 1
+    assert tool.last_sandbox_policy == SandboxPolicy.WORKSPACE_WRITE
+    assert tool.calls == 0
+
+
+async def test_sandbox_workspace_write_on_request_approval_runs_sandboxed(
+    tmp_path: Path,
+) -> None:
+    """WORKSPACE_WRITE + ON_REQUEST: after approval, sandbox_execute is called."""
+    tool = _SandboxMutatingTool()
+    store = ApprovalStore()
+
+    outcome, ask_count = await _execute_with_constant_prompt_decision(
+        tool=tool,
+        args={"command": "echo hello"},
+        cwd=tmp_path,
+        policy=ApprovalPolicy.ON_REQUEST,
+        store=store,
+        decision=ReviewDecision.APPROVED,
+        sandbox_policy=SandboxPolicy.WORKSPACE_WRITE,
+    )
+
+    assert isinstance(outcome, ToolResult)
+    assert ask_count == 1
+    assert tool.sandbox_calls == 1
+    assert tool.last_sandbox_policy == SandboxPolicy.WORKSPACE_WRITE
+    assert tool.calls == 0
+
+
+async def test_unless_trusted_behaves_like_on_request(tmp_path: Path) -> None:
+    """UNLESS_TRUSTED currently falls through to the same path as ON_REQUEST.
+
+    This documents the current deferral: UNLESS_TRUSTED auto-approval of trusted
+    commands is not yet implemented and the policy behaves identically to ON_REQUEST.
+    """
+    tool = _MutatingTool()
+    store = ApprovalStore()
+
+    outcome, ask_count = await _execute_with_constant_prompt_decision(
+        tool=tool,
+        args={"x": 1},
+        cwd=tmp_path,
+        policy=ApprovalPolicy.UNLESS_TRUSTED,
+        store=store,
+        decision=ReviewDecision.APPROVED,
+    )
+
+    assert isinstance(outcome, ToolResult)
+    assert ask_count == 1
+    assert tool.calls == 1
+
+
+async def test_sandbox_nonzero_exit_treated_as_denial_under_on_failure(
+    tmp_path: Path,
+) -> None:
+    """Documents the known approximation: any non-zero exit triggers ON_FAILURE retry.
+
+    A command that fails for reasons unrelated to sandbox restrictions (e.g. a
+    file-not-found exit) is indistinguishable from a sandbox-blocked command at the
+    exit-code level.  The ON_FAILURE retry prompt is offered in both cases.
+    """
+    tool = _SandboxMutatingTool(
+        sandbox_outcome=ToolResult(
+            body={"output": "ls: no such file", "metadata": {"exit_code": 2}}
+        )
+    )
+    store = ApprovalStore()
+    ask_count = 0
+
+    async def ask_user_fn(_tool: Any, _args: dict[str, Any]) -> ReviewDecision:
+        nonlocal ask_count
+        ask_count += 1
+        return ReviewDecision.DENIED
+
+    outcome = await _execute_tool(
+        tool=tool,
+        args={"command": "ls /nonexistent"},
+        cwd=tmp_path,
+        policy=ApprovalPolicy.ON_FAILURE,
+        store=store,
+        ask_user_fn=ask_user_fn,
+        sandbox_policy=SandboxPolicy.READ_ONLY,
+    )
+
+    # Non-zero exit triggers the retry prompt (false positive — known limitation).
+    assert isinstance(outcome, ToolError)
+    assert outcome.code == "denied"
+    assert ask_count == 1
+    assert tool.sandbox_calls == 1
+    assert tool.calls == 0

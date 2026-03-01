@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, TypeGuard, cast, runtime_checkable
 
 from pycodex.approval.exec_policy import ExecDecision
 from pycodex.approval.policy import ApprovalPolicy, ApprovalStore, ReviewDecision
@@ -91,7 +91,7 @@ async def execute_with_approval(
                     code="forbidden",
                 )
             if exec_decision == ExecDecision.ALLOW:
-                if sandbox_policy is None or sandbox_policy == SandboxPolicy.DANGER_FULL_ACCESS:
+                if not _requires_sandbox(sandbox_policy):
                     return await tool.handle(args, cwd)
                 return await _run_sandboxed(
                     tool=tool,
@@ -100,7 +100,7 @@ async def execute_with_approval(
                     sandbox_policy=sandbox_policy,
                 )
 
-    if sandbox_policy is None or sandbox_policy == SandboxPolicy.DANGER_FULL_ACCESS:
+    if not _requires_sandbox(sandbox_policy):
         return await _execute_with_standard_approval(
             tool=tool,
             args=args,
@@ -137,9 +137,14 @@ async def execute_with_approval(
         if retry_decision == ReviewDecision.DENIED:
             return ToolError(message="Operation denied by user.", code="denied")
 
+        # store.put is a conditional no-op: ApprovalStore only persists
+        # APPROVED_FOR_SESSION decisions; APPROVED (single-use) is silently ignored.
         store.put(key, retry_decision)
         return await tool.handle(args, cwd)
 
+    # UNLESS_TRUSTED currently falls through to the same standard-approval path as
+    # ON_REQUEST.  Differentiation (auto-approving pre-trusted commands) is deferred
+    # to a later milestone.
     return await _execute_with_standard_approval(
         tool=tool,
         args=args,
@@ -164,7 +169,7 @@ async def _execute_with_standard_approval(
     sandbox_policy: SandboxPolicy | None = None,
 ) -> ToolOutcome:
     if store.get(key) == ReviewDecision.APPROVED_FOR_SESSION:
-        if sandbox_policy is None or sandbox_policy == SandboxPolicy.DANGER_FULL_ACCESS:
+        if not _requires_sandbox(sandbox_policy):
             return await tool.handle(args, cwd)
         restrictive_policy = sandbox_policy
         return await _run_sandboxed(
@@ -175,7 +180,7 @@ async def _execute_with_standard_approval(
         )
 
     if policy in (ApprovalPolicy.NEVER, ApprovalPolicy.ON_FAILURE):
-        if sandbox_policy is None or sandbox_policy == SandboxPolicy.DANGER_FULL_ACCESS:
+        if not _requires_sandbox(sandbox_policy):
             return await tool.handle(args, cwd)
         restrictive_policy = sandbox_policy
         return await _run_sandboxed(
@@ -206,7 +211,7 @@ async def _execute_with_standard_approval(
                     owns_prompt = True
 
         if execute_cached_path:
-            if sandbox_policy is None or sandbox_policy == SandboxPolicy.DANGER_FULL_ACCESS:
+            if not _requires_sandbox(sandbox_policy):
                 return await tool.handle(args, cwd)
             restrictive_policy = sandbox_policy
             return await _run_sandboxed(
@@ -242,7 +247,7 @@ async def _execute_with_standard_approval(
         if decision == ReviewDecision.DENIED:
             return ToolError(message="Operation denied by user.", code="denied")
 
-        if sandbox_policy is None or sandbox_policy == SandboxPolicy.DANGER_FULL_ACCESS:
+        if not _requires_sandbox(sandbox_policy):
             return await tool.handle(args, cwd)
         restrictive_policy = sandbox_policy
         return await _run_sandboxed(
@@ -259,6 +264,16 @@ def _canonical_command(*, tool: ToolHandler, args: dict[str, Any]) -> str | None
     return tool.canonical_command(args)
 
 
+def _requires_sandbox(policy: SandboxPolicy | None) -> TypeGuard[SandboxPolicy]:
+    """Return ``True`` when *policy* requires OS-level process sandboxing.
+
+    Equivalent to ``policy is not None and policy != SandboxPolicy.DANGER_FULL_ACCESS``.
+    Using this as a ``TypeGuard`` narrows *policy* to ``SandboxPolicy`` in the branch
+    where it returns ``True``, so no separate ``restrictive_policy`` cast is needed.
+    """
+    return policy is not None and policy != SandboxPolicy.DANGER_FULL_ACCESS
+
+
 async def _sandbox_execute(
     *,
     tool: ToolHandler,
@@ -267,6 +282,9 @@ async def _sandbox_execute(
     policy: SandboxPolicy,
 ) -> ToolOutcome:
     if not isinstance(tool, SupportsSandboxExecution):
+        # Non-shell tools (read_file, list_dir, write_file, etc.) do not implement
+        # sandbox_execute and are safe to run without OS-level process wrapping —
+        # they perform no external process execution of their own.
         return await tool.handle(args, cwd)
     return await tool.sandbox_execute(args, cwd, policy)
 
@@ -293,8 +311,24 @@ async def _run_sandboxed(
 
 
 def _is_sandbox_denial(outcome: ToolOutcome) -> bool:
+    """Return ``True`` when *outcome* represents a sandbox restriction.
+
+    For ``ToolError`` outcomes the check is by error code.  ``sandbox_unavailable``
+    is included so that ``ON_FAILURE`` mode offers the retry prompt even when the
+    sandbox binary is missing — fail-visible, not fail-open.
+
+    For ``ToolResult`` outcomes, any non-zero exit code is treated as a denial
+    candidate.  This is a **known approximation**: commands that fail for reasons
+    unrelated to sandbox restrictions (e.g. ``grep`` finding no matches, a missing
+    file path) will also trigger the ``ON_FAILURE`` retry prompt.  Distinguishing a
+    sandbox-induced failure from a genuine command failure requires platform-specific
+    signal introspection and is deferred to a later milestone.
+
+    The expected body shape for ``ToolResult`` is ``{"metadata": {"exit_code": int}}``,
+    as produced by ``ShellTool``.  Non-dict bodies are treated as non-denials.
+    """
     if isinstance(outcome, ToolError):
-        return outcome.code in {"sandbox_blocked", "sandbox_denied"}
+        return outcome.code in {"sandbox_blocked", "sandbox_denied", "sandbox_unavailable"}
 
     if not isinstance(outcome.body, dict):
         return False

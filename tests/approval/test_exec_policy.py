@@ -98,6 +98,27 @@ def test_default_rules_do_not_overmatch_envsubst() -> None:
     assert classify("envsubst", DEFAULT_RULES, default_heuristics) == ExecDecision.PROMPT
 
 
+# P2 regression: whitespace evasion — internal spaces are NOT normalised (known limitation)
+def test_rm_rf_without_space_before_path_not_matched() -> None:
+    """rm -rf/ (no space before path) does not match the 'rm -rf' forbidden rule.
+
+    The token-boundary check requires whitespace or end-of-string immediately after
+    the prefix, so 'rm -rf/' (no space, slash directly follows) is not matched.
+    This is a known limitation documented in classify()'s docstring.
+    """
+    assert classify("rm -rf/", DEFAULT_RULES, default_heuristics) == ExecDecision.PROMPT
+
+
+def test_rm_rf_double_space_not_matched() -> None:
+    """rm  -rf / (double space) does not match the 'rm -rf' forbidden rule.
+
+    Internal whitespace sequences are not normalised, so the prefix 'rm -rf'
+    (single space) does not match 'rm  -rf /' (double space).
+    This is a known limitation documented in classify()'s docstring.
+    """
+    assert classify("rm  -rf /", DEFAULT_RULES, default_heuristics) == ExecDecision.PROMPT
+
+
 # P2 regression: heuristics must receive the original command, not stripped_command
 def test_heuristics_receives_original_command() -> None:
     received: list[str] = []
