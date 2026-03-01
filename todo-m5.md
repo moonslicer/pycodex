@@ -125,7 +125,7 @@ Neither bypasses the other:
     - `test_classify_is_pure_no_side_effects`: calling `classify` twice with same args returns same result.
   - Verify: `pytest tests/approval/test_exec_policy.py -v`
 
-- [ ] T2: `approval/sandbox.py` — SandboxPolicy + build_sandbox_argv() + platform adapters + SandboxUnavailable
+- [x] T2: `approval/sandbox.py` — SandboxPolicy + build_sandbox_argv() + platform adapters + SandboxUnavailable
   - Define `SandboxPolicy(StrEnum)` with values `DANGER_FULL_ACCESS = "danger-full-access"`, `READ_ONLY = "read-only"`, `WORKSPACE_WRITE = "workspace-write"`.
   - Define `class SandboxUnavailable(Exception)` — raised when a restrictive policy is active but no native sandbox is found.
   - Implement `build_sandbox_argv(command: str, policy: SandboxPolicy, cwd: Path) -> list[str]`:
