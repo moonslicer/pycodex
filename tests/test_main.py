@@ -9,6 +9,7 @@ import pycodex.__main__ as main_module
 import pytest
 from pycodex.core.agent import ToolCallDispatched, ToolResultReceived, TurnCompleted, TurnStarted
 from pycodex.core.config import Config
+from pycodex.core.fake_model_client import FakeModelClient
 from pycodex.core.session import Session
 
 pytestmark = pytest.mark.integration
@@ -216,6 +217,53 @@ def test_main_passes_approval_policy_to_run_prompt(
     }
     captured = capsys.readouterr()
     assert captured.out.strip() == "final-answer"
+
+
+def test_build_model_client_uses_real_model_client_by_default(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("PYCODEX_FAKE_MODEL", raising=False)
+    config = Config(model="test-model", api_key="test-key", cwd=tmp_path)
+
+    model_client = main_module._build_model_client(config)
+
+    assert isinstance(model_client, main_module.ModelClient)
+
+
+def test_build_model_client_uses_fake_model_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.setenv("PYCODEX_FAKE_MODEL", "1")
+    config = Config(model="test-model", api_key="test-key", cwd=tmp_path)
+
+    model_client = main_module._build_model_client(config)
+
+    assert isinstance(model_client, FakeModelClient)
+
+
+def test_json_mode_fake_model_produces_completed_event_without_network(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("PYCODEX_FAKE_MODEL", "1")
+    config = Config(model="test-model", api_key="test-key", cwd=tmp_path)
+    monkeypatch.setattr(main_module, "load_config", lambda: config)
+
+    exit_code = main_module.main(["--json", "what is 2+2"])
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    events = [json.loads(line) for line in captured.out.splitlines() if line.strip()]
+    assert [event["type"] for event in events] == [
+        "thread.started",
+        "turn.started",
+        "item.updated",
+        "turn.completed",
+    ]
+    assert events[-1]["final_text"] == "4"
 
 
 def test_json_flag_emits_valid_jsonl(

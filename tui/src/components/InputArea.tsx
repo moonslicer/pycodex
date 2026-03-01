@@ -47,6 +47,20 @@ export function sanitizeInputChunk(input: string): string {
   return sanitized;
 }
 
+export function isSubmitInput(input: string, keyReturn: boolean): boolean {
+  if (keyReturn) {
+    return true;
+  }
+
+  const withoutPasteMarkers = input
+    .replaceAll(BRACKETED_PASTE_START, "")
+    .replaceAll(BRACKETED_PASTE_END, "");
+  if (!/[\r\n]/.test(withoutPasteMarkers)) {
+    return false;
+  }
+  return withoutPasteMarkers.replace(/[\r\n]/g, "").length === 0;
+}
+
 export function InputArea({
   disabled,
   hasActiveTurn,
@@ -77,7 +91,7 @@ export function InputArea({
       return;
     }
 
-    if (key.return) {
+    if (isSubmitInput(input, key.return)) {
       const text = value.trim();
       if (text.length === 0) {
         return;

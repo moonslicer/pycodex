@@ -22,8 +22,18 @@ function resolveRepoRoot(argv: readonly string[] = process.argv): string {
   if (entryPath === undefined) {
     return process.cwd();
   }
-  const dirname = path.dirname(path.resolve(entryPath));
-  return path.resolve(dirname, "..", "..", "..");
+
+  const resolvedEntryPath = path.resolve(entryPath);
+  let current = path.dirname(resolvedEntryPath);
+  while (path.basename(current) !== "tui") {
+    const parent = path.dirname(current);
+    if (parent === current) {
+      return process.cwd();
+    }
+    current = parent;
+  }
+
+  return path.dirname(current);
 }
 
 function isMainModule(argv: readonly string[] = process.argv): boolean {

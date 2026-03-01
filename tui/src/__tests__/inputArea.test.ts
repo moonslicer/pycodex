@@ -1,4 +1,9 @@
-import { handleCtrlC, handleCtrlX, sanitizeInputChunk } from "../components/InputArea.js";
+import {
+  handleCtrlC,
+  handleCtrlX,
+  isSubmitInput,
+  sanitizeInputChunk,
+} from "../components/InputArea.js";
 
 describe("sanitizeInputChunk", () => {
   test("keeps ordinary printable text unchanged", () => {
@@ -41,5 +46,24 @@ describe("handleCtrlX", () => {
     handleCtrlX({ onExit });
 
     expect(onExit).toHaveBeenCalledTimes(1);
+  });
+});
+
+describe("isSubmitInput", () => {
+  test("submits when key return is set", () => {
+    expect(isSubmitInput("", true)).toBe(true);
+  });
+
+  test("submits on bare newline fallback when key metadata is missing", () => {
+    expect(isSubmitInput("\n", false)).toBe(true);
+    expect(isSubmitInput("\r", false)).toBe(true);
+    expect(isSubmitInput("\r\n", false)).toBe(true);
+  });
+
+  test("does not submit for pasted text containing newlines", () => {
+    expect(isSubmitInput("line 1\nline 2", false)).toBe(false);
+    expect(isSubmitInput("\u001b[200~line 1\nline 2\u001b[201~", false)).toBe(
+      false,
+    );
   });
 });

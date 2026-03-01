@@ -75,12 +75,16 @@ class MockWriter implements ProtocolWriter {
 }
 
 class MockProcessRef {
-  public readonly argv = ["node", "/tmp/tui/index.js"];
+  public readonly argv: string[];
   public readonly env: NodeJS.ProcessEnv = {};
   public readonly exitCalls: Array<number | undefined> = [];
   public readonly stderrMessages: string[] = [];
 
   private readonly signalHandlers = new Map<"SIGINT" | "SIGTERM", () => void>();
+
+  constructor(argv: string[] = ["node", "/tmp/tui/index.js"]) {
+    this.argv = argv;
+  }
 
   public readonly stderr = {
     write: (message: string) => {
@@ -142,6 +146,33 @@ describe("index main lifecycle", () => {
         "/Users/example/project/tui/dist/other.js",
       ),
     ).toBe(false);
+  });
+
+  test("dist/index.js entrypoint resolves repo root correctly", () => {
+    const harness = createHarness();
+    const processRef = new MockProcessRef([
+      "node",
+      "/Users/example/project/tui/dist/index.js",
+    ]);
+
+    const spawnCalls: Array<{ cwd: string }> = [];
+    main({
+      spawnProcess: (_command, _args, options) => {
+        spawnCalls.push({ cwd: options.cwd });
+        return harness.child as unknown as ChildProcess;
+      },
+      buildPycodexArgs: () => ["-m", "pycodex", "--tui-mode"],
+      makeReader: () => harness.reader,
+      makeWriter: () => harness.writer,
+      renderApp: () => ({
+        unmount: () => {
+          harness.renderUnmountCount += 1;
+        },
+      }),
+      processRef,
+    });
+
+    expect(spawnCalls).toEqual([{ cwd: "/Users/example/project" }]);
   });
 
   beforeEach(() => {

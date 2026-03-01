@@ -232,7 +232,7 @@ TypeScript:
     - `pytest tests/core/test_tui_bridge.py tests/core/test_event_adapter.py tests/test_main.py -k "abort or interrupt or unknown" -v`
     - `cd tui && npm test -- --runInBand --findRelatedTests src/hooks/useTurns.ts src/protocol`
 
-- [ ] T15: Run full milestone gates
+- [x] T15: Run full milestone gates
   - Python:
     - `ruff check . --fix`
     - `ruff format .`
@@ -245,9 +245,9 @@ TypeScript:
     - `cd tui && npm test -- --coverage`
     - `cd tui && npm run build`
 
-- [ ] T16: Run milestone verification and capture output
-  - `node tui/dist/index.js` manual run covering normal, approval, and interrupt flows.
-  - `python3 -m pycodex --json "what is 2+2"` contract sanity check.
+- [x] T16: Run milestone verification and capture output
+  - `PYCODEX_FAKE_MODEL=1 node tui/dist/index.js` manual run covering normal, approval, and interrupt flows.
+  - `PATH=".venv/bin:$PATH" PYCODEX_FAKE_MODEL=1 python3 -m pycodex --json "what is 2+2"` contract sanity check.
 
 ## Completion Checklist
 - [ ] All T1–T16 complete

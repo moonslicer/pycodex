@@ -12,9 +12,10 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 from pycodex.approval.policy import ApprovalPolicy, ApprovalStore, ReviewDecision
-from pycodex.core.agent import AgentEvent, run_turn
+from pycodex.core.agent import AgentEvent, SupportsModelClient, run_turn
 from pycodex.core.config import Config, load_config
 from pycodex.core.event_adapter import EventAdapter
+from pycodex.core.fake_model_client import FakeModelClient
 from pycodex.core.model_client import ModelClient
 from pycodex.core.session import Session
 from pycodex.core.tui_bridge import TuiBridge
@@ -113,12 +114,25 @@ async def _run_prompt(prompt: str, *, approval_policy: ApprovalPolicy) -> str:
 def _build_runtime(
     *,
     approval_policy: ApprovalPolicy,
-) -> tuple[Config, Session, ModelClient, ToolRouter]:
+) -> tuple[Config, Session, SupportsModelClient, ToolRouter]:
     config = load_config()
     session = Session(config=config)
-    model_client = ModelClient(config)
+    model_client = _build_model_client(config)
     tool_router = _build_tool_router(approval_policy=approval_policy)
     return config, session, model_client, tool_router
+
+
+def _build_model_client(config: Config) -> SupportsModelClient:
+    if _is_fake_model_enabled():
+        return FakeModelClient(config)
+    return ModelClient(config)
+
+
+def _is_fake_model_enabled() -> bool:
+    raw = os.environ.get("PYCODEX_FAKE_MODEL")
+    if raw is None:
+        return False
+    return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
 def _emit_protocol_event(event: ProtocolEvent) -> None:
@@ -157,7 +171,7 @@ async def _run_prompt_json(prompt: str, *, approval_policy: ApprovalPolicy) -> i
 async def _run_tui_mode(*, approval_policy: ApprovalPolicy) -> int:
     config = load_config()
     session = Session(config=config)
-    model_client = ModelClient(config)
+    model_client = _build_model_client(config)
     bridge: TuiBridge | None = None
 
     async def _tui_ask_user_fn(tool: Any, args: dict[str, Any]) -> ReviewDecision:
