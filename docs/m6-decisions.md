@@ -64,3 +64,24 @@
 ### Ambiguous decisions and resolutions
 - Should empty instructions be sent as `instructions=\"\"` or omitted?
   - Resolution: omit the field entirely for empty strings to avoid accidental blanking semantics at the API layer and keep payload minimal.
+
+## T5 — Hierarchical project-doc loader
+
+### What changed
+- Added `pycodex/core/project_doc.py` with:
+  - `find_git_root(start)`,
+  - `load_project_instructions(cwd, filenames, max_bytes)`,
+  - deterministic root->cwd traversal and UTF-8-safe truncation.
+- Added `tests/core/test_project_doc.py` covering:
+  - no-repo fallback behavior,
+  - root->cwd ordering,
+  - missing-file `None` return,
+  - truncation marker behavior,
+  - unreadable-file skip,
+  - custom filename handling.
+
+### Ambiguous decisions and resolutions
+- What should happen for `max_bytes <= 0`?
+  - Resolution: return `None` (treat as disabled loader output) instead of returning an empty/truncated marker string.
+- Should unreadable files fail the full load?
+  - Resolution: no. Unreadable files are skipped so sibling/lower-level docs can still load.
