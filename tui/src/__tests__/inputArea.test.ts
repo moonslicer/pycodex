@@ -59,19 +59,23 @@ describe("sanitizeInputChunk", () => {
 });
 
 describe("handleCtrlC", () => {
-  test("sends interrupt while turn is active", () => {
+  test("clears input and sends interrupt while turn is active", () => {
+    const onClearInput = jest.fn();
     const onInterrupt = jest.fn();
 
-    handleCtrlC(true, { onInterrupt });
+    handleCtrlC(true, { onClearInput, onInterrupt });
 
+    expect(onClearInput).toHaveBeenCalledTimes(1);
     expect(onInterrupt).toHaveBeenCalledTimes(1);
   });
 
-  test("does nothing when no turn is active", () => {
+  test("clears input but does not interrupt when no turn is active", () => {
+    const onClearInput = jest.fn();
     const onInterrupt = jest.fn();
 
-    handleCtrlC(false, { onInterrupt });
+    handleCtrlC(false, { onClearInput, onInterrupt });
 
+    expect(onClearInput).toHaveBeenCalledTimes(1);
     expect(onInterrupt).not.toHaveBeenCalled();
   });
 });

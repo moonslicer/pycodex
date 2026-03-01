@@ -31,8 +31,10 @@ export const INITIAL_EDITOR_STATE: EditorState = {
 };
 
 export function handleCtrlC(hasActiveTurn: boolean, callbacks: {
+  onClearInput: () => void;
   onInterrupt: () => void;
 }): void {
+  callbacks.onClearInput();
   if (hasActiveTurn) {
     callbacks.onInterrupt();
   }
@@ -348,7 +350,12 @@ export function InputArea({
 
   useInput((input, key) => {
     if (key.ctrl && input.toLowerCase() === "c") {
-      handleCtrlC(hasActiveTurn, { onInterrupt });
+      handleCtrlC(hasActiveTurn, {
+        onClearInput: () => {
+          setEditorState(resetEditorForDisabled(editorStateRef.current));
+        },
+        onInterrupt,
+      });
       return;
     }
 
