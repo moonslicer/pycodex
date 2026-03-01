@@ -2,6 +2,7 @@ import {
   buildPycodexArgs,
   isTuiDebugEnabled,
   resolveApprovalPolicy,
+  resolveSandboxPolicy,
 } from "../runtime/launch.js";
 
 describe("buildPycodexArgs", () => {
@@ -14,6 +15,8 @@ describe("buildPycodexArgs", () => {
       "--tui-mode",
       "--approval",
       "on-request",
+      "--sandbox",
+      "danger-full-access",
     ]);
   });
 
@@ -28,6 +31,24 @@ describe("buildPycodexArgs", () => {
       "--tui-mode",
       "--approval",
       "never",
+      "--sandbox",
+      "danger-full-access",
+    ]);
+  });
+
+  test("allows sandbox override from environment", () => {
+    const args = buildPycodexArgs({
+      PYCODEX_TUI_SANDBOX: "read-only",
+    });
+
+    expect(args).toEqual([
+      "-m",
+      "pycodex",
+      "--tui-mode",
+      "--approval",
+      "on-request",
+      "--sandbox",
+      "read-only",
     ]);
   });
 });
@@ -36,6 +57,24 @@ describe("resolveApprovalPolicy", () => {
   test("defaults to on-request for unknown values", () => {
     expect(resolveApprovalPolicy({ PYCODEX_TUI_APPROVAL: "invalid" })).toBe(
       "on-request",
+    );
+  });
+});
+
+describe("resolveSandboxPolicy", () => {
+  test("defaults to danger-full-access when unset", () => {
+    expect(resolveSandboxPolicy({})).toBe("danger-full-access");
+  });
+
+  test("returns configured sandbox when value is valid", () => {
+    expect(resolveSandboxPolicy({ PYCODEX_TUI_SANDBOX: "workspace-write" })).toBe(
+      "workspace-write",
+    );
+  });
+
+  test("falls back to danger-full-access for invalid values", () => {
+    expect(resolveSandboxPolicy({ PYCODEX_TUI_SANDBOX: "invalid" })).toBe(
+      "danger-full-access",
     );
   });
 });

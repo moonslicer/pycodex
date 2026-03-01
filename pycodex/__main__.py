@@ -12,7 +12,7 @@ import sys
 from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
-from pycodex.approval.exec_policy import DEFAULT_RULES, classify
+from pycodex.approval.exec_policy import DEFAULT_RULES, classify, default_heuristics
 from pycodex.approval.policy import ApprovalPolicy, ApprovalStore, ReviewDecision
 from pycodex.approval.sandbox import SandboxPolicy
 from pycodex.core.agent import AgentEvent, SupportsModelClient, run_turn
@@ -96,7 +96,11 @@ def _build_tool_router(
         policy=approval_policy,
         store=ApprovalStore(),
         ask_user_fn=ask_user_fn if ask_user_fn is not None else _ask_user_for_review,
-        exec_policy_fn=functools.partial(classify, rules=DEFAULT_RULES),
+        exec_policy_fn=functools.partial(
+            classify,
+            rules=DEFAULT_RULES,
+            heuristics=default_heuristics,
+        ),
         sandbox_policy=sandbox_policy,
     )
     registry = ToolRegistry(orchestrator=orchestrator)

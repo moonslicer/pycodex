@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import asyncio
 import json
 import re
 from pathlib import Path
@@ -397,6 +398,34 @@ def test_build_tool_router_wires_exec_policy_fn() -> None:
     orchestrator = router._registry._orchestrator
     assert orchestrator is not None
     assert callable(orchestrator.exec_policy_fn)
+
+
+def test_build_tool_router_forbidden_command_blocks_before_prompt(tmp_path: Path) -> None:
+    ask_user_calls = 0
+
+    async def ask_user_fn(_tool: Any, _args: dict[str, Any]) -> main_module.ReviewDecision:
+        nonlocal ask_user_calls
+        ask_user_calls += 1
+        return main_module.ReviewDecision.APPROVED
+
+    router = main_module._build_tool_router(
+        approval_policy=main_module.ApprovalPolicy.ON_REQUEST,
+        sandbox_policy=main_module.SandboxPolicy.DANGER_FULL_ACCESS,
+        ask_user_fn=ask_user_fn,
+    )
+
+    raw_result = asyncio.run(
+        router.dispatch(
+            name="shell",
+            arguments={"command": "rm -rf /"},
+            cwd=tmp_path,
+        )
+    )
+    outcome = json.loads(raw_result)
+
+    assert outcome["success"] is False
+    assert outcome["error"]["code"] == "forbidden"
+    assert ask_user_calls == 0
 
 
 def test_build_model_client_uses_real_model_client_by_default(

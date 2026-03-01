@@ -1,8 +1,11 @@
 const DEFAULT_APPROVAL_POLICY = "on-request";
+const DEFAULT_SANDBOX_POLICY = "danger-full-access";
 const TRUE_VALUES = new Set(["1", "true", "yes", "on"]);
 const APPROVAL_POLICIES = ["never", "on-failure", "on-request", "unless-trusted"] as const;
+const SANDBOX_POLICIES = ["danger-full-access", "read-only", "workspace-write"] as const;
 
 export type ApprovalPolicyValue = (typeof APPROVAL_POLICIES)[number];
+export type SandboxPolicyValue = (typeof SANDBOX_POLICIES)[number];
 
 export function resolveApprovalPolicy(
   env: NodeJS.ProcessEnv = process.env,
@@ -13,11 +16,29 @@ export function resolveApprovalPolicy(
     : "on-request";
 }
 
+export function resolveSandboxPolicy(
+  env: NodeJS.ProcessEnv = process.env,
+): SandboxPolicyValue {
+  const rawPolicy = env.PYCODEX_TUI_SANDBOX ?? DEFAULT_SANDBOX_POLICY;
+  return SANDBOX_POLICIES.includes(rawPolicy as SandboxPolicyValue)
+    ? (rawPolicy as SandboxPolicyValue)
+    : "danger-full-access";
+}
+
 export function buildPycodexArgs(
   env: NodeJS.ProcessEnv = process.env,
 ): string[] {
   const approvalPolicy = resolveApprovalPolicy(env);
-  return ["-m", "pycodex", "--tui-mode", "--approval", approvalPolicy];
+  const sandboxPolicy = resolveSandboxPolicy(env);
+  return [
+    "-m",
+    "pycodex",
+    "--tui-mode",
+    "--approval",
+    approvalPolicy,
+    "--sandbox",
+    sandboxPolicy,
+  ];
 }
 
 export function isTuiDebugEnabled(

@@ -202,7 +202,7 @@ Neither bypasses the other:
     - `test_sandbox_flag_wires_to_orchestrator_config` (monkeypatch `_build_tool_router`): assert called with `sandbox_policy=SandboxPolicy.READ_ONLY` when `--sandbox read-only` passed.
   - Verify: `pytest tests/tools/test_shell.py -k "sandbox or canonical" -v` + `pytest tests/test_main.py -k sandbox -v`
 
-- [ ] T5: Runtime wiring completion — exec policy activation + Node TUI sandbox forwarding
+- [x] T5: Runtime wiring completion — exec policy activation + Node TUI sandbox forwarding
   - Wire exec-policy classification in `pycodex/__main__.py`:
     - Import `DEFAULT_RULES`, `classify`, and `default_heuristics` from `approval/exec_policy.py`.
     - In `_build_tool_router(...)`, instantiate and pass `exec_policy_fn` to `OrchestratorConfig` (for example, a closure/partial that calls `classify(command, DEFAULT_RULES, default_heuristics)`).
