@@ -19,3 +19,20 @@
   - Resolution: no. The loader raises `ValueError` for empty lists to avoid a silent "no lookup ever" configuration mistake.
 - Should loader strip `instructions` content?
   - Resolution: no. Validation requires non-empty trimmed content, but stored content is preserved exactly to avoid changing user-authored prompt formatting.
+
+## T2 — Config profile integration
+
+### What changed
+- Updated `pycodex/core/config.py` to add:
+  - `profile: AgentProfile = CODEX_PROFILE`,
+  - `project_doc_max_bytes: int = 32768`.
+- Added TOML profile resolution from `[profile]` using `load_profile_from_mapping(...)`.
+- Added `PYCODEX_INSTRUCTIONS` environment override that replaces only `profile.instructions`.
+- Extended `tests/core/test_config.py` to cover default profile fields, TOML profile loading, and env instruction override behavior.
+- Refactored `agent_profile.py` with `load_profile_from_mapping(...)` so parsed profile tables can be reused without temporary files.
+
+### Ambiguous decisions and resolutions
+- Should TOML profile parsing reuse the file loader or add a mapping loader?
+  - Resolution: add `load_profile_from_mapping(...)` to avoid fake temp files and keep validation logic centralized.
+- Should `PYCODEX_INSTRUCTIONS` override the whole profile?
+  - Resolution: no. It overrides instructions only and preserves profile identity (`name`, `instruction_filenames`, `enabled_tools`).

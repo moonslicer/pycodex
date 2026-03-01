@@ -2,6 +2,7 @@ from __future__ import annotations
 
 from pathlib import Path
 
+from pycodex.core.agent_profile import CODEX_PROFILE, AgentProfile
 from pycodex.core.config import Config, load_config
 
 
@@ -11,6 +12,8 @@ def test_config_defaults() -> None:
     assert config.api_key is None
     assert config.api_base_url is None
     assert isinstance(config.cwd, Path)
+    assert config.profile == CODEX_PROFILE
+    assert config.project_doc_max_bytes == 32_768
 
 
 def test_load_config_missing_toml_uses_defaults_and_env(monkeypatch) -> None:
@@ -50,3 +53,60 @@ def test_load_config_env_cwd_is_parsed_as_path(monkeypatch, tmp_path: Path) -> N
     monkeypatch.setenv("PYCODEX_CWD", str(tmp_path))
     config = load_config(config_path=Path("does-not-exist.toml"))
     assert config.cwd == tmp_path
+
+
+def test_load_config_profile_from_toml(tmp_path: Path, monkeypatch) -> None:
+    monkeypatch.delenv("PYCODEX_INSTRUCTIONS", raising=False)
+    config_file = tmp_path / "pycodex.toml"
+    config_file.write_text(
+        '\n'.join(
+            [
+                'model = "toml-model"',
+                "project_doc_max_bytes = 65535",
+                "",
+                "[profile]",
+                'name = "support"',
+                'instructions = "Support instructions."',
+                'instruction_filenames = ["SUPPORT.md"]',
+                'enabled_tools = ["read_file"]',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    config = load_config(config_path=config_file)
+
+    assert config.model == "toml-model"
+    assert config.project_doc_max_bytes == 65535
+    assert config.profile == AgentProfile(
+        name="support",
+        instructions="Support instructions.",
+        instruction_filenames=("SUPPORT.md",),
+        enabled_tools=("read_file",),
+    )
+
+
+def test_load_config_env_instructions_overrides_profile_instructions(
+    tmp_path: Path, monkeypatch
+) -> None:
+    config_file = tmp_path / "pycodex.toml"
+    config_file.write_text(
+        '\n'.join(
+            [
+                "[profile]",
+                'name = "support"',
+                'instructions = "Support instructions."',
+                'instruction_filenames = ["SUPPORT.md"]',
+                'enabled_tools = ["read_file"]',
+            ]
+        ),
+        encoding="utf-8",
+    )
+    monkeypatch.setenv("PYCODEX_INSTRUCTIONS", "Override instructions.")
+
+    config = load_config(config_path=config_file)
+
+    assert config.profile.instructions == "Override instructions."
+    assert config.profile.name == "support"
+    assert config.profile.instruction_filenames == ("SUPPORT.md",)
+    assert config.profile.enabled_tools == ("read_file",)

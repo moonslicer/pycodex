@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import tomllib
+from collections.abc import Mapping
 from dataclasses import dataclass
 from pathlib import Path
 
@@ -34,7 +35,12 @@ CODEX_PROFILE = AgentProfile(
 def load_profile_from_toml(path: Path) -> AgentProfile:
     """Load an AgentProfile from a TOML file."""
     raw = tomllib.loads(path.read_text(encoding="utf-8"))
-    if not isinstance(raw, dict):
+    return load_profile_from_mapping(raw)
+
+
+def load_profile_from_mapping(raw: Mapping[str, object]) -> AgentProfile:
+    """Load an AgentProfile from an already-parsed mapping."""
+    if not isinstance(raw, Mapping):
         raise ValueError("Profile TOML must decode to a table.")
 
     name = raw.get("name")
