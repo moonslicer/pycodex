@@ -389,6 +389,16 @@ def test_tui_mode_passes_explicit_sandbox_policy(
     assert captured.err == ""
 
 
+def test_build_tool_router_wires_exec_policy_fn() -> None:
+    router = main_module._build_tool_router(
+        approval_policy=main_module.ApprovalPolicy.NEVER,
+        sandbox_policy=main_module.SandboxPolicy.DANGER_FULL_ACCESS,
+    )
+    orchestrator = router._registry._orchestrator
+    assert orchestrator is not None
+    assert callable(orchestrator.exec_policy_fn)
+
+
 def test_build_model_client_uses_real_model_client_by_default(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,

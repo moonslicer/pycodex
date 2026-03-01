@@ -6,7 +6,7 @@ import asyncio
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
-from typing import TYPE_CHECKING, Any, cast
+from typing import TYPE_CHECKING, Any, Protocol, cast, runtime_checkable
 
 from pycodex.approval.exec_policy import ExecDecision
 from pycodex.approval.policy import ApprovalPolicy, ApprovalStore, ReviewDecision
@@ -18,6 +18,22 @@ if TYPE_CHECKING:
 
 AskUserFn = Callable[["ToolHandler", dict[str, Any]], Awaitable[ReviewDecision]]
 ExecPolicyFn = Callable[[str], ExecDecision]
+
+
+@runtime_checkable
+class SupportsCanonicalCommand(Protocol):
+    """Optional tool extension: provides a canonical command string for exec policy."""
+
+    def canonical_command(self, args: dict[str, Any]) -> str | None: ...
+
+
+@runtime_checkable
+class SupportsSandboxExecution(Protocol):
+    """Optional tool extension: executes a command under sandbox constraints."""
+
+    async def sandbox_execute(
+        self, args: dict[str, Any], cwd: Path, policy: SandboxPolicy
+    ) -> ToolOutcome: ...
 
 
 @dataclass(slots=True, frozen=True)
@@ -238,11 +254,9 @@ async def _execute_with_standard_approval(
 
 
 def _canonical_command(*, tool: ToolHandler, args: dict[str, Any]) -> str | None:
-    maybe_provider = getattr(tool, "canonical_command", None)
-    if not callable(maybe_provider):
+    if not isinstance(tool, SupportsCanonicalCommand):
         return None
-    provider = cast(Callable[[dict[str, Any]], str | None], maybe_provider)
-    return provider(args)
+    return tool.canonical_command(args)
 
 
 async def _sandbox_execute(
@@ -252,13 +266,9 @@ async def _sandbox_execute(
     cwd: Path,
     policy: SandboxPolicy,
 ) -> ToolOutcome:
-    maybe_executor = getattr(tool, "sandbox_execute", None)
-    if not callable(maybe_executor):
+    if not isinstance(tool, SupportsSandboxExecution):
         return await tool.handle(args, cwd)
-    executor = cast(
-        Callable[[dict[str, Any], Path, SandboxPolicy], Awaitable[ToolOutcome]], maybe_executor
-    )
-    return await executor(args, cwd, policy)
+    return await tool.sandbox_execute(args, cwd, policy)
 
 
 async def _run_sandboxed(

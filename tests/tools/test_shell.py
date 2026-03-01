@@ -111,7 +111,7 @@ def test_canonical_command_returns_none_on_missing_command() -> None:
 
 async def test_sandbox_execute_danger_full_access_matches_handle(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     seen: dict[str, object] = {}
 
@@ -152,7 +152,7 @@ async def test_sandbox_execute_danger_full_access_matches_handle(
 
 async def test_sandbox_execute_propagates_sandbox_unavailable(
     tmp_path: Path,
-    monkeypatch,
+    monkeypatch: pytest.MonkeyPatch,
 ) -> None:
     def fail_build_sandbox_argv(*, command: str, policy: SandboxPolicy, cwd: Path) -> list[str]:
         _ = command, policy, cwd

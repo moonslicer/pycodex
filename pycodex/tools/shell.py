@@ -151,24 +151,31 @@ async def _run_command(
     except TimeoutError:
         process.kill()
         await process.communicate()
-        return ToolError(
-            message=f"Command timed out after {timeout_ms}ms",
-            code="timeout",
-        )
+        return ToolError(message=f"Command timed out after {timeout_ms}ms", code="timeout")
 
-    duration_seconds = round(time.perf_counter() - started_at, 1)
-    output_text = _build_output_text(
+    return _make_command_result(
+        process=process,
         stdout_bytes=stdout_bytes,
         stderr_bytes=stderr_bytes,
+        started_at=started_at,
     )
-    payload = {
-        "output": output_text,
-        "metadata": {
-            "exit_code": process.returncode,
-            "duration_seconds": duration_seconds,
-        },
-    }
-    return ToolResult(body=payload)
+
+
+def _make_command_result(
+    *,
+    process: asyncio.subprocess.Process,
+    stdout_bytes: bytes,
+    stderr_bytes: bytes,
+    started_at: float,
+) -> ToolResult:
+    duration_seconds = round(time.perf_counter() - started_at, 1)
+    output_text = _build_output_text(stdout_bytes=stdout_bytes, stderr_bytes=stderr_bytes)
+    return ToolResult(
+        body={
+            "output": output_text,
+            "metadata": {"exit_code": process.returncode, "duration_seconds": duration_seconds},
+        }
+    )
 
 
 def _resolve_timeout_ms(args: dict[str, Any]) -> int | ToolError:

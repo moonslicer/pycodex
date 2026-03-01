@@ -202,7 +202,33 @@ Neither bypasses the other:
     - `test_sandbox_flag_wires_to_orchestrator_config` (monkeypatch `_build_tool_router`): assert called with `sandbox_policy=SandboxPolicy.READ_ONLY` when `--sandbox read-only` passed.
   - Verify: `pytest tests/tools/test_shell.py -k "sandbox or canonical" -v` + `pytest tests/test_main.py -k sandbox -v`
 
-- [ ] T5: Quality gates + milestone verification
+- [ ] T5: Runtime wiring completion — exec policy activation + Node TUI sandbox forwarding
+  - Wire exec-policy classification in `pycodex/__main__.py`:
+    - Import `DEFAULT_RULES`, `classify`, and `default_heuristics` from `approval/exec_policy.py`.
+    - In `_build_tool_router(...)`, instantiate and pass `exec_policy_fn` to `OrchestratorConfig` (for example, a closure/partial that calls `classify(command, DEFAULT_RULES, default_heuristics)`).
+    - Preserve existing behavior for non-shell tools (exec policy only applies when `canonical_command()` exists).
+  - Wire sandbox policy in Node TUI launcher (`tui/src/runtime/launch.ts`):
+    - Add a typed sandbox-policy resolver from environment (e.g., `PYCODEX_TUI_SANDBOX`) with allowed values `danger-full-access | read-only | workspace-write`.
+    - Default to `danger-full-access` when unset/invalid.
+    - Update `buildPycodexArgs()` to include `--sandbox <resolved-value>` alongside `--approval`.
+  - Add/extend tests:
+    - `tests/test_main.py`:
+      - Add a test that `_build_tool_router` builds `OrchestratorConfig` with non-`None` `exec_policy_fn`.
+      - Add a test proving a forbidden command path is reachable from runtime wiring (e.g., mock model/tool call path and assert `ToolError(code="forbidden")` without approval prompt when command is `rm -rf /`).
+    - `tui/src/__tests__/launch.test.ts`:
+      - Update expected pycodex argv to include `--sandbox`.
+      - Add coverage for default sandbox value and env override (`PYCODEX_TUI_SANDBOX`).
+      - Add coverage that invalid sandbox env values fall back to `danger-full-access`.
+  - Behavior checks to satisfy this task:
+    - CLI/TUI orchestrator receives both `sandbox_policy` and `exec_policy_fn`.
+    - Forbidden command (`rm -rf /`) is blocked with `code="forbidden"` before approval prompt.
+    - Safe allowlisted command (`ls -la`) under restrictive sandbox runs via sandbox path and skips prompt.
+  - Verify:
+    - `pytest tests/test_main.py -k "sandbox or exec_policy or forbidden" -v`
+    - `pytest tests/tools/test_orchestrator.py -k "exec_policy or sandbox" -v`
+    - `cd tui && npm test -- launch`
+
+- [ ] T6: Quality gates + milestone verification
   - Run `ruff check . --fix` — must be clean.
   - Run `ruff format .` — must be clean.
   - Run `mypy --strict pycodex/` — must pass on all source files including `approval/exec_policy.py` and `approval/sandbox.py`.
@@ -213,7 +239,7 @@ Neither bypasses the other:
     - `python -m pycodex --sandbox danger-full-access --approval never "echo hello"` → runs normally.
 
 ## Completion Checklist
-- [ ] All T1–T5 done
+- [ ] All T1–T6 done
 - [ ] Quality gates all pass (`ruff check`, `ruff format`, `mypy --strict`, `pytest tests/ -v`)
 - [ ] Milestone verification commands pass (or blocked by local runtime — document if so)
 - [ ] Milestone report includes: files changed, gate results, verification output, risks/assumptions, next milestone recommendation (M6)
