@@ -48,6 +48,14 @@ Run the smallest gate set that matches scope:
 - **Feature work (default):** `ruff check . --fix`, `ruff format .`, targeted `pytest`, and `mypy --strict` for touched public type surfaces.
 - **Agent behavior/policy/orchestration changes:** `pytest tests/agent_harness/test_smoke.py -v` plus targeted harness scenarios.
 - **Pre-merge hard gate:** `ruff check . --fix`, `ruff format .`, `mypy --strict pycodex/`, `pytest tests/ -v`, and `pytest tests/agent_harness/ -v` when relevant.
+- **Full repo review request** (when user asks to "run all tests", "run all tests and reviews", or equivalent): run both Python and TUI gates:
+  - `.venv/bin/ruff check .`
+  - `.venv/bin/ruff format --check .`
+  - `.venv/bin/mypy --strict pycodex/`
+  - `.venv/bin/pytest tests -v`
+  - `cd tui && npm run typecheck`
+  - `cd tui && npm run lint`
+  - `cd tui && npm test`
 
 ### Test Requirements
 - For each new/modified public contract, behavior-significant path, or bug fix, add/update tests in the same change.

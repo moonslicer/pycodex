@@ -133,17 +133,17 @@ describe("index main lifecycle", () => {
   test("supports current compiled entrypoint path", () => {
     expect(
       isSupportedEntrypointPath(
-        "/Users/example/project/tui/dist/src/index.js",
+        "/workspace/example/project/tui/dist/src/index.js",
       ),
     ).toBe(true);
     expect(
       isSupportedEntrypointPath(
-        "/Users/example/project/tui/src/index.ts",
+        "/workspace/example/project/tui/src/index.ts",
       ),
     ).toBe(true);
     expect(
       isSupportedEntrypointPath(
-        "/Users/example/project/tui/dist/other.js",
+        "/workspace/example/project/tui/dist/other.js",
       ),
     ).toBe(false);
   });
@@ -152,7 +152,7 @@ describe("index main lifecycle", () => {
     const harness = createHarness();
     const processRef = new MockProcessRef([
       "node",
-      "/Users/example/project/tui/dist/index.js",
+      "/workspace/example/project/tui/dist/index.js",
     ]);
 
     const spawnCalls: Array<{ cwd: string }> = [];
@@ -172,7 +172,7 @@ describe("index main lifecycle", () => {
       processRef,
     });
 
-    expect(spawnCalls).toEqual([{ cwd: "/Users/example/project" }]);
+    expect(spawnCalls).toEqual([{ cwd: "/workspace/example/project" }]);
   });
 
   beforeEach(() => {
