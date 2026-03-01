@@ -7,6 +7,7 @@ from typing import Any
 
 import pytest
 from pycodex.core.agent import (
+    Agent,
     AgentEvent,
     TextDeltaReceived,
     ToolCallDispatched,
@@ -15,6 +16,8 @@ from pycodex.core.agent import (
     TurnStarted,
     run_turn,
 )
+from pycodex.core.agent_profile import AgentProfile
+from pycodex.core.config import Config
 from pycodex.core.model_client import Completed, OutputItemDone, OutputTextDelta, ResponseEvent
 from pycodex.core.session import Session
 from pycodex.tools.orchestrator import ToolAborted
@@ -29,11 +32,13 @@ class _FakeModelClient:
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
+        instructions: str = "",
     ):
         self.calls.append(
             {
                 "messages": [dict(message) for message in messages],
                 "tools": [dict(spec) for spec in tools],
+                "instructions": instructions,
             }
         )
 
@@ -123,6 +128,7 @@ def test_run_turn_returns_text_when_no_tool_calls(tmp_path: Path) -> None:
         {
             "messages": [{"role": "user", "content": "say hi"}],
             "tools": [{"type": "function", "function": {"name": "read_file"}}],
+            "instructions": "",
         }
     ]
     assert session.to_prompt() == [{"role": "user", "content": "say hi"}]
@@ -639,3 +645,57 @@ def test_run_turn_preserves_text_before_tool_calls_in_same_pass(tmp_path: Path) 
         {"role": "tool", "tool_call_id": "call_5", "content": "L1: # pycodex"},
     ]
     assert model_client.calls[1]["messages"] == session.to_prompt()
+
+
+def test_agent_prepends_initial_context_once_across_turns(tmp_path: Path) -> None:
+    config = Config(cwd=tmp_path)
+    session = Session(config=config)
+    model_client = _FakeModelClient(
+        turns=[
+            [OutputTextDelta(delta="first"), Completed(response_id="resp_1")],
+            [OutputTextDelta(delta="second"), Completed(response_id="resp_2")],
+        ]
+    )
+    router = _FakeToolRouter(specs=[], results=[])
+    agent = Agent(
+        session=session,
+        model_client=model_client,
+        tool_router=router,
+        cwd=tmp_path,
+    )
+
+    result_1 = asyncio.run(agent.run_turn("turn one"))
+    result_2 = asyncio.run(agent.run_turn("turn two"))
+
+    assert result_1 == "first"
+    assert result_2 == "second"
+    prompt = session.to_prompt()
+    assert sum(1 for item in prompt if item.get("role") == "system") == 1
+    assert prompt[0]["role"] == "system"
+
+
+def test_run_turn_threads_profile_instructions_to_model_client(tmp_path: Path) -> None:
+    profile = AgentProfile(
+        name="support",
+        instructions="You are a support specialist.",
+        instruction_filenames=("AGENTS.md",),
+        enabled_tools=None,
+    )
+    session = Session(config=Config(cwd=tmp_path, profile=profile))
+    model_client = _FakeModelClient(
+        turns=[[OutputTextDelta(delta="ok"), Completed(response_id="resp_1")]]
+    )
+    router = _FakeToolRouter(specs=[], results=[])
+
+    result = asyncio.run(
+        run_turn(
+            session=session,
+            model_client=model_client,
+            tool_router=router,
+            cwd=tmp_path,
+            user_input="hello",
+        )
+    )
+
+    assert result == "ok"
+    assert model_client.calls[0]["instructions"] == "You are a support specialist."

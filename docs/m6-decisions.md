@@ -107,3 +107,22 @@
   - Resolution: no. Environment context is always included to provide deterministic runtime facts at session start.
 - Should policy context depend on `Config` owning policy fields directly?
   - Resolution: no hard dependency. `_policy_context` reads attributes dynamically to keep this layer usable while policy fields remain CLI runtime concerns.
+
+## T7 — Agent wiring for initial context + profile instructions
+
+### What changed
+- Updated `pycodex/core/agent.py`:
+  - injects initial context once per session before first user message,
+  - threads `profile.instructions` into `model_client.stream(...)`,
+  - extends model-client protocol with optional `instructions` parameter.
+- Updated `pycodex/core/session.py`:
+  - added internal initial-context state (`has_initial_context`, `mark_initial_context_injected`).
+- Extended `tests/core/test_agent.py`:
+  - verifies single-injection behavior across multiple turns,
+  - verifies profile instructions are passed into model streaming.
+
+### Ambiguous decisions and resolutions
+- Where should "context already injected" state live?
+  - Resolution: in `Session`, not `Agent`, so repeated helper-based turns (new `Agent` instances over one session) still avoid duplicate injection.
+- Should context be injected when `Session.config` is absent?
+  - Resolution: no. Skip injection and send empty `instructions` to preserve behavior for config-less session tests and compatibility call paths.

@@ -10,6 +10,7 @@ from inspect import isawaitable
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+from pycodex.core.initial_context import build_initial_context
 from pycodex.core.model_client import Completed as ModelCompleted
 from pycodex.core.model_client import OutputItemDone, OutputTextDelta
 from pycodex.core.session import PromptItem, Session
@@ -78,6 +79,7 @@ class SupportsModelClient(Protocol):
         self,
         messages: list[PromptItem],
         tools: list[dict[str, Any]],
+        instructions: str = "",
     ) -> AsyncIterator[Any]:
         """Yield streaming model events."""
 
@@ -119,6 +121,7 @@ class Agent:
 
     async def run_turn(self, user_input: str) -> str:
         """Run one user turn until the model emits no tool calls."""
+        self._ensure_initial_context()
         _log.debug("turn started: %r", user_input[:80])
         self.session.append_user_message(user_input)
         await self._emit(TurnStarted(user_input=user_input))
@@ -206,6 +209,7 @@ class Agent:
         async for event in self.model_client.stream(
             messages=self.session.to_prompt(),
             tools=self.tool_router.tool_specs(),
+            instructions=self._profile_instructions(),
         ):
             if isinstance(event, OutputTextDelta):
                 text_parts.append(event.delta)
@@ -235,6 +239,22 @@ class Agent:
         maybe_awaitable = self.on_event(event)
         if isawaitable(maybe_awaitable):
             await maybe_awaitable
+
+    def _ensure_initial_context(self) -> None:
+        if self.session.config is None:
+            return
+        if self.session.has_initial_context():
+            return
+
+        initial_items = build_initial_context(self.session.config)
+        if initial_items:
+            self.session.prepend_items(initial_items)
+        self.session.mark_initial_context_injected()
+
+    def _profile_instructions(self) -> str:
+        if self.session.config is None:
+            return ""
+        return self.session.config.profile.instructions
 
 
 async def run_turn(

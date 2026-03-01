@@ -66,6 +66,7 @@ class Session:
 
     config: Config | None = None
     _history: list[PromptItem] = field(default_factory=list)
+    _initial_context_injected: bool = False
 
     def append_user_message(self, text: str) -> None:
         """Append a user message to the conversation history."""
@@ -114,6 +115,14 @@ class Session:
     def prepend_items(self, items: list[PromptItem]) -> None:
         """Prepend prompt items before existing session history."""
         self._history = list(items) + self._history
+
+    def has_initial_context(self) -> bool:
+        """Return whether initial context has already been injected."""
+        return self._initial_context_injected
+
+    def mark_initial_context_injected(self) -> None:
+        """Mark initial context as injected for this session."""
+        self._initial_context_injected = True
 
     def to_prompt(self) -> list[PromptItem]:
         """Return a detached copy of history for model input payloads."""
