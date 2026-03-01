@@ -26,8 +26,9 @@ class FakeModelClient:
         self,
         messages: list[PromptItem],
         tools: list[dict[str, object]],
+        instructions: str = "",
     ) -> AsyncIterator[ResponseEvent]:
-        _ = tools, self._config
+        _ = tools, instructions, self._config
         latest_tool_output = _latest_tool_output(messages)
         if latest_tool_output is not None:
             yield OutputTextDelta(delta="Done. Tool execution completed.")

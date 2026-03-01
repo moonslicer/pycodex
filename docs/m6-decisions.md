@@ -126,3 +126,26 @@
   - Resolution: in `Session`, not `Agent`, so repeated helper-based turns (new `Agent` instances over one session) still avoid duplicate injection.
 - Should context be injected when `Session.config` is absent?
   - Resolution: no. Skip injection and send empty `instructions` to preserve behavior for config-less session tests and compatibility call paths.
+
+## T8 — CLI profile/instruction overrides
+
+### What changed
+- Updated `pycodex/__main__.py` to add CLI flags:
+  - `--profile`,
+  - `--profile-file`,
+  - `--instructions`,
+  - `--instructions-file`.
+- Added profile resolution helpers with precedence and validation:
+  - built-in profile lookup,
+  - profile TOML loading,
+  - instructions text/file override loading,
+  - non-empty instructions enforcement.
+- Wired override-aware config resolution through text/json/tui runtime paths.
+- Updated `pycodex/core/fake_model_client.py` to accept optional `instructions` for compatibility with new model-client protocol shape.
+- Extended `tests/test_main.py` with profile/instructions parsing and resolution assertions.
+
+### Ambiguous decisions and resolutions
+- Should CLI overrides always be forwarded to `_run_prompt`/`_run_prompt_json`/`_run_tui_mode`?
+  - Resolution: only when override flags are present, preserving backward compatibility for existing monkeypatched tests expecting prior call signatures.
+- Where should profile/instructions precedence be enforced?
+  - Resolution: centralized in `_resolve_profile_override(...)` so all runtime modes share one decision path.

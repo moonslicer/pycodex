@@ -9,6 +9,7 @@ from typing import Any
 import pycodex.__main__ as main_module
 import pytest
 from pycodex.core.agent import ToolCallDispatched, ToolResultReceived, TurnCompleted, TurnStarted
+from pycodex.core.agent_profile import CODEX_PROFILE, AgentProfile
 from pycodex.core.config import Config
 from pycodex.core.fake_model_client import FakeModelClient
 from pycodex.core.session import Session
@@ -55,6 +56,81 @@ def test_sandbox_flag_default_is_danger_full_access() -> None:
 def test_sandbox_flag_accepted_values() -> None:
     args = main_module._build_parser().parse_args(["--sandbox", "read-only", "x"])
     assert args.sandbox == "read-only"
+
+
+def test_profile_flag_is_parsed() -> None:
+    args = main_module._build_parser().parse_args(["--profile", "codex", "x"])
+    assert args.profile == "codex"
+
+
+def test_instructions_file_flag_is_parsed() -> None:
+    args = main_module._build_parser().parse_args(["--instructions-file", "/tmp/i.txt", "x"])
+    assert args.instructions_file == "/tmp/i.txt"
+
+
+def test_resolve_profile_override_uses_builtin_profile() -> None:
+    resolved = main_module._resolve_profile_override(
+        default_profile=CODEX_PROFILE,
+        profile="codex",
+        profile_file=None,
+        instructions=None,
+        instructions_file=None,
+    )
+
+    assert resolved == CODEX_PROFILE
+
+
+def test_resolve_profile_override_supports_profile_file_and_instruction_override(
+    tmp_path: Path,
+) -> None:
+    profile_path = tmp_path / "profile.toml"
+    profile_path.write_text(
+        '\n'.join(
+            [
+                'name = "support"',
+                'instructions = "Support instructions."',
+                'instruction_filenames = ["SUPPORT.md"]',
+            ]
+        ),
+        encoding="utf-8",
+    )
+
+    resolved = main_module._resolve_profile_override(
+        default_profile=CODEX_PROFILE,
+        profile=None,
+        profile_file=str(profile_path),
+        instructions="Override instructions.",
+        instructions_file=None,
+    )
+
+    assert resolved == AgentProfile(
+        name="support",
+        instructions="Override instructions.",
+        instruction_filenames=("SUPPORT.md",),
+        enabled_tools=None,
+    )
+
+
+def test_resolve_profile_override_rejects_unknown_profile() -> None:
+    with pytest.raises(ValueError, match="Unknown profile"):
+        main_module._resolve_profile_override(
+            default_profile=CODEX_PROFILE,
+            profile="nope",
+            profile_file=None,
+            instructions=None,
+            instructions_file=None,
+        )
+
+
+def test_resolve_profile_override_rejects_empty_instructions_override() -> None:
+    with pytest.raises(ValueError, match="non-empty"):
+        main_module._resolve_profile_override(
+            default_profile=CODEX_PROFILE,
+            profile=None,
+            profile_file=None,
+            instructions="   ",
+            instructions_file=None,
+        )
 
 
 def test_main_json_missing_prompt_exits_with_parser_error(
@@ -247,6 +323,79 @@ def test_main_passes_approval_policy_to_run_prompt(
     }
     captured = capsys.readouterr()
     assert captured.out.strip() == "final-answer"
+
+
+def test_main_passes_profile_overrides_to_run_prompt_when_provided(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    seen: dict[str, object] = {}
+
+    async def fake_run_prompt(
+        prompt: str,
+        *,
+        approval_policy: main_module.ApprovalPolicy,
+        sandbox_policy: main_module.SandboxPolicy,
+        profile: str | None = None,
+        profile_file: str | None = None,
+        instructions: str | None = None,
+        instructions_file: str | None = None,
+    ) -> str:
+        seen["prompt"] = prompt
+        seen["approval_policy"] = approval_policy
+        seen["sandbox_policy"] = sandbox_policy
+        seen["profile"] = profile
+        seen["profile_file"] = profile_file
+        seen["instructions"] = instructions
+        seen["instructions_file"] = instructions_file
+        return "final-answer"
+
+    monkeypatch.setattr(main_module, "_run_prompt", fake_run_prompt)
+
+    exit_code = main_module.main(
+        [
+            "--profile",
+            "codex",
+            "--instructions",
+            "You are a test assistant.",
+            "hello from cli",
+        ]
+    )
+
+    assert exit_code == 0
+    assert seen == {
+        "prompt": "hello from cli",
+        "approval_policy": main_module.ApprovalPolicy.NEVER,
+        "sandbox_policy": main_module.SandboxPolicy.DANGER_FULL_ACCESS,
+        "profile": "codex",
+        "profile_file": None,
+        "instructions": "You are a test assistant.",
+        "instructions_file": None,
+    }
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "final-answer"
+
+
+def test_main_unknown_profile_returns_error(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code = main_module.main(["--profile", "unknown", "hello from cli"])
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "Unknown profile" in captured.err
+
+
+def test_main_empty_instructions_returns_error(
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    exit_code = main_module.main(["--instructions", " ", "hello from cli"])
+
+    assert exit_code == 1
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert "non-empty" in captured.err
 
 
 def test_main_passes_explicit_sandbox_policy_to_run_prompt(

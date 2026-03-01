@@ -10,12 +10,15 @@ import logging
 import os
 import sys
 from collections.abc import Awaitable, Callable, Sequence
+from dataclasses import replace
+from pathlib import Path
 from typing import Any
 
 from pycodex.approval.exec_policy import DEFAULT_RULES, classify, default_heuristics
 from pycodex.approval.policy import ApprovalPolicy, ApprovalStore, ReviewDecision
 from pycodex.approval.sandbox import SandboxPolicy
 from pycodex.core.agent import AgentEvent, SupportsModelClient, run_turn
+from pycodex.core.agent_profile import CODEX_PROFILE, AgentProfile, load_profile_from_toml
 from pycodex.core.config import Config, load_config
 from pycodex.core.event_adapter import EventAdapter
 from pycodex.core.fake_model_client import FakeModelClient
@@ -32,6 +35,7 @@ from pycodex.tools.shell import ShellTool
 from pycodex.tools.write_file import WriteFileTool
 
 EXPECTED_TOOL_NAMES = {"shell", "read_file", "write_file", "list_dir", "grep_files"}
+BUILTIN_PROFILES: dict[str, AgentProfile] = {"codex": CODEX_PROFILE}
 AskUserFn = Callable[[Any, dict[str, Any]], Awaitable[ReviewDecision]]
 
 
@@ -83,6 +87,32 @@ def _build_parser() -> argparse.ArgumentParser:
         action="store_true",
         help="Run in interactive TUI bridge mode (no prompt).",
     )
+    profile_group = parser.add_mutually_exclusive_group()
+    profile_group.add_argument(
+        "--profile",
+        default=None,
+        metavar="NAME",
+        help="Use a built-in profile name (for example: codex).",
+    )
+    profile_group.add_argument(
+        "--profile-file",
+        default=None,
+        metavar="PATH",
+        help="Load profile definition from TOML file.",
+    )
+    instructions_group = parser.add_mutually_exclusive_group()
+    instructions_group.add_argument(
+        "--instructions",
+        default=None,
+        metavar="TEXT",
+        help="Override the active profile instructions inline.",
+    )
+    instructions_group.add_argument(
+        "--instructions-file",
+        default=None,
+        metavar="PATH",
+        help="Load instruction override text from file.",
+    )
     return parser
 
 
@@ -121,10 +151,18 @@ async def _run_prompt(
     *,
     approval_policy: ApprovalPolicy,
     sandbox_policy: SandboxPolicy,
+    profile: str | None = None,
+    profile_file: str | None = None,
+    instructions: str | None = None,
+    instructions_file: str | None = None,
 ) -> str:
     config, session, model_client, tool_router = _build_runtime(
         approval_policy=approval_policy,
         sandbox_policy=sandbox_policy,
+        profile=profile,
+        profile_file=profile_file,
+        instructions=instructions,
+        instructions_file=instructions_file,
     )
     return await run_turn(
         session=session,
@@ -139,8 +177,17 @@ def _build_runtime(
     *,
     approval_policy: ApprovalPolicy,
     sandbox_policy: SandboxPolicy,
+    profile: str | None = None,
+    profile_file: str | None = None,
+    instructions: str | None = None,
+    instructions_file: str | None = None,
 ) -> tuple[Config, Session, SupportsModelClient, ToolRouter]:
-    config = load_config()
+    config = _resolve_runtime_config(
+        profile=profile,
+        profile_file=profile_file,
+        instructions=instructions,
+        instructions_file=instructions_file,
+    )
     session = Session(config=config)
     model_client = _build_model_client(config)
     tool_router = _build_tool_router(
@@ -163,6 +210,82 @@ def _is_fake_model_enabled() -> bool:
     return raw.strip().lower() in {"1", "true", "yes", "on"}
 
 
+def _resolve_runtime_config(
+    *,
+    profile: str | None,
+    profile_file: str | None,
+    instructions: str | None,
+    instructions_file: str | None,
+) -> Config:
+    config = load_config()
+    resolved_profile = _resolve_profile_override(
+        default_profile=config.profile,
+        profile=profile,
+        profile_file=profile_file,
+        instructions=instructions,
+        instructions_file=instructions_file,
+    )
+    return config.model_copy(update={"profile": resolved_profile})
+
+
+def _resolve_profile_override(
+    *,
+    default_profile: AgentProfile,
+    profile: str | None,
+    profile_file: str | None,
+    instructions: str | None,
+    instructions_file: str | None,
+) -> AgentProfile:
+    resolved = default_profile
+    if profile_file is not None:
+        profile_path = Path(profile_file)
+        try:
+            resolved = load_profile_from_toml(profile_path)
+        except OSError as exc:
+            raise ValueError(f"Failed to read profile file: {profile_path}") from exc
+    elif profile is not None:
+        resolved = _resolve_builtin_profile(profile)
+
+    instructions_override = _load_instructions_override(
+        instructions=instructions,
+        instructions_file=instructions_file,
+    )
+    if instructions_override is not None:
+        resolved = replace(resolved, instructions=instructions_override)
+
+    if not resolved.instructions.strip():
+        raise ValueError("Active profile instructions must be non-empty.")
+    return resolved
+
+
+def _resolve_builtin_profile(name: str) -> AgentProfile:
+    try:
+        return BUILTIN_PROFILES[name]
+    except KeyError as exc:
+        known = ", ".join(sorted(BUILTIN_PROFILES.keys()))
+        raise ValueError(f"Unknown profile '{name}'. Known profiles: {known}") from exc
+
+
+def _load_instructions_override(
+    *, instructions: str | None, instructions_file: str | None
+) -> str | None:
+    if instructions is not None:
+        if not instructions.strip():
+            raise ValueError("Instructions override must be non-empty.")
+        return instructions
+    if instructions_file is None:
+        return None
+
+    path = Path(instructions_file)
+    try:
+        value = path.read_text(encoding="utf-8")
+    except OSError as exc:
+        raise ValueError(f"Failed to read instructions file: {path}") from exc
+    if not value.strip():
+        raise ValueError("Instructions file must contain non-empty content.")
+    return value
+
+
 def _emit_protocol_event(event: ProtocolEvent) -> None:
     sys.stdout.write(f"{event.model_dump_json()}\n")
 
@@ -176,10 +299,18 @@ async def _run_prompt_json(
     *,
     approval_policy: ApprovalPolicy,
     sandbox_policy: SandboxPolicy,
+    profile: str | None = None,
+    profile_file: str | None = None,
+    instructions: str | None = None,
+    instructions_file: str | None = None,
 ) -> int:
     config, session, model_client, tool_router = _build_runtime(
         approval_policy=approval_policy,
         sandbox_policy=sandbox_policy,
+        profile=profile,
+        profile_file=profile_file,
+        instructions=instructions,
+        instructions_file=instructions_file,
     )
     adapter = EventAdapter()
 
@@ -208,8 +339,17 @@ async def _run_tui_mode(
     *,
     approval_policy: ApprovalPolicy,
     sandbox_policy: SandboxPolicy,
+    profile: str | None = None,
+    profile_file: str | None = None,
+    instructions: str | None = None,
+    instructions_file: str | None = None,
 ) -> int:
-    config = load_config()
+    config = _resolve_runtime_config(
+        profile=profile,
+        profile_file=profile_file,
+        instructions=instructions,
+        instructions_file=instructions_file,
+    )
     session = Session(config=config)
     model_client = _build_model_client(config)
     bridge: TuiBridge | None = None
@@ -257,6 +397,18 @@ async def _ask_user_for_review(tool: Any, args: dict[str, Any]) -> ReviewDecisio
     return _parse_review_decision(response)
 
 
+def _has_profile_cli_overrides(args: argparse.Namespace) -> bool:
+    return any(
+        value is not None
+        for value in (
+            args.profile,
+            args.profile_file,
+            args.instructions,
+            args.instructions_file,
+        )
+    )
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
@@ -280,11 +432,21 @@ def main(argv: Sequence[str] | None = None) -> int:
         if args.prompt is not None:
             parser.error("prompt is not accepted with --tui-mode")
         try:
-            return asyncio.run(
-                _run_tui_mode(
-                    approval_policy=approval_policy,
-                    sandbox_policy=sandbox_policy,
+            tui_kwargs: dict[str, Any] = {
+                "approval_policy": approval_policy,
+                "sandbox_policy": sandbox_policy,
+            }
+            if _has_profile_cli_overrides(args):
+                tui_kwargs.update(
+                    {
+                        "profile": args.profile,
+                        "profile_file": args.profile_file,
+                        "instructions": args.instructions,
+                        "instructions_file": args.instructions_file,
+                    }
                 )
+            return asyncio.run(
+                _run_tui_mode(**tui_kwargs)
             )
         except Exception as exc:
             message = _render_error_message(exc)
@@ -297,12 +459,22 @@ def main(argv: Sequence[str] | None = None) -> int:
 
     if args.json:
         try:
-            return asyncio.run(
-                _run_prompt_json(
-                    prompt,
-                    approval_policy=approval_policy,
-                    sandbox_policy=sandbox_policy,
+            json_kwargs: dict[str, Any] = {
+                "prompt": prompt,
+                "approval_policy": approval_policy,
+                "sandbox_policy": sandbox_policy,
+            }
+            if _has_profile_cli_overrides(args):
+                json_kwargs.update(
+                    {
+                        "profile": args.profile,
+                        "profile_file": args.profile_file,
+                        "instructions": args.instructions,
+                        "instructions_file": args.instructions_file,
+                    }
                 )
+            return asyncio.run(
+                _run_prompt_json(**json_kwargs)
             )
         except Exception as exc:
             message = _render_error_message(exc)
@@ -310,12 +482,22 @@ def main(argv: Sequence[str] | None = None) -> int:
             return 1
 
     try:
-        final_text = asyncio.run(
-            _run_prompt(
-                prompt,
-                approval_policy=approval_policy,
-                sandbox_policy=sandbox_policy,
+        prompt_kwargs: dict[str, Any] = {
+            "prompt": prompt,
+            "approval_policy": approval_policy,
+            "sandbox_policy": sandbox_policy,
+        }
+        if _has_profile_cli_overrides(args):
+            prompt_kwargs.update(
+                {
+                    "profile": args.profile,
+                    "profile_file": args.profile_file,
+                    "instructions": args.instructions,
+                    "instructions_file": args.instructions_file,
+                }
             )
+        final_text = asyncio.run(
+            _run_prompt(**prompt_kwargs)
         )
     except Exception as exc:
         message = _render_error_message(exc)
