@@ -9,6 +9,9 @@ import {
   type TurnsViewState,
 } from "../hooks/useTurns.js";
 
+const ABORT_TEXT = "Aborted by user.";
+const INTERRUPTED_ERROR = "interrupted";
+
 describe("reduceTurns", () => {
   test("turn.started appends an active turn", () => {
     const next = reduceTurns(INITIAL_TURNS_STATE, {
@@ -122,23 +125,49 @@ describe("reduceTurns", () => {
     expect(next.turns[0]?.assistantLines).toEqual(["line one"]);
   });
 
-  test("turn.failed stores error and marks failed state", () => {
-    const started = reduceTurns(INITIAL_TURNS_STATE, {
-      type: "turn.started",
-      thread_id: "thread_1",
-      turn_id: "turn_1",
-    });
+  test.each([
+    {
+      name: "abort completion maps to completed turn",
+      terminalEvent: {
+        type: "turn.completed" as const,
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+        final_text: ABORT_TEXT,
+        usage: null,
+      },
+      expectedStatus: "completed" as const,
+      expectedError: null,
+      expectedAssistantLines: [ABORT_TEXT],
+    },
+    {
+      name: "interrupt maps to failed turn",
+      terminalEvent: {
+        type: "turn.failed" as const,
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+        error: INTERRUPTED_ERROR,
+      },
+      expectedStatus: "failed" as const,
+      expectedError: INTERRUPTED_ERROR,
+      expectedAssistantLines: [],
+    },
+  ])(
+    "$name",
+    ({ terminalEvent, expectedStatus, expectedError, expectedAssistantLines }) => {
+      const next = reduceTurnsSequence(INITIAL_TURNS_STATE, [
+        {
+          type: "turn.started",
+          thread_id: "thread_1",
+          turn_id: "turn_1",
+        },
+        terminalEvent,
+      ]);
 
-    const failed = reduceTurns(started, {
-      type: "turn.failed",
-      thread_id: "thread_1",
-      turn_id: "turn_1",
-      error: "interrupted",
-    });
-
-    expect(failed.turns[0]?.status).toBe("failed");
-    expect(failed.turns[0]?.error).toBe("interrupted");
-  });
+      expect(next.turns[0]?.status).toBe(expectedStatus);
+      expect(next.turns[0]?.error).toBe(expectedError);
+      expect(next.turns[0]?.assistantLines).toEqual(expectedAssistantLines);
+    },
+  );
 
   test("item.started tool_call is tracked with name and arguments", () => {
     const next = reduceTurnsSequence(INITIAL_TURNS_STATE, [

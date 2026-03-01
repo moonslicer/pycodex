@@ -13,6 +13,9 @@ from pycodex.core.config import Config
 from pycodex.core.session import Session
 from pycodex.core.tui_bridge import TuiBridge
 
+ABORT_TEXT = "Aborted by user."
+INTERRUPTED_ERROR = "interrupted"
+
 
 class _FakeModelClient:
     async def stream(
@@ -74,16 +77,30 @@ def _event_types(events: list[Any]) -> list[str]:
     return [e.type for e in events]
 
 
-def test_thread_started_emitted_on_init(tmp_path: Path) -> None:
-    events: list[Any] = []
-
-    _ = TuiBridge(
+def _new_bridge(tmp_path: Path, events: list[Any]) -> TuiBridge:
+    return TuiBridge(
         session=_session(tmp_path),
         model_client=_FakeModelClient(),
         tool_router=_FakeToolRouter(),
         cwd=tmp_path,
         emit_event=events.append,
     )
+
+
+def _user_input_line(text: str) -> str:
+    return json.dumps(
+        {
+            "jsonrpc": "2.0",
+            "method": "user.input",
+            "params": {"text": text},
+        }
+    )
+
+
+def test_thread_started_emitted_on_init(tmp_path: Path) -> None:
+    events: list[Any] = []
+
+    _ = _new_bridge(tmp_path, events)
 
     assert len(events) == 1
     assert events[0].type == "thread.started"
@@ -114,30 +131,14 @@ def test_user_input_command_starts_turn(
 
     monkeypatch.setattr(tui_bridge_module, "run_turn", fake_run_turn)
 
-    bridge = TuiBridge(
-        session=_session(tmp_path),
-        model_client=_FakeModelClient(),
-        tool_router=_FakeToolRouter(),
-        cwd=tmp_path,
-        emit_event=events.append,
-    )
+    bridge = _new_bridge(tmp_path, events)
 
-    reader = _reader_with_lines(
-        [
-            json.dumps(
-                {
-                    "jsonrpc": "2.0",
-                    "method": "user.input",
-                    "params": {"text": "hello from tui"},
-                }
-            )
-        ]
-    )
+    reader = _reader_with_lines([_user_input_line("hello from tui")])
 
     asyncio.run(bridge.run(reader=reader))
 
     assert seen_inputs == ["hello from tui"]
-    assert [event.type for event in events] == [
+    assert _event_types(events) == [
         "thread.started",
         "turn.started",
         "turn.completed",
@@ -169,22 +170,8 @@ def test_interrupt_cancels_active_turn(
 
     async def scenario() -> None:
         monkeypatch.setattr(tui_bridge_module, "run_turn", fake_run_turn)
-        bridge = TuiBridge(
-            session=_session(tmp_path),
-            model_client=_FakeModelClient(),
-            tool_router=_FakeToolRouter(),
-            cwd=tmp_path,
-            emit_event=events.append,
-        )
-        await bridge._handle_line(
-            json.dumps(
-                {
-                    "jsonrpc": "2.0",
-                    "method": "user.input",
-                    "params": {"text": "hello"},
-                }
-            )
-        )
+        bridge = _new_bridge(tmp_path, events)
+        await bridge._handle_line(_user_input_line("hello"))
         await started.wait()
         await bridge._handle_line(
             json.dumps({"jsonrpc": "2.0", "method": "interrupt", "params": {}})
@@ -194,12 +181,98 @@ def test_interrupt_cancels_active_turn(
 
     asyncio.run(scenario())
 
-    assert [event.type for event in events] == [
+    assert _event_types(events) == [
         "thread.started",
         "turn.started",
         "turn.failed",
     ]
-    assert events[-1].error == "interrupted"
+    assert events[-1].error == INTERRUPTED_ERROR
+
+
+def test_abort_completion_emits_turn_completed_not_failed(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    events: list[Any] = []
+
+    async def fake_run_turn(
+        *,
+        session: Session,
+        model_client: Any,
+        tool_router: Any,
+        cwd: Path,
+        user_input: str,
+        on_event: Any = None,
+    ) -> str:
+        _ = session, model_client, tool_router, cwd, user_input
+        assert on_event is not None
+        on_event(TurnStarted(user_input="in-flight"))
+        on_event(TurnCompleted(final_text=ABORT_TEXT))
+        return ABORT_TEXT
+
+    async def scenario() -> None:
+        monkeypatch.setattr(tui_bridge_module, "run_turn", fake_run_turn)
+        bridge = _new_bridge(tmp_path, events)
+        await bridge._handle_line(_user_input_line("hello"))
+        if bridge._active_turn is not None:
+            await bridge._active_turn
+
+    asyncio.run(scenario())
+
+    assert _event_types(events) == [
+        "thread.started",
+        "turn.started",
+        "turn.completed",
+    ]
+    assert events[-1].final_text == ABORT_TEXT
+
+
+def test_unknown_command_during_active_turn_is_noop(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    events: list[Any] = []
+    started = asyncio.Event()
+    allow_complete = asyncio.Event()
+
+    async def fake_run_turn(
+        *,
+        session: Session,
+        model_client: Any,
+        tool_router: Any,
+        cwd: Path,
+        user_input: str,
+        on_event: Any = None,
+    ) -> str:
+        _ = session, model_client, tool_router, cwd, user_input
+        assert on_event is not None
+        on_event(TurnStarted(user_input="in-flight"))
+        started.set()
+        await allow_complete.wait()
+        on_event(TurnCompleted(final_text="done"))
+        return "done"
+
+    async def scenario() -> None:
+        monkeypatch.setattr(tui_bridge_module, "run_turn", fake_run_turn)
+        bridge = _new_bridge(tmp_path, events)
+        await bridge._handle_line(_user_input_line("hello"))
+        await started.wait()
+        await bridge._handle_line(
+            json.dumps({"jsonrpc": "2.0", "method": "unknown.method", "params": {}})
+        )
+        assert bridge._active_turn is not None
+        assert not bridge._active_turn.done()
+        allow_complete.set()
+        await bridge._active_turn
+
+    asyncio.run(scenario())
+
+    assert _event_types(events) == [
+        "thread.started",
+        "turn.started",
+        "turn.completed",
+    ]
+    assert events[-1].final_text == "done"
 
 
 def test_unknown_commands_are_ignored_safely(
@@ -223,13 +296,7 @@ def test_unknown_commands_are_ignored_safely(
         return "done"
 
     monkeypatch.setattr(tui_bridge_module, "run_turn", fake_run_turn)
-    bridge = TuiBridge(
-        session=_session(tmp_path),
-        model_client=_FakeModelClient(),
-        tool_router=_FakeToolRouter(),
-        cwd=tmp_path,
-        emit_event=events.append,
-    )
+    bridge = _new_bridge(tmp_path, events)
 
     reader = _reader_with_lines(
         [
@@ -253,7 +320,7 @@ def test_unknown_commands_are_ignored_safely(
     asyncio.run(bridge.run(reader=reader))
 
     assert calls == []
-    assert [event.type for event in events] == ["thread.started"]
+    assert _event_types(events) == ["thread.started"]
 
 
 def test_eof_cancels_active_turn(
@@ -302,23 +369,17 @@ def test_eof_cancels_active_turn(
 
     async def scenario() -> None:
         monkeypatch.setattr(tui_bridge_module, "run_turn", fake_run_turn)
-        bridge = TuiBridge(
-            session=_session(tmp_path),
-            model_client=_FakeModelClient(),
-            tool_router=_FakeToolRouter(),
-            cwd=tmp_path,
-            emit_event=events.append,
-        )
+        bridge = _new_bridge(tmp_path, events)
         await bridge.run(reader=_EofAfterStartReader())
 
     asyncio.run(scenario())
 
-    assert [event.type for event in events] == [
+    assert _event_types(events) == [
         "thread.started",
         "turn.started",
         "turn.failed",
     ]
-    assert events[-1].error == "interrupted"
+    assert events[-1].error == INTERRUPTED_ERROR
 
 
 def test_approval_request_emitted_and_unblocks_on_matching_response(

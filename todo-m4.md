@@ -225,7 +225,7 @@ TypeScript:
     - `pytest tests/core/test_tui_bridge.py -k "interrupt" -v`
     - `cd tui && npm test -- --runInBand --findRelatedTests src/components/InputArea.tsx src/app.tsx`
 
-- [ ] T14: Protocol fallback and contract regression tests
+- [x] T14: Protocol fallback and contract regression tests
   - Add tests for unknown event/command no-op behavior.
   - Add regression checks for abort mapping to `turn.completed` vs interrupt mapping to `turn.failed`.
   - Verify:

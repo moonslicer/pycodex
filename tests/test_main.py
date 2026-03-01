@@ -13,6 +13,8 @@ from pycodex.core.session import Session
 
 pytestmark = pytest.mark.integration
 
+ABORT_TEXT = "Aborted by user."
+
 
 class _FakeModelClient:
     def __init__(self, config: Config) -> None:
@@ -422,6 +424,60 @@ def test_json_flag_turn_failed_after_turn_started_uses_active_turn_id(
     ]
     assert lines[-1]["turn_id"] == "turn_1"
     assert "late boom" in lines[-1]["error"]
+
+
+@pytest.mark.parametrize(
+    "inject_unknown_event",
+    [False, True],
+    ids=["abort-only", "abort-with-unknown-event"],
+)
+def test_json_flag_abort_mapping_ignores_unknown_agent_events(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+    inject_unknown_event: bool,
+) -> None:
+    config = Config(
+        model="test-model",
+        api_key="test-key",
+        cwd=tmp_path,
+    )
+
+    class _UnknownAgentEvent:
+        pass
+
+    async def aborting_run_turn(
+        *,
+        session: Session,
+        model_client: Any,
+        tool_router: Any,
+        cwd: Path,
+        user_input: str,
+        on_event: Any = None,
+    ) -> str:
+        _ = session, model_client, tool_router, cwd, user_input
+        assert on_event is not None
+        on_event(TurnStarted(user_input="hello from cli"))
+        if inject_unknown_event:
+            on_event(_UnknownAgentEvent())
+        on_event(TurnCompleted(final_text=ABORT_TEXT))
+        return ABORT_TEXT
+
+    monkeypatch.setattr(main_module, "load_config", lambda: config)
+    monkeypatch.setattr(main_module, "run_turn", aborting_run_turn)
+
+    exit_code = main_module.main(["--json", "hello from cli"])
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    assert captured.err == ""
+    lines = [json.loads(line) for line in captured.out.splitlines()]
+    assert [line["type"] for line in lines] == [
+        "thread.started",
+        "turn.started",
+        "turn.completed",
+    ]
+    assert lines[-1]["final_text"] == ABORT_TEXT
 
 
 def test_main_json_mode_top_level_exception_reports_stderr(

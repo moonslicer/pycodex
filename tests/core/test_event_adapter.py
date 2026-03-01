@@ -22,6 +22,9 @@ from pycodex.protocol.events import (
 from pycodex.protocol.events import TurnCompleted as ProtocolTurnCompleted
 from pycodex.protocol.events import TurnStarted as ProtocolTurnStarted
 
+ABORT_TEXT = "Aborted by user."
+INTERRUPTED_ERROR = "interrupted"
+
 
 def test_start_thread_emits_adapter_thread_id() -> None:
     adapter = EventAdapter(thread_id="thread_test")
@@ -244,15 +247,31 @@ def test_turn_failed_with_active_turn_uses_current_turn_and_fallback_error_name(
     assert out.error == "RuntimeError"
 
 
-def test_abort_turn_emits_turn_completed_not_failed() -> None:
+@pytest.mark.parametrize(
+    ("scenario", "expected_type"),
+    [
+        ("abort", "turn.completed"),
+        ("interrupt", "turn.failed"),
+    ],
+)
+def test_abort_interrupt_terminal_mapping(scenario: str, expected_type: str) -> None:
     adapter = EventAdapter(thread_id="thread_test")
-    adapter.on_agent_event(TurnStarted(user_input="abort"))
+    adapter.on_agent_event(TurnStarted(user_input=scenario))
 
-    out = adapter.on_agent_event(TurnCompleted(final_text="Aborted by user."))
+    if scenario == "abort":
+        out = adapter.on_agent_event(TurnCompleted(final_text=ABORT_TEXT))
+        assert len(out) == 1
+        event = out[0]
+    else:
+        event = adapter.turn_failed(INTERRUPTED_ERROR)
 
-    assert len(out) == 1
-    assert isinstance(out[0], ProtocolTurnCompleted)
-    assert out[0].type == "turn.completed"
+    assert event.type == expected_type
+    assert event.turn_id == "turn_1"
+    if expected_type == "turn.completed":
+        assert isinstance(event, ProtocolTurnCompleted)
+    else:
+        assert isinstance(event, TurnFailed)
+        assert event.error == INTERRUPTED_ERROR
 
 
 def test_usage_in_turn_completed() -> None:

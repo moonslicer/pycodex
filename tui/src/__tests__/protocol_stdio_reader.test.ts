@@ -87,6 +87,39 @@ describe("StdioReader", () => {
     expect(seenTypes).toEqual([]);
   });
 
+  test("ignores invalid known event payloads as unknown fallback", async () => {
+    const { child, stdout } = createChildProcess();
+    const reader = new StdioReader(child);
+    const seenTypes: string[] = [];
+
+    reader.onEvent((event) => {
+      seenTypes.push(event.type);
+    });
+    reader.start();
+
+    stdout.write(
+      `${JSON.stringify({
+        type: "turn.completed",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+        final_text: "done",
+      })}\n`,
+    );
+    stdout.write(
+      `${JSON.stringify({
+        type: "item.started",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+        item_id: "item_1",
+        item_kind: "not-valid-kind",
+      })}\n`,
+    );
+
+    await waitForAsyncDispatch();
+
+    expect(seenTypes).toEqual([]);
+  });
+
   test("emits close handlers once when stdout closes", async () => {
     const { child, stdout } = createChildProcess();
     const reader = new StdioReader(child);
