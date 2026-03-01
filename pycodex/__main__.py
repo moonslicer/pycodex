@@ -12,6 +12,7 @@ from collections.abc import Awaitable, Callable, Sequence
 from typing import Any
 
 from pycodex.approval.policy import ApprovalPolicy, ApprovalStore, ReviewDecision
+from pycodex.approval.sandbox import SandboxPolicy
 from pycodex.core.agent import AgentEvent, SupportsModelClient, run_turn
 from pycodex.core.config import Config, load_config
 from pycodex.core.event_adapter import EventAdapter
@@ -49,6 +50,12 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Approval policy for mutating tools (default: never).",
     )
     parser.add_argument(
+        "--sandbox",
+        default=SandboxPolicy.DANGER_FULL_ACCESS.value,
+        choices=[policy.value for policy in SandboxPolicy],
+        help="Sandbox policy for tool execution (default: danger-full-access).",
+    )
+    parser.add_argument(
         "--log-level",
         default=os.environ.get("PYCODEX_LOG_LEVEL", "WARNING"),
         choices=["DEBUG", "INFO", "WARNING", "ERROR"],
@@ -80,12 +87,14 @@ def _build_parser() -> argparse.ArgumentParser:
 def _build_tool_router(
     *,
     approval_policy: ApprovalPolicy,
+    sandbox_policy: SandboxPolicy,
     ask_user_fn: AskUserFn | None = None,
 ) -> ToolRouter:
     orchestrator = OrchestratorConfig(
         policy=approval_policy,
         store=ApprovalStore(),
         ask_user_fn=ask_user_fn if ask_user_fn is not None else _ask_user_for_review,
+        sandbox_policy=sandbox_policy,
     )
     registry = ToolRegistry(orchestrator=orchestrator)
     _register_default_tools(registry)
@@ -100,8 +109,16 @@ def _register_default_tools(registry: ToolRegistry) -> None:
     registry.register(GrepFilesTool())
 
 
-async def _run_prompt(prompt: str, *, approval_policy: ApprovalPolicy) -> str:
-    config, session, model_client, tool_router = _build_runtime(approval_policy=approval_policy)
+async def _run_prompt(
+    prompt: str,
+    *,
+    approval_policy: ApprovalPolicy,
+    sandbox_policy: SandboxPolicy,
+) -> str:
+    config, session, model_client, tool_router = _build_runtime(
+        approval_policy=approval_policy,
+        sandbox_policy=sandbox_policy,
+    )
     return await run_turn(
         session=session,
         model_client=model_client,
@@ -114,11 +131,15 @@ async def _run_prompt(prompt: str, *, approval_policy: ApprovalPolicy) -> str:
 def _build_runtime(
     *,
     approval_policy: ApprovalPolicy,
+    sandbox_policy: SandboxPolicy,
 ) -> tuple[Config, Session, SupportsModelClient, ToolRouter]:
     config = load_config()
     session = Session(config=config)
     model_client = _build_model_client(config)
-    tool_router = _build_tool_router(approval_policy=approval_policy)
+    tool_router = _build_tool_router(
+        approval_policy=approval_policy,
+        sandbox_policy=sandbox_policy,
+    )
     return config, session, model_client, tool_router
 
 
@@ -143,8 +164,16 @@ def _render_error_message(exc: Exception) -> str:
     return str(exc).strip() or type(exc).__name__
 
 
-async def _run_prompt_json(prompt: str, *, approval_policy: ApprovalPolicy) -> int:
-    config, session, model_client, tool_router = _build_runtime(approval_policy=approval_policy)
+async def _run_prompt_json(
+    prompt: str,
+    *,
+    approval_policy: ApprovalPolicy,
+    sandbox_policy: SandboxPolicy,
+) -> int:
+    config, session, model_client, tool_router = _build_runtime(
+        approval_policy=approval_policy,
+        sandbox_policy=sandbox_policy,
+    )
     adapter = EventAdapter()
 
     _emit_protocol_event(adapter.start_thread())
@@ -168,7 +197,11 @@ async def _run_prompt_json(prompt: str, *, approval_policy: ApprovalPolicy) -> i
     return 0
 
 
-async def _run_tui_mode(*, approval_policy: ApprovalPolicy) -> int:
+async def _run_tui_mode(
+    *,
+    approval_policy: ApprovalPolicy,
+    sandbox_policy: SandboxPolicy,
+) -> int:
     config = load_config()
     session = Session(config=config)
     model_client = _build_model_client(config)
@@ -180,6 +213,7 @@ async def _run_tui_mode(*, approval_policy: ApprovalPolicy) -> int:
 
     tool_router = _build_tool_router(
         approval_policy=approval_policy,
+        sandbox_policy=sandbox_policy,
         ask_user_fn=_tui_ask_user_fn,
     )
     bridge = TuiBridge(
@@ -229,6 +263,7 @@ def main(argv: Sequence[str] | None = None) -> int:
 
         logging.getLogger().handlers[0].addFilter(_PrefixFilter())
     approval_policy = ApprovalPolicy(args.approval)
+    sandbox_policy = SandboxPolicy(args.sandbox)
     if args.tui_mode:
         if args.json:
             parser.error("--json cannot be used with --tui-mode")
@@ -238,6 +273,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             return asyncio.run(
                 _run_tui_mode(
                     approval_policy=approval_policy,
+                    sandbox_policy=sandbox_policy,
                 )
             )
         except Exception as exc:
@@ -255,6 +291,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                 _run_prompt_json(
                     prompt,
                     approval_policy=approval_policy,
+                    sandbox_policy=sandbox_policy,
                 )
             )
         except Exception as exc:
@@ -267,6 +304,7 @@ def main(argv: Sequence[str] | None = None) -> int:
             _run_prompt(
                 prompt,
                 approval_policy=approval_policy,
+                sandbox_policy=sandbox_policy,
             )
         )
     except Exception as exc:

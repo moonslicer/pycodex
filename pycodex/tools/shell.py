@@ -10,6 +10,7 @@ from asyncio.subprocess import PIPE
 from pathlib import Path
 from typing import Any
 
+from pycodex.approval.sandbox import SandboxPolicy, build_sandbox_argv
 from pycodex.tools.base import ToolError, ToolOutcome, ToolResult
 
 DEFAULT_TIMEOUT_MS = 10_000
@@ -77,56 +78,97 @@ class ShellTool:
         }
 
     async def handle(self, args: dict[str, Any], cwd: Path) -> ToolOutcome:
+        validated = _validate_shell_args(args)
+        if isinstance(validated, ToolError):
+            return validated
+        command, timeout_ms = validated
+        return await _run_command(
+            argv=["bash", "-c", command],
+            cwd=cwd,
+            timeout_ms=timeout_ms,
+        )
+
+    def canonical_command(self, args: dict[str, Any]) -> str | None:
         command = args.get("command")
         if not isinstance(command, str) or not command.strip():
-            return ToolError(
-                message="Invalid arguments: 'command' must be a non-empty string",
-                code="invalid_arguments",
-            )
+            return None
+        return _canonicalize_command_for_approval(command)
 
-        timeout_ms = _resolve_timeout_ms(args)
-        if isinstance(timeout_ms, ToolError):
-            return timeout_ms
-
-        started_at = time.perf_counter()
-        try:
-            process = await asyncio.create_subprocess_exec(
-                "bash",
-                "-c",
-                command,
-                cwd=cwd,
-                stdout=PIPE,
-                stderr=PIPE,
-            )
-        except OSError as exc:
-            return ToolError(message=f"Failed to start command: {exc}", code="start_failed")
-
-        try:
-            stdout_bytes, stderr_bytes = await asyncio.wait_for(
-                process.communicate(),
-                timeout=timeout_ms / 1000,
-            )
-        except TimeoutError:
-            process.kill()
-            await process.communicate()
-            return ToolError(
-                message=f"Command timed out after {timeout_ms}ms",
-                code="timeout",
-            )
-
-        duration_seconds = round(time.perf_counter() - started_at, 1)
-        output_text = _build_output_text(
-            stdout_bytes=stdout_bytes,
-            stderr_bytes=stderr_bytes,
+    async def sandbox_execute(
+        self,
+        args: dict[str, Any],
+        cwd: Path,
+        policy: SandboxPolicy,
+    ) -> ToolOutcome:
+        validated = _validate_shell_args(args)
+        if isinstance(validated, ToolError):
+            return validated
+        command, timeout_ms = validated
+        argv = build_sandbox_argv(command=command, policy=policy, cwd=cwd)
+        return await _run_command(
+            argv=argv,
+            cwd=cwd,
+            timeout_ms=timeout_ms,
         )
-        payload = {
-            "output": output_text,
-            "metadata": {
-                "exit_code": process.returncode,
-                "duration_seconds": duration_seconds,
-            },
-        }
-        return ToolResult(body=payload)
+
+
+def _validate_shell_args(args: dict[str, Any]) -> tuple[str, int] | ToolError:
+    command = args.get("command")
+    if not isinstance(command, str) or not command.strip():
+        return ToolError(
+            message="Invalid arguments: 'command' must be a non-empty string",
+            code="invalid_arguments",
+        )
+
+    timeout_ms = _resolve_timeout_ms(args)
+    if isinstance(timeout_ms, ToolError):
+        return timeout_ms
+    return command, timeout_ms
+
+
+async def _run_command(
+    *,
+    argv: list[str],
+    cwd: Path,
+    timeout_ms: int,
+) -> ToolOutcome:
+    started_at = time.perf_counter()
+    try:
+        process = await asyncio.create_subprocess_exec(
+            *argv,
+            cwd=cwd,
+            stdout=PIPE,
+            stderr=PIPE,
+        )
+    except OSError as exc:
+        return ToolError(message=f"Failed to start command: {exc}", code="start_failed")
+
+    try:
+        stdout_bytes, stderr_bytes = await asyncio.wait_for(
+            process.communicate(),
+            timeout=timeout_ms / 1000,
+        )
+    except TimeoutError:
+        process.kill()
+        await process.communicate()
+        return ToolError(
+            message=f"Command timed out after {timeout_ms}ms",
+            code="timeout",
+        )
+
+    duration_seconds = round(time.perf_counter() - started_at, 1)
+    output_text = _build_output_text(
+        stdout_bytes=stdout_bytes,
+        stderr_bytes=stderr_bytes,
+    )
+    payload = {
+        "output": output_text,
+        "metadata": {
+            "exit_code": process.returncode,
+            "duration_seconds": duration_seconds,
+        },
+    }
+    return ToolResult(body=payload)
 
 
 def _resolve_timeout_ms(args: dict[str, Any]) -> int | ToolError:

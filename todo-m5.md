@@ -177,7 +177,7 @@ Neither bypasses the other:
     - `test_sandbox_unavailable_returns_error`: `_sandbox_execute` raises `SandboxUnavailable` → `ToolError(code="sandbox_unavailable")`.
   - Verify: `pytest tests/tools/test_orchestrator.py -k "sandbox or exec_policy" -v`
 
-- [ ] T4: `tools/shell.py` + `__main__.py` — canonical_command(), sandbox_execute(), --sandbox flag
+- [x] T4: `tools/shell.py` + `__main__.py` — canonical_command(), sandbox_execute(), --sandbox flag
   - Add `ShellTool.canonical_command(args: dict[str, Any]) -> str | None`:
     - Extracts `args.get("command")`; if missing or invalid returns `None`.
     - Returns `_canonicalize_command_for_approval(command)` — reuses the existing normalization so exec policy and approval key share the same canonical form.

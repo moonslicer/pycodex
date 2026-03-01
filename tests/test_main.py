@@ -46,6 +46,16 @@ def test_main_missing_prompt_exits_with_parser_error(capsys: pytest.CaptureFixtu
     assert "usage:" in captured.err
 
 
+def test_sandbox_flag_default_is_danger_full_access() -> None:
+    args = main_module._build_parser().parse_args([])
+    assert args.sandbox == "danger-full-access"
+
+
+def test_sandbox_flag_accepted_values() -> None:
+    args = main_module._build_parser().parse_args(["--sandbox", "read-only", "x"])
+    assert args.sandbox == "read-only"
+
+
 def test_main_json_missing_prompt_exits_with_parser_error(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -64,8 +74,13 @@ def test_tui_mode_runs_tui_dispatch(
 ) -> None:
     seen: dict[str, object] = {}
 
-    async def fake_run_tui_mode(*, approval_policy: main_module.ApprovalPolicy) -> int:
+    async def fake_run_tui_mode(
+        *,
+        approval_policy: main_module.ApprovalPolicy,
+        sandbox_policy: main_module.SandboxPolicy,
+    ) -> int:
         seen["approval_policy"] = approval_policy
+        seen["sandbox_policy"] = sandbox_policy
         return 0
 
     monkeypatch.setattr(main_module, "_run_tui_mode", fake_run_tui_mode)
@@ -73,7 +88,10 @@ def test_tui_mode_runs_tui_dispatch(
     exit_code = main_module.main(["--tui-mode", "--approval", "on-request"])
 
     assert exit_code == 0
-    assert seen == {"approval_policy": main_module.ApprovalPolicy.ON_REQUEST}
+    assert seen == {
+        "approval_policy": main_module.ApprovalPolicy.ON_REQUEST,
+        "sandbox_policy": main_module.SandboxPolicy.DANGER_FULL_ACCESS,
+    }
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err == ""
@@ -103,8 +121,12 @@ def test_tui_mode_top_level_exception_reports_stderr(
     monkeypatch: pytest.MonkeyPatch,
     capsys: pytest.CaptureFixture[str],
 ) -> None:
-    async def failing_run_tui_mode(*, approval_policy: main_module.ApprovalPolicy) -> int:
-        _ = approval_policy
+    async def failing_run_tui_mode(
+        *,
+        approval_policy: main_module.ApprovalPolicy,
+        sandbox_policy: main_module.SandboxPolicy,
+    ) -> int:
+        _ = approval_policy, sandbox_policy
         raise RuntimeError()
 
     monkeypatch.setattr(main_module, "_run_tui_mode", failing_run_tui_mode)
@@ -201,9 +223,15 @@ def test_main_passes_approval_policy_to_run_prompt(
 ) -> None:
     seen: dict[str, object] = {}
 
-    async def fake_run_prompt(prompt: str, *, approval_policy: main_module.ApprovalPolicy) -> str:
+    async def fake_run_prompt(
+        prompt: str,
+        *,
+        approval_policy: main_module.ApprovalPolicy,
+        sandbox_policy: main_module.SandboxPolicy,
+    ) -> str:
         seen["prompt"] = prompt
         seen["approval_policy"] = approval_policy
+        seen["sandbox_policy"] = sandbox_policy
         return "final-answer"
 
     monkeypatch.setattr(main_module, "_run_prompt", fake_run_prompt)
@@ -214,9 +242,151 @@ def test_main_passes_approval_policy_to_run_prompt(
     assert seen == {
         "prompt": "hello from cli",
         "approval_policy": main_module.ApprovalPolicy.ON_REQUEST,
+        "sandbox_policy": main_module.SandboxPolicy.DANGER_FULL_ACCESS,
     }
     captured = capsys.readouterr()
     assert captured.out.strip() == "final-answer"
+
+
+def test_main_passes_explicit_sandbox_policy_to_run_prompt(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    seen: dict[str, object] = {}
+
+    async def fake_run_prompt(
+        prompt: str,
+        *,
+        approval_policy: main_module.ApprovalPolicy,
+        sandbox_policy: main_module.SandboxPolicy,
+    ) -> str:
+        seen["prompt"] = prompt
+        seen["approval_policy"] = approval_policy
+        seen["sandbox_policy"] = sandbox_policy
+        return "final-answer"
+
+    monkeypatch.setattr(main_module, "_run_prompt", fake_run_prompt)
+
+    exit_code = main_module.main(["--sandbox", "workspace-write", "hello from cli"])
+
+    assert exit_code == 0
+    assert seen == {
+        "prompt": "hello from cli",
+        "approval_policy": main_module.ApprovalPolicy.NEVER,
+        "sandbox_policy": main_module.SandboxPolicy.WORKSPACE_WRITE,
+    }
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "final-answer"
+
+
+def test_main_passes_explicit_sandbox_policy_to_run_prompt_json(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    seen: dict[str, object] = {}
+
+    async def fake_run_prompt_json(
+        prompt: str,
+        *,
+        approval_policy: main_module.ApprovalPolicy,
+        sandbox_policy: main_module.SandboxPolicy,
+    ) -> int:
+        seen["prompt"] = prompt
+        seen["approval_policy"] = approval_policy
+        seen["sandbox_policy"] = sandbox_policy
+        return 0
+
+    monkeypatch.setattr(main_module, "_run_prompt_json", fake_run_prompt_json)
+
+    exit_code = main_module.main(["--json", "--sandbox", "read-only", "hello from cli"])
+
+    assert exit_code == 0
+    assert seen == {
+        "prompt": "hello from cli",
+        "approval_policy": main_module.ApprovalPolicy.NEVER,
+        "sandbox_policy": main_module.SandboxPolicy.READ_ONLY,
+    }
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
+
+
+def test_sandbox_flag_wires_to_orchestrator_config(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = Config(
+        model="test-model",
+        api_key="test-key",
+        cwd=tmp_path,
+    )
+    seen: dict[str, object] = {}
+
+    def fake_build_tool_router(
+        *,
+        approval_policy: main_module.ApprovalPolicy,
+        sandbox_policy: main_module.SandboxPolicy,
+        ask_user_fn: main_module.AskUserFn | None = None,
+    ) -> Any:
+        seen["approval_policy"] = approval_policy
+        seen["sandbox_policy"] = sandbox_policy
+        seen["ask_user_fn"] = ask_user_fn
+        return main_module.ToolRouter(main_module.ToolRegistry())
+
+    async def fake_run_turn(
+        *,
+        session: Session,
+        model_client: Any,
+        tool_router: Any,
+        cwd: Path,
+        user_input: str,
+    ) -> str:
+        _ = session, model_client, tool_router, cwd, user_input
+        return "final-answer"
+
+    monkeypatch.setattr(main_module, "load_config", lambda: config)
+    monkeypatch.setattr(main_module, "ModelClient", _FakeModelClient)
+    monkeypatch.setattr(main_module, "_build_tool_router", fake_build_tool_router)
+    monkeypatch.setattr(main_module, "run_turn", fake_run_turn)
+
+    exit_code = main_module.main(["--sandbox", "read-only", "hello from cli"])
+
+    assert exit_code == 0
+    assert seen["approval_policy"] == main_module.ApprovalPolicy.NEVER
+    assert seen["sandbox_policy"] == main_module.SandboxPolicy.READ_ONLY
+    assert seen["ask_user_fn"] is None
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "final-answer"
+
+
+def test_tui_mode_passes_explicit_sandbox_policy(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    seen: dict[str, object] = {}
+
+    async def fake_run_tui_mode(
+        *,
+        approval_policy: main_module.ApprovalPolicy,
+        sandbox_policy: main_module.SandboxPolicy,
+    ) -> int:
+        seen["approval_policy"] = approval_policy
+        seen["sandbox_policy"] = sandbox_policy
+        return 0
+
+    monkeypatch.setattr(main_module, "_run_tui_mode", fake_run_tui_mode)
+
+    exit_code = main_module.main(["--tui-mode", "--sandbox", "workspace-write"])
+
+    assert exit_code == 0
+    assert seen == {
+        "approval_policy": main_module.ApprovalPolicy.NEVER,
+        "sandbox_policy": main_module.SandboxPolicy.WORKSPACE_WRITE,
+    }
+    captured = capsys.readouterr()
+    assert captured.out == ""
+    assert captured.err == ""
 
 
 def test_build_model_client_uses_real_model_client_by_default(
@@ -536,8 +706,9 @@ def test_main_json_mode_top_level_exception_reports_stderr(
         prompt: str,
         *,
         approval_policy: main_module.ApprovalPolicy,
+        sandbox_policy: main_module.SandboxPolicy,
     ) -> int:
-        _ = prompt, approval_policy
+        _ = prompt, approval_policy, sandbox_policy
         raise RuntimeError()
 
     monkeypatch.setattr(main_module, "_run_prompt_json", failing_run_prompt_json)
