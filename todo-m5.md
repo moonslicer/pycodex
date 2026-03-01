@@ -2,7 +2,7 @@
 
 ## Goal
 Add defense-in-depth for shell command execution:
-1. deterministic command classification in `approval/exec_policy.py` (`ALLOW | PROMPT | FORBIDDEN`) using a canonicalized prefix-rule matcher,
+1. deterministic command classification in `approval/exec_policy.py` (`ALLOW | PROMPT | FORBIDDEN`) using a canonicalized, token-boundary-aware prefix-rule matcher,
 2. sandbox policy domain in `approval/sandbox.py` (`danger-full-access | read-only | workspace-write`) with platform-native adapters and fail-visible unavailability,
 3. orchestrator wiring in `tools/orchestrator.py` — two new optional `OrchestratorConfig` fields and the decision matrix as the authoritative dispatch table,
 4. `ShellTool.sandbox_execute()` + `--sandbox` CLI flag for end-to-end verification.
@@ -75,6 +75,8 @@ Neither bypasses the other:
 - `ShellTool.canonical_command(args)` and `ShellTool.sandbox_execute(args, cwd, policy)` are optional duck-typed methods — not added to `ToolHandler` protocol.
 - `classify()` is a pure function: no I/O, no imports from `tools/` or `core/`.
 - Exec policy classification uses the canonicalized command string (same normalization as `_canonicalize_command_for_approval` in `shell.py`).
+- Rule matching in `classify()` is token-boundary aware by contract: a prefix matches only on exact command or next-char-is-whitespace. Bare-word prefixes (`"ls"`, `"cat"`, `"env"`, …) must not match commands that merely start with the same letters (`lsof`, `catapult`, `envsubst`). This is a security property, not an implementation detail.
+- `heuristics`, when provided, receives the **original** `command` argument (pre-strip); callers must not rely on receiving a whitespace-stripped string.
 - `SandboxUnavailable` is raised (not silently swallowed) when a restrictive sandbox policy is active and no native adapter is found.
 - All M2 contracts preserved: `ABORT` terminal, `DENIED` non-terminal, `ToolAborted` propagates.
 - Existing `ON_FAILURE` tests (no-sandbox path) pass unchanged.
@@ -100,13 +102,13 @@ Neither bypasses the other:
 
 ## TODO Tasks
 
-- [ ] T1: `approval/exec_policy.py` — ExecDecision enum + classify() + DEFAULT_RULES + default_heuristics
+- [x] T1: `approval/exec_policy.py` — ExecDecision enum + classify() + DEFAULT_RULES + default_heuristics
   - Define `ExecDecision(StrEnum)` with values `ALLOW = "allow"`, `PROMPT = "prompt"`, `FORBIDDEN = "forbidden"`.
   - Implement `classify(command: str, rules: list[tuple[str, ExecDecision]], heuristics: Callable[[str], ExecDecision] | None = None) -> ExecDecision`:
     - `command` is the pre-canonicalized command string (caller's responsibility).
-    - Iterate `rules` in order; if `command` starts with the prefix (after stripping leading whitespace), return that `ExecDecision`. First match wins.
-    - If no rule matches: call `heuristics(command)` if provided, else return `PROMPT`.
-  - Export `DEFAULT_RULES: list[tuple[str, ExecDecision]]` — a sensible baseline covering the most impactful cases (e.g. `"rm -rf /"` → `FORBIDDEN`, `"rm -rf ~"` → `FORBIDDEN`, `"ls"` / `"cat"` / `"echo"` / `"pwd"` / `"which"` / `"env"` → `ALLOW`; all others implicitly `PROMPT` via heuristics).
+    - Strip leading whitespace internally for rule matching. Matching is **token-boundary aware**: a prefix matches only when the stripped command equals the prefix exactly or the character immediately after the prefix is ASCII whitespace (` ` or `\t`). This prevents bare-word entries like `"ls"` from matching `lsof`, `catapult`, or any command that merely shares the same leading characters. First match wins.
+    - If no rule matches: call `heuristics(command)` (the **original un-stripped** input, not the internally stripped form) if provided, else return `PROMPT`.
+  - Export `DEFAULT_RULES: list[tuple[str, ExecDecision]]` — a sensible baseline covering the most impactful cases (e.g. `"rm -rf"` → `FORBIDDEN` (broad, catches all targets), `"ls"` / `"cat"` / `"echo"` / `"pwd"` / `"which"` / `"env"` → `ALLOW`; all others implicitly `PROMPT` via heuristics). **Note**: FORBIDDEN rules use `"rm -rf"` rather than the narrower `"rm -rf /"` + `"rm -rf ~"` pair; with token-boundary matching this safely catches `rm -rf <any-target>` as a single rule.
   - Export `default_heuristics(command: str) -> ExecDecision` — returns `PROMPT` for anything not covered by rules; can be extended later.
   - Module has zero imports from `tools/`, `core/`, or `approval/policy.py`.
   - Tests (`tests/approval/test_exec_policy.py`):

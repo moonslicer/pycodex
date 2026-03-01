@@ -363,8 +363,8 @@ Detailed sub-milestone breakdown is in `tui-plan.md`. Summary of execution plan:
 
 1. **Command classification in `approval/exec_policy.py`**
    - Define `ExecDecision` enum: `ALLOW | PROMPT | FORBIDDEN`.
-   - Implement `classify(command: str, rules: list[tuple[str, ExecDecision]], heuristics: Callable[[str], ExecDecision] | None = None) -> ExecDecision`. Rules are checked in order against the **canonicalized** command string (same normalization as `_canonicalize_command_for_approval` in `shell.py` — handles wrapper forms like `/bin/bash -lc`, whitespace, and equivalent aliases). First prefix match wins; if no rule matches, call `heuristics` if provided, else return `PROMPT`.
-   - Export `DEFAULT_RULES` and `default_heuristics` as importable defaults, not hardcoded into `classify`. Both can be overridden or extended by callers.
+   - Implement `classify(command: str, rules: list[tuple[str, ExecDecision]], heuristics: Callable[[str], ExecDecision] | None = None) -> ExecDecision`. Rules are checked in order against the **canonicalized** command string (same normalization as `_canonicalize_command_for_approval` in `shell.py` — handles wrapper forms like `/bin/bash -lc`, whitespace, and equivalent aliases). Matching is **token-boundary aware**: a prefix matches only when the stripped command equals the prefix exactly or the next character is ASCII whitespace — bare-word entries like `"ls"` must not match `lsof`, `catapult`, or similar commands that share the same leading characters. First match wins; if no rule matches, call `heuristics(command)` (original un-stripped input) if provided, else return `PROMPT`.
+   - Export `DEFAULT_RULES` and `default_heuristics` as importable defaults, not hardcoded into `classify`. Both can be overridden or extended by callers. `DEFAULT_RULES` FORBIDDEN entries use the broader `"rm -rf"` prefix (catches all targets, not just `/` and `~`).
    - The classifier is a pure function — no I/O, no side effects.
    - Value: deterministic command-safety decisions independent of execution context; canonicalization closes the most common evasion vectors.
    - Verification: `pytest tests/approval/test_exec_policy.py -q`
@@ -421,7 +421,7 @@ Detailed sub-milestone breakdown is in `tui-plan.md`. Summary of execution plan:
 
 ### Milestone 6: Context Management + Polish
 
-**Goal**: Token tracking, auto-compaction, session persistence, configuration, and transport upgrade from stdio pipes to local server.
+**Goal**: Token tracking, planner-driven execution, skill extensibility, web-search tool integration, auto-compaction, session persistence, configuration, and transport upgrade from stdio pipes to local server.
 
 #### Milestone 6 execution plan (clear, incremental, verifiable)
 
@@ -430,27 +430,45 @@ Detailed sub-milestone breakdown is in `tui-plan.md`. Summary of execution plan:
    - Value: objective context-budget visibility.
    - Verification: `pytest tests/core/test_token_usage.py -q`
 
-2. **Auto-compaction policy + executor**
+2. **Implementing planner**
+   - Add a planner component that tracks explicit task steps (`pending | in_progress | completed`) and updates them as tool calls complete.
+   - Surface planner state via protocol events and render it in CLI/TUI status so progress is visible during long runs.
+   - Value: improves reliability for multi-step tasks by making execution intent and progress explicit.
+   - Verification: `pytest tests/core/test_planner.py tests/core/test_event_adapter.py -k plan -q`
+
+3. **Auto-compaction policy + executor**
    - Trigger near context window threshold; replace older context with deterministic summary block.
    - Value: keeps long sessions functional with bounded prompt growth.
    - Verification: `pytest tests/core/test_compaction.py -q`
 
-3. **Session persistence and resume**
+4. **Session persistence and resume**
    - Persist history/config to `~/.pycodex/sessions/<id>.json`; add resume entrypoint.
    - Value: continuity across runs and recoverability after interruption.
    - Verification: `pytest tests/core/test_session_persistence.py tests/test_main.py -k resume -q`
 
-4. **User config loading**
+5. **User config loading**
    - Add `~/.pycodex/config.toml` defaults and override precedence documentation/tests.
    - Value: reproducible local behavior without long CLI flags.
    - Verification: `pytest tests/core/test_config.py -k toml -q`
 
-5. **Runtime resiliency pass**
+6. **Skills system integration**
+   - Add skill discovery/loader plumbing from `$CODEX_HOME/skills` and expose selected skills to the planner/agent as explicit execution context.
+   - Enforce deterministic skill resolution rules (named skill first, minimal file loading, fallback behavior when skill files are missing).
+   - Value: enables reusable task-specific workflows without hardcoding behavior into core agent logic.
+   - Verification: `pytest tests/core/test_skill_loader.py tests/core/test_agent.py -k skill -q`
+
+7. **Web search tooling**
+   - Add network-backed `web_search` / `web_fetch` tools with explicit domain allowlisting and approval-aware execution in the orchestrator.
+   - Standardize tool outputs (title, URL, snippet, timestamp/source metadata) and include deterministic fixtures for harness tests.
+   - Value: enables current-information retrieval while preserving auditability and safety boundaries.
+   - Verification: `pytest tests/tools/test_web_search.py tests/tools/test_orchestrator.py -k web -q`
+
+8. **Runtime resiliency pass**
    - Finalize retry/backoff, tool timeout boundaries, and Ctrl+C interruption behavior.
    - Value: safer long-running interactive operation.
    - Verification: `pytest tests/e2e/test_cli_tool_failures.py tests/e2e/test_interrupts.py -q`
 
-6. **Transport upgrade: stdio pipe → WebSocket / Unix socket**
+9. **Transport upgrade: stdio pipe → WebSocket / Unix socket**
    - **Why**: The JSON-RPC envelope established in M4 is transport-agnostic by design. Upgrading the transport from stdio pipes to a local WebSocket server enables multi-client scenarios (VS Code extension, web UI, remote access) without any protocol changes.
    - **Python side**: Add `core/server.py` — `asyncio` WebSocket server (`websockets` library) that accepts connections and runs the same `TuiBridge` command-dispatch logic. Python starts listening on a Unix socket or `localhost:<port>` instead of reading from `sys.stdin`; it still emits JSONL to the socket instead of `sys.stdout`.
    - **TypeScript side**: Replace `child.stdout`/`child.stdin` pipe wiring in `index.ts` with a WebSocket client (`ws` package). `protocol/reader.ts` and `protocol/writer.ts` swap their underlying I/O from readline streams to WebSocket messages — the JSON-RPC message format is identical.
