@@ -10,35 +10,36 @@ This document defines how to evaluate agent behavior changes.
 ## Required Command
 - `pytest tests/agent_harness/ -v`
 
-Run this command when changing:
+Run harness tests when changing:
 - Prompts/system instructions
 - Tool routing or tool argument schemas
 - Approval/sandbox policy behavior
 - Agent loop or event protocol behavior
 
-## CLI Integration and E2E
-Use marker-based CLI tests for milestone-level validation outside `tests/agent_harness/`.
+Also run smoke coverage explicitly for agent behavior/policy/orchestration work:
 
-- Integration marker: `pytest tests/ -m "integration" -v`
-- E2E marker: `pytest tests/ -m "e2e" -v`
+- `pytest tests/agent_harness/test_smoke.py -v`
+
+## Related Test Layers
+
+- Integration coverage: `pytest tests/ -m "integration" -v`
+- E2E coverage: `pytest tests/ -m "e2e" -v` (opt-in; requires env vars like `OPENAI_API_KEY`)
 
 Rules:
 - Integration tests must be deterministic and avoid live network calls.
-- E2E tests may call live services but must be opt-in and gate on required env vars.
-- OpenAI live E2E requires `OPENAI_API_KEY`; if missing, the test should skip.
-- If the OpenAI endpoint is unreachable in the current environment, the live E2E should skip instead of failing unrelated CI jobs.
+- E2E tests may call live services but must skip when required credentials or endpoint availability are missing.
+- Harness assertions should validate contract behavior (tool selection, args shape, approval path, event ordering), not stylistic output wording.
 
 ## Harness Layout
 - `tests/agent_harness/fixtures/`: canned inputs and expected outputs/metadata
 - `tests/agent_harness/test_*.py`: scenario assertions
 
-## Milestone 2 Coverage Snapshot
-- Approval-policy harness coverage lives in:
-  - `tests/agent_harness/test_approval_policy_scenarios.py`
-- Required scenarios covered:
-  - denied decision returns structured denied tool result and turn continues
-  - abort decision stops the active turn immediately
-  - approved-for-session decision skips the second prompt for the same operation
+## Current Core Scenarios
+
+Core approval-policy scenarios live in `tests/agent_harness/test_approval_policy_scenarios.py`:
+- denied decision returns structured denied tool result and turn continues
+- abort decision stops the active turn immediately
+- approved-for-session decision skips the second prompt for the same operation
 
 ## Minimum Scenario Shape
 Each scenario should define:
