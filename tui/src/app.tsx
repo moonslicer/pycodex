@@ -31,7 +31,7 @@ export function isInputDisabled(
   return hasActiveTurn || queueLength > 0 || hasPendingUserInput;
 }
 
-export function summarizeUsageForTurns(
+function summarizeUsageForTurns(
   turns: readonly TurnState[],
 ): {
   cumulativeUsage: TokenUsage | null;

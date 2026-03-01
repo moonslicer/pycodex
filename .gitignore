@@ -26,3 +26,8 @@ pycodex.toml
 .env
 .env.*
 !.env.example
+
+# TUI generated artifacts
+tui/node_modules/
+tui/dist/
+tui/coverage/

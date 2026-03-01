@@ -65,7 +65,7 @@ type TurnRowProps = {
   turn: TurnState;
 };
 
-export type TurnRenderSection = "user" | "tool" | "assistant";
+type TurnRenderSection = "user" | "tool" | "assistant";
 
 export function formatUserMessageLines(text: string): string[] {
   return text.split("\n").map((line) => `> ${line}`);

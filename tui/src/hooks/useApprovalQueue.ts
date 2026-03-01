@@ -12,7 +12,7 @@ export type ApprovalRequest = {
   preview: string;
 };
 
-export type ApprovalQueueState = {
+type ApprovalQueueState = {
   queue: ApprovalRequest[];
 };
 
@@ -142,7 +142,7 @@ export function approvalQueueReducer(
   return reduceApprovalQueue(state, action.event);
 }
 
-export type ApprovalQueueDispatch = {
+type ApprovalQueueDispatch = {
   currentRequest: ApprovalRequest | null;
   decisionLog: readonly ApprovalDecisionLog[];
   queueLength: number;

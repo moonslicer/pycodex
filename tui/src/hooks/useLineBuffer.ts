@@ -1,5 +1,3 @@
-import { useReducer, type Dispatch } from "react";
-
 export type LineBufferState = {
   committed: string[];
   partial: string;
@@ -53,11 +51,4 @@ export function reduceLineBuffer(
       return state;
     }
   }
-}
-
-export function useLineBuffer(): [
-  LineBufferState,
-  Dispatch<LineBufferAction>,
-] {
-  return useReducer(reduceLineBuffer, INITIAL_LINE_BUFFER_STATE);
 }

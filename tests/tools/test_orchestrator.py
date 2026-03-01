@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+from collections.abc import Awaitable, Callable
 from pathlib import Path
 from typing import Any
 
@@ -78,23 +79,178 @@ class _PromptLockProbeMutatingTool(_MutatingTool):
         return await super().handle(args, cwd)
 
 
-async def test_execute_with_approval_read_only_bypasses_prompt(tmp_path: Path) -> None:
-    tool = _ReadOnlyTool()
-    store = ApprovalStore()
+AskUserFn = Callable[[Any, dict[str, Any]], Awaitable[ReviewDecision]]
+
+
+async def _execute_tool(
+    *,
+    tool: Any,
+    args: dict[str, Any],
+    cwd: Path,
+    policy: ApprovalPolicy,
+    store: ApprovalStore,
+    ask_user_fn: AskUserFn,
+) -> ToolResult | ToolError:
+    return await execute_with_approval(
+        tool=tool,
+        args=args,
+        cwd=cwd,
+        policy=policy,
+        store=store,
+        ask_user_fn=ask_user_fn,
+    )
+
+
+def _start_execute_tool_task(
+    *,
+    tool: Any,
+    args: dict[str, Any],
+    cwd: Path,
+    policy: ApprovalPolicy,
+    store: ApprovalStore,
+    ask_user_fn: AskUserFn,
+) -> asyncio.Task[ToolResult | ToolError]:
+    return asyncio.create_task(
+        _execute_tool(
+            tool=tool,
+            args=args,
+            cwd=cwd,
+            policy=policy,
+            store=store,
+            ask_user_fn=ask_user_fn,
+        )
+    )
+
+
+async def _execute_with_constant_prompt_decision(
+    *,
+    tool: Any,
+    args: dict[str, Any],
+    cwd: Path,
+    policy: ApprovalPolicy,
+    store: ApprovalStore,
+    decision: ReviewDecision,
+) -> tuple[ToolResult | ToolError, int]:
     ask_count = 0
 
     async def ask_user_fn(_tool: Any, _args: dict[str, Any]) -> ReviewDecision:
         nonlocal ask_count
         ask_count += 1
-        return ReviewDecision.APPROVED
+        return decision
 
-    outcome = await execute_with_approval(
+    outcome = await _execute_tool(
+        tool=tool,
+        args=args,
+        cwd=cwd,
+        policy=policy,
+        store=store,
+        ask_user_fn=ask_user_fn,
+    )
+    return outcome, ask_count
+
+
+async def _run_parallel_shared_key_requests(
+    *,
+    tool: Any,
+    store: ApprovalStore,
+    cwd: Path,
+    ask_user_fn: AskUserFn,
+    first_prompt_entered: asyncio.Event,
+    release_first_prompt: asyncio.Event,
+) -> tuple[ToolResult | ToolError, ToolResult | ToolError]:
+    task_one = _start_execute_tool_task(
+        tool=tool,
+        args={"x": 1},
+        cwd=cwd,
+        policy=ApprovalPolicy.ON_REQUEST,
+        store=store,
+        ask_user_fn=ask_user_fn,
+    )
+    await first_prompt_entered.wait()
+    task_two = _start_execute_tool_task(
+        tool=tool,
+        args={"x": 1},
+        cwd=cwd,
+        policy=ApprovalPolicy.ON_REQUEST,
+        store=store,
+        ask_user_fn=ask_user_fn,
+    )
+    release_first_prompt.set()
+    first, second = await asyncio.gather(task_one, task_two)
+    return first, second
+
+
+async def _execute_shell_pair(
+    *,
+    tool: _CanonicalShellKeyMutatingTool,
+    store: ApprovalStore,
+    cwd: Path,
+    ask_user_fn: AskUserFn,
+    first_args: dict[str, Any],
+    second_args: dict[str, Any],
+) -> tuple[ToolResult | ToolError, ToolResult | ToolError]:
+    first = await _execute_tool(
+        tool=tool,
+        args=first_args,
+        cwd=cwd,
+        policy=ApprovalPolicy.ON_REQUEST,
+        store=store,
+        ask_user_fn=ask_user_fn,
+    )
+    second = await _execute_tool(
+        tool=tool,
+        args=second_args,
+        cwd=cwd,
+        policy=ApprovalPolicy.ON_REQUEST,
+        store=store,
+        ask_user_fn=ask_user_fn,
+    )
+    return first, second
+
+
+async def _assert_parallel_prompts_once(
+    *,
+    tool: Any,
+    store: ApprovalStore,
+    cwd: Path,
+) -> None:
+    ask_count = 0
+    first_prompt_entered = asyncio.Event()
+    release_first_prompt = asyncio.Event()
+
+    async def ask_user_fn(_tool: Any, _args: dict[str, Any]) -> ReviewDecision:
+        nonlocal ask_count
+        ask_count += 1
+        if ask_count == 1:
+            first_prompt_entered.set()
+            await release_first_prompt.wait()
+        return ReviewDecision.APPROVED_FOR_SESSION
+
+    first, second = await _run_parallel_shared_key_requests(
+        tool=tool,
+        store=store,
+        cwd=cwd,
+        ask_user_fn=ask_user_fn,
+        first_prompt_entered=first_prompt_entered,
+        release_first_prompt=release_first_prompt,
+    )
+
+    assert isinstance(first, ToolResult)
+    assert isinstance(second, ToolResult)
+    assert ask_count == 1
+    assert tool.calls == 2
+
+
+async def test_execute_with_approval_read_only_bypasses_prompt(tmp_path: Path) -> None:
+    tool = _ReadOnlyTool()
+    store = ApprovalStore()
+    outcome, ask_count = await _execute_with_constant_prompt_decision(
         tool=tool,
         args={"x": 1},
         cwd=tmp_path,
         policy=ApprovalPolicy.ON_REQUEST,
         store=store,
-        ask_user_fn=ask_user_fn,
+        decision=ReviewDecision.APPROVED,
     )
 
     assert isinstance(outcome, ToolResult)
@@ -105,20 +261,13 @@ async def test_execute_with_approval_read_only_bypasses_prompt(tmp_path: Path) -
 async def test_execute_with_approval_never_auto_approves_without_prompt(tmp_path: Path) -> None:
     tool = _MutatingTool()
     store = ApprovalStore()
-    ask_count = 0
-
-    async def ask_user_fn(_tool: Any, _args: dict[str, Any]) -> ReviewDecision:
-        nonlocal ask_count
-        ask_count += 1
-        return ReviewDecision.DENIED
-
-    outcome = await execute_with_approval(
+    outcome, ask_count = await _execute_with_constant_prompt_decision(
         tool=tool,
         args={"x": 1},
         cwd=tmp_path,
         policy=ApprovalPolicy.NEVER,
         store=store,
-        ask_user_fn=ask_user_fn,
+        decision=ReviewDecision.DENIED,
     )
 
     assert isinstance(outcome, ToolResult)
@@ -131,20 +280,13 @@ async def test_execute_with_approval_on_failure_auto_approves_without_prompt(
 ) -> None:
     tool = _MutatingTool()
     store = ApprovalStore()
-    ask_count = 0
-
-    async def ask_user_fn(_tool: Any, _args: dict[str, Any]) -> ReviewDecision:
-        nonlocal ask_count
-        ask_count += 1
-        return ReviewDecision.DENIED
-
-    outcome = await execute_with_approval(
+    outcome, ask_count = await _execute_with_constant_prompt_decision(
         tool=tool,
         args={"x": 1},
         cwd=tmp_path,
         policy=ApprovalPolicy.ON_FAILURE,
         store=store,
-        ask_user_fn=ask_user_fn,
+        decision=ReviewDecision.DENIED,
     )
 
     assert isinstance(outcome, ToolResult)
@@ -157,21 +299,14 @@ async def test_execute_with_approval_on_request_approved_executes_and_does_not_c
 ) -> None:
     tool = _MutatingTool()
     store = ApprovalStore()
-    ask_count = 0
     key = {"tool": "mutating", "args": {"x": 1}}
-
-    async def ask_user_fn(_tool: Any, _args: dict[str, Any]) -> ReviewDecision:
-        nonlocal ask_count
-        ask_count += 1
-        return ReviewDecision.APPROVED
-
-    outcome = await execute_with_approval(
+    outcome, ask_count = await _execute_with_constant_prompt_decision(
         tool=tool,
         args={"x": 1},
         cwd=tmp_path,
         policy=ApprovalPolicy.ON_REQUEST,
         store=store,
-        ask_user_fn=ask_user_fn,
+        decision=ReviewDecision.APPROVED,
     )
 
     assert isinstance(outcome, ToolResult)
@@ -193,7 +328,7 @@ async def test_execute_with_approval_on_request_approved_for_session_caches(
         ask_count += 1
         return ReviewDecision.APPROVED_FOR_SESSION
 
-    first = await execute_with_approval(
+    first = await _execute_tool(
         tool=tool,
         args={"x": 1},
         cwd=tmp_path,
@@ -201,7 +336,7 @@ async def test_execute_with_approval_on_request_approved_for_session_caches(
         store=store,
         ask_user_fn=ask_user_fn,
     )
-    second = await execute_with_approval(
+    second = await _execute_tool(
         tool=tool,
         args={"x": 1},
         cwd=tmp_path,
@@ -220,20 +355,13 @@ async def test_execute_with_approval_on_request_approved_for_session_caches(
 async def test_execute_with_approval_denied_returns_tool_error(tmp_path: Path) -> None:
     tool = _MutatingTool()
     store = ApprovalStore()
-    ask_count = 0
-
-    async def ask_user_fn(_tool: Any, _args: dict[str, Any]) -> ReviewDecision:
-        nonlocal ask_count
-        ask_count += 1
-        return ReviewDecision.DENIED
-
-    outcome = await execute_with_approval(
+    outcome, ask_count = await _execute_with_constant_prompt_decision(
         tool=tool,
         args={"x": 1},
         cwd=tmp_path,
         policy=ApprovalPolicy.ON_REQUEST,
         store=store,
-        ask_user_fn=ask_user_fn,
+        decision=ReviewDecision.DENIED,
     )
 
     assert isinstance(outcome, ToolError)
@@ -250,7 +378,7 @@ async def test_execute_with_approval_abort_raises_tool_aborted(tmp_path: Path) -
         return ReviewDecision.ABORT
 
     with pytest.raises(ToolAborted, match="mutating"):
-        await execute_with_approval(
+        await _execute_tool(
             tool=tool,
             args={"x": 1},
             cwd=tmp_path,
@@ -267,20 +395,13 @@ async def test_execute_with_approval_cache_hit_skips_prompt(tmp_path: Path) -> N
     store = ApprovalStore()
     key = {"tool": "mutating", "args": {"x": 1}}
     store.put(key, ReviewDecision.APPROVED_FOR_SESSION)
-    ask_count = 0
-
-    async def ask_user_fn(_tool: Any, _args: dict[str, Any]) -> ReviewDecision:
-        nonlocal ask_count
-        ask_count += 1
-        return ReviewDecision.APPROVED
-
-    outcome = await execute_with_approval(
+    outcome, ask_count = await _execute_with_constant_prompt_decision(
         tool=tool,
         args={"x": 1},
         cwd=tmp_path,
         policy=ApprovalPolicy.ON_REQUEST,
         store=store,
-        ask_user_fn=ask_user_fn,
+        decision=ReviewDecision.APPROVED,
     )
 
     assert isinstance(outcome, ToolResult)
@@ -292,20 +413,13 @@ async def test_execute_with_approval_uses_tool_specific_approval_key(tmp_path: P
     tool = _PathKeyMutatingTool()
     store = ApprovalStore()
     store.put("/tmp/example.txt", ReviewDecision.APPROVED_FOR_SESSION)
-    ask_count = 0
-
-    async def ask_user_fn(_tool: Any, _args: dict[str, Any]) -> ReviewDecision:
-        nonlocal ask_count
-        ask_count += 1
-        return ReviewDecision.APPROVED
-
-    outcome = await execute_with_approval(
+    outcome, ask_count = await _execute_with_constant_prompt_decision(
         tool=tool,
         args={"file_path": "x.txt", "content": "hi"},
         cwd=tmp_path,
         policy=ApprovalPolicy.ON_REQUEST,
         store=store,
-        ask_user_fn=ask_user_fn,
+        decision=ReviewDecision.APPROVED,
     )
 
     assert isinstance(outcome, ToolResult)
@@ -328,21 +442,13 @@ async def test_execute_with_approval_canonicalizes_shell_wrapper_approval_key(
     first_args = {"command": 'bash -lc "ls -la"'}
     second_args = {"command": '/bin/bash -lc "ls   -la"'}
 
-    first = await execute_with_approval(
+    first, second = await _execute_shell_pair(
         tool=tool,
-        args=first_args,
-        cwd=tmp_path,
-        policy=ApprovalPolicy.ON_REQUEST,
         store=store,
-        ask_user_fn=ask_user_fn,
-    )
-    second = await execute_with_approval(
-        tool=tool,
-        args=second_args,
         cwd=tmp_path,
-        policy=ApprovalPolicy.ON_REQUEST,
-        store=store,
         ask_user_fn=ask_user_fn,
+        first_args=first_args,
+        second_args=second_args,
     )
 
     assert isinstance(first, ToolResult)
@@ -367,21 +473,13 @@ async def test_execute_with_approval_keeps_shell_semantic_variants_separate(
     first_args = {"command": 'bash -lc "echo $HOME"'}
     second_args = {"command": "bash -lc \"echo '$HOME'\""}
 
-    first = await execute_with_approval(
+    first, second = await _execute_shell_pair(
         tool=tool,
-        args=first_args,
-        cwd=tmp_path,
-        policy=ApprovalPolicy.ON_REQUEST,
         store=store,
-        ask_user_fn=ask_user_fn,
-    )
-    second = await execute_with_approval(
-        tool=tool,
-        args=second_args,
         cwd=tmp_path,
-        policy=ApprovalPolicy.ON_REQUEST,
-        store=store,
         ask_user_fn=ask_user_fn,
+        first_args=first_args,
+        second_args=second_args,
     )
 
     assert isinstance(first, ToolResult)
@@ -396,20 +494,13 @@ async def test_execute_with_approval_normalizes_approval_key_provider_exceptions
 ) -> None:
     tool = _RaisingApprovalKeyMutatingTool()
     store = ApprovalStore()
-    ask_count = 0
-
-    async def ask_user_fn(_tool: Any, _args: dict[str, Any]) -> ReviewDecision:
-        nonlocal ask_count
-        ask_count += 1
-        return ReviewDecision.APPROVED
-
-    outcome = await execute_with_approval(
+    outcome, ask_count = await _execute_with_constant_prompt_decision(
         tool=tool,
         args={"x": 1},
         cwd=tmp_path,
         policy=ApprovalPolicy.ON_REQUEST,
         store=store,
-        ask_user_fn=ask_user_fn,
+        decision=ReviewDecision.APPROVED,
     )
 
     assert isinstance(outcome, ToolError)
@@ -422,47 +513,7 @@ async def test_execute_with_approval_normalizes_approval_key_provider_exceptions
 async def test_execute_with_approval_concurrent_shared_key_prompts_once(tmp_path: Path) -> None:
     tool = _MutatingTool()
     store = ApprovalStore()
-    ask_count = 0
-    first_prompt_entered = asyncio.Event()
-    release_first_prompt = asyncio.Event()
-
-    async def ask_user_fn(_tool: Any, _args: dict[str, Any]) -> ReviewDecision:
-        nonlocal ask_count
-        ask_count += 1
-        if ask_count == 1:
-            first_prompt_entered.set()
-            await release_first_prompt.wait()
-        return ReviewDecision.APPROVED_FOR_SESSION
-
-    task_one = asyncio.create_task(
-        execute_with_approval(
-            tool=tool,
-            args={"x": 1},
-            cwd=tmp_path,
-            policy=ApprovalPolicy.ON_REQUEST,
-            store=store,
-            ask_user_fn=ask_user_fn,
-        )
-    )
-    await first_prompt_entered.wait()
-    task_two = asyncio.create_task(
-        execute_with_approval(
-            tool=tool,
-            args={"x": 1},
-            cwd=tmp_path,
-            policy=ApprovalPolicy.ON_REQUEST,
-            store=store,
-            ask_user_fn=ask_user_fn,
-        )
-    )
-    release_first_prompt.set()
-
-    first, second = await asyncio.gather(task_one, task_two)
-
-    assert isinstance(first, ToolResult)
-    assert isinstance(second, ToolResult)
-    assert ask_count == 1
-    assert tool.calls == 2
+    await _assert_parallel_prompts_once(tool=tool, store=store, cwd=tmp_path)
 
 
 async def test_execute_with_approval_prompt_callback_can_reenter_store_lock(
@@ -476,7 +527,7 @@ async def test_execute_with_approval_prompt_callback_can_reenter_store_lock(
         store.prompt_lock.release()
         return ReviewDecision.APPROVED
 
-    outcome = await execute_with_approval(
+    outcome = await _execute_tool(
         tool=tool,
         args={"x": 1},
         cwd=tmp_path,
@@ -505,26 +556,22 @@ async def test_execute_with_approval_prompt_owner_cancellation_wakes_waiters(
             await asyncio.Event().wait()
         return ReviewDecision.APPROVED
 
-    first_task = asyncio.create_task(
-        execute_with_approval(
-            tool=tool,
-            args={"x": 1},
-            cwd=tmp_path,
-            policy=ApprovalPolicy.ON_REQUEST,
-            store=store,
-            ask_user_fn=ask_user_fn,
-        )
+    first_task = _start_execute_tool_task(
+        tool=tool,
+        args={"x": 1},
+        cwd=tmp_path,
+        policy=ApprovalPolicy.ON_REQUEST,
+        store=store,
+        ask_user_fn=ask_user_fn,
     )
     await first_prompt_entered.wait()
-    second_task = asyncio.create_task(
-        execute_with_approval(
-            tool=tool,
-            args={"x": 1},
-            cwd=tmp_path,
-            policy=ApprovalPolicy.ON_REQUEST,
-            store=store,
-            ask_user_fn=ask_user_fn,
-        )
+    second_task = _start_execute_tool_task(
+        tool=tool,
+        args={"x": 1},
+        cwd=tmp_path,
+        policy=ApprovalPolicy.ON_REQUEST,
+        store=store,
+        ask_user_fn=ask_user_fn,
     )
     await asyncio.sleep(0)
 
@@ -544,47 +591,7 @@ async def test_execute_with_approval_cached_waiter_path_runs_outside_prompt_lock
 ) -> None:
     store = ApprovalStore()
     tool = _PromptLockProbeMutatingTool(store.prompt_lock)
-    first_prompt_entered = asyncio.Event()
-    release_first_prompt = asyncio.Event()
-    ask_count = 0
-
-    async def ask_user_fn(_tool: Any, _args: dict[str, Any]) -> ReviewDecision:
-        nonlocal ask_count
-        ask_count += 1
-        if ask_count == 1:
-            first_prompt_entered.set()
-            await release_first_prompt.wait()
-        return ReviewDecision.APPROVED_FOR_SESSION
-
-    task_one = asyncio.create_task(
-        execute_with_approval(
-            tool=tool,
-            args={"x": 1},
-            cwd=tmp_path,
-            policy=ApprovalPolicy.ON_REQUEST,
-            store=store,
-            ask_user_fn=ask_user_fn,
-        )
-    )
-    await first_prompt_entered.wait()
-    task_two = asyncio.create_task(
-        execute_with_approval(
-            tool=tool,
-            args={"x": 1},
-            cwd=tmp_path,
-            policy=ApprovalPolicy.ON_REQUEST,
-            store=store,
-            ask_user_fn=ask_user_fn,
-        )
-    )
-    release_first_prompt.set()
-
-    first, second = await asyncio.gather(task_one, task_two)
-
-    assert isinstance(first, ToolResult)
-    assert isinstance(second, ToolResult)
-    assert ask_count == 1
-    assert tool.calls == 2
+    await _assert_parallel_prompts_once(tool=tool, store=store, cwd=tmp_path)
 
 
 async def test_execute_with_approval_prompt_owner_cancelled_during_finalize_wakes_waiters(
@@ -620,26 +627,22 @@ async def test_execute_with_approval_prompt_owner_cancelled_during_finalize_wake
             await release_first_prompt.wait()
         return ReviewDecision.APPROVED_FOR_SESSION
 
-    first_task = asyncio.create_task(
-        execute_with_approval(
-            tool=tool,
-            args={"x": 1},
-            cwd=tmp_path,
-            policy=ApprovalPolicy.ON_REQUEST,
-            store=store,
-            ask_user_fn=ask_user_fn,
-        )
+    first_task = _start_execute_tool_task(
+        tool=tool,
+        args={"x": 1},
+        cwd=tmp_path,
+        policy=ApprovalPolicy.ON_REQUEST,
+        store=store,
+        ask_user_fn=ask_user_fn,
     )
     await first_prompt_entered.wait()
-    second_task = asyncio.create_task(
-        execute_with_approval(
-            tool=tool,
-            args={"x": 1},
-            cwd=tmp_path,
-            policy=ApprovalPolicy.ON_REQUEST,
-            store=store,
-            ask_user_fn=ask_user_fn,
-        )
+    second_task = _start_execute_tool_task(
+        tool=tool,
+        args={"x": 1},
+        cwd=tmp_path,
+        policy=ApprovalPolicy.ON_REQUEST,
+        store=store,
+        ask_user_fn=ask_user_fn,
     )
     release_first_prompt.set()
     await finalize_started.wait()

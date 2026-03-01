@@ -326,8 +326,6 @@ export function reduceTurnsSequence(
   return nextState;
 }
 
-export type { TurnsAction };
-
 export function turnsReducer(state: TurnsViewState, action: TurnsAction): TurnsViewState {
   if (action.type === "reset") {
     return INITIAL_TURNS_STATE;
@@ -380,7 +378,7 @@ export function dequeuePendingUserInput(
   };
 }
 
-export type TurnsDispatch = {
+type TurnsDispatch = {
   hasPendingUserInput: boolean;
   pendingUserInputWarning: string | null;
   queueUserInput: (text: string) => boolean;
