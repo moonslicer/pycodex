@@ -23,7 +23,7 @@ def test_agent_profile_is_frozen() -> None:
 def test_load_profile_from_toml_success(tmp_path: Path) -> None:
     path = tmp_path / "profile.toml"
     path.write_text(
-        '\n'.join(
+        "\n".join(
             [
                 'name = "support"',
                 'instructions = "You are a support assistant."',
@@ -63,7 +63,7 @@ def test_load_profile_from_toml_missing_instructions_raises(tmp_path: Path) -> N
 def test_load_profile_from_toml_optional_fields_default(tmp_path: Path) -> None:
     path = tmp_path / "profile.toml"
     path.write_text(
-        '\n'.join(
+        "\n".join(
             [
                 'name = "minimal"',
                 'instructions = "Minimal instructions."',

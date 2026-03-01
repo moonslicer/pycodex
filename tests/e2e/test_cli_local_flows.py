@@ -42,7 +42,9 @@ def test_cli_e2e_on_request_write_file_approved(
             self,
             messages: list[dict[str, Any]],
             tools: list[dict[str, Any]],
+            instructions: str = "",
         ):
+            _ = instructions
             tool_names = {
                 str(spec["function"].get("name"))
                 for spec in tools
@@ -107,8 +109,9 @@ def test_cli_e2e_on_request_write_file_denied(
             self,
             messages: list[dict[str, Any]],
             tools: list[dict[str, Any]],
+            instructions: str = "",
         ):
-            _ = tools
+            _ = tools, instructions
             self.calls.append([dict(message) for message in messages])
             if len(self.calls) == 1:
                 yield OutputItemDone(
@@ -161,8 +164,9 @@ def test_cli_e2e_on_request_write_file_abort(
             self,
             messages: list[dict[str, Any]],
             tools: list[dict[str, Any]],
+            instructions: str = "",
         ):
-            _ = tools
+            _ = tools, instructions
             self.calls.append([dict(message) for message in messages])
             assert len(self.calls) == 1
             yield OutputItemDone(

@@ -149,3 +149,22 @@
   - Resolution: only when override flags are present, preserving backward compatibility for existing monkeypatched tests expecting prior call signatures.
 - Where should profile/instructions precedence be enforced?
   - Resolution: centralized in `_resolve_profile_override(...)` so all runtime modes share one decision path.
+
+## T9 — Full gates and milestone verification
+
+### What changed
+- Ran milestone-focused verification suites for M6 components.
+- Ran full quality gates:
+  - `.venv/bin/ruff check . --fix`
+  - `.venv/bin/ruff format .`
+  - `.venv/bin/mypy --strict pycodex/`
+  - `.venv/bin/pytest tests/ -v`
+- Addressed gate regressions by updating harness/e2e fake model clients to accept
+  `stream(..., instructions: str = "")`, matching the updated model-client protocol.
+- Updated `todo-m6.md` completion checklist to mark all M6 tasks complete.
+
+### Ambiguous decisions and resolutions
+- Should compatibility fixes for test doubles be deferred to a separate follow-up?
+  - Resolution: no. Applied immediately within T9 so full-repo hard gates pass atomically for the milestone.
+- How to run milestone verification commands in a network-restricted local environment?
+  - Resolution: execute with `PYCODEX_FAKE_MODEL=1` to validate CLI/runtime wiring without external API dependency.

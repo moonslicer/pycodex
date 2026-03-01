@@ -445,9 +445,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "instructions_file": args.instructions_file,
                     }
                 )
-            return asyncio.run(
-                _run_tui_mode(**tui_kwargs)
-            )
+            return asyncio.run(_run_tui_mode(**tui_kwargs))
         except Exception as exc:
             message = _render_error_message(exc)
             print(f"[ERROR] {message}", file=sys.stderr)
@@ -473,9 +471,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "instructions_file": args.instructions_file,
                     }
                 )
-            return asyncio.run(
-                _run_prompt_json(**json_kwargs)
-            )
+            return asyncio.run(_run_prompt_json(**json_kwargs))
         except Exception as exc:
             message = _render_error_message(exc)
             print(f"[ERROR] {message}", file=sys.stderr)
@@ -496,9 +492,7 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "instructions_file": args.instructions_file,
                 }
             )
-        final_text = asyncio.run(
-            _run_prompt(**prompt_kwargs)
-        )
+        final_text = asyncio.run(_run_prompt(**prompt_kwargs))
     except Exception as exc:
         message = _render_error_message(exc)
         print(f"[ERROR] {message}", file=sys.stderr)

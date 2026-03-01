@@ -22,8 +22,9 @@ class _FakeModelClient:
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
+        instructions: str = "",
     ):
-        _ = messages, tools
+        _ = messages, tools, instructions
         if False:  # pragma: no cover
             yield None
 

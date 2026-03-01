@@ -30,11 +30,13 @@ class _ScenarioModelClient:
         self,
         messages: list[dict[str, Any]],
         tools: list[dict[str, Any]],
+        instructions: str = "",
     ):
         self.calls.append(
             {
                 "messages": [dict(message) for message in messages],
                 "tools": [dict(spec) for spec in tools],
+                "instructions": instructions,
             }
         )
         if not self._turns:

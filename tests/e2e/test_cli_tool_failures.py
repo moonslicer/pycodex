@@ -41,8 +41,9 @@ def test_cli_e2e_shell_timeout_surfaces_structured_error(
             self,
             messages: list[dict[str, Any]],
             tools: list[dict[str, Any]],
+            instructions: str = "",
         ):
-            _ = tools
+            _ = tools, instructions
             self.calls.append([dict(message) for message in messages])
 
             if len(self.calls) == 1:

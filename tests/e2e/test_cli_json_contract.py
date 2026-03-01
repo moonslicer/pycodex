@@ -27,7 +27,9 @@ def test_cli_e2e_json_contract_event_sequence_and_required_fields(
             self,
             messages: list[dict[str, Any]],
             tools: list[dict[str, Any]],
+            instructions: str = "",
         ):
+            _ = instructions
             self.calls.append([dict(message) for message in messages])
 
             tool_names = {

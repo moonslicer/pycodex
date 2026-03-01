@@ -59,7 +59,7 @@ def test_load_config_profile_from_toml(tmp_path: Path, monkeypatch) -> None:
     monkeypatch.delenv("PYCODEX_INSTRUCTIONS", raising=False)
     config_file = tmp_path / "pycodex.toml"
     config_file.write_text(
-        '\n'.join(
+        "\n".join(
             [
                 'model = "toml-model"',
                 "project_doc_max_bytes = 65535",
@@ -91,7 +91,7 @@ def test_load_config_env_instructions_overrides_profile_instructions(
 ) -> None:
     config_file = tmp_path / "pycodex.toml"
     config_file.write_text(
-        '\n'.join(
+        "\n".join(
             [
                 "[profile]",
                 'name = "support"',

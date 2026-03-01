@@ -42,7 +42,9 @@ def test_cli_e2e_multi_step_tool_loop(
             self,
             messages: list[dict[str, Any]],
             tools: list[dict[str, Any]],
+            instructions: str = "",
         ):
+            _ = instructions
             tool_names = {
                 str(spec["function"].get("name"))
                 for spec in tools

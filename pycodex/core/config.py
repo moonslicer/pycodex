@@ -69,9 +69,7 @@ def load_config(config_path: Path | None = None) -> Config:
     if isinstance(instructions_override, str) and instructions_override.strip():
         profile = replace(profile, instructions=instructions_override)
 
-    merged: dict[str, Any] = {
-        key: value for key, value in toml_config.items() if key != "profile"
-    }
+    merged: dict[str, Any] = {key: value for key, value in toml_config.items() if key != "profile"}
     merged.update(env_config)
     merged["profile"] = profile
 

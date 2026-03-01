@@ -85,7 +85,7 @@ def test_resolve_profile_override_supports_profile_file_and_instruction_override
 ) -> None:
     profile_path = tmp_path / "profile.toml"
     profile_path.write_text(
-        '\n'.join(
+        "\n".join(
             [
                 'name = "support"',
                 'instructions = "Support instructions."',

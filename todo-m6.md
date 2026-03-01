@@ -69,7 +69,7 @@ Session.prepend_items(initial_context)   (once)
 
 ## TODO Tasks
 
-- [ ] T1: `core/agent_profile.py` — `AgentProfile`, `CODEX_PROFILE`, TOML loader
+- [x] T1: `core/agent_profile.py` — `AgentProfile`, `CODEX_PROFILE`, TOML loader
   - Add frozen `AgentProfile` dataclass: `name`, `instructions`, `instruction_filenames`, `enabled_tools`.
   - Add `CODEX_PROFILE` as default coding assistant profile.
   - Add `load_profile_from_toml(path: Path) -> AgentProfile` with validation for required fields.
@@ -77,35 +77,35 @@ Session.prepend_items(initial_context)   (once)
     - `pytest tests/core/test_agent_profile.py -v`
     - `python3 -c "from pycodex.core.agent_profile import CODEX_PROFILE; print(CODEX_PROFILE.name)"`
 
-- [ ] T2: `core/config.py` — profile integration and limits
+- [x] T2: `core/config.py` — profile integration and limits
   - Add `profile: AgentProfile = CODEX_PROFILE`.
   - Add `project_doc_max_bytes: int = 32768`.
   - Support profile loading from `pycodex.toml` (`[profile]`) and env override for instructions only.
   - Verify:
     - `pytest tests/core/test_config.py -k "profile or instructions or project_doc_max_bytes" -v`
 
-- [ ] T3: `core/session.py` — system-item mutation APIs
+- [x] T3: `core/session.py` — system-item mutation APIs
   - Add `append_system_message(text: str) -> None`.
   - Add `prepend_items(items: list[PromptItem]) -> None`.
   - Preserve `to_prompt()` copy semantics and ordering.
   - Verify:
     - `pytest tests/core/test_session.py -k "system or prepend" -v`
 
-- [ ] T4: `core/model_client.py` — forward `instructions` to API
+- [x] T4: `core/model_client.py` — forward `instructions` to API
   - Extend `ModelClient.stream()` with `instructions: str = ""`.
   - Forward non-empty instructions to Responses API.
   - Keep system-role message items in `input` untouched.
   - Verify:
     - `pytest tests/core/test_model_client.py -k instructions -v`
 
-- [ ] T5: `core/project_doc.py` — hierarchical instruction loader
+- [x] T5: `core/project_doc.py` — hierarchical instruction loader
   - Implement `find_git_root(start: Path) -> Path | None`.
   - Implement `load_project_instructions(cwd, filenames, max_bytes) -> str | None`.
   - Walk root->cwd, check filenames in-order at each directory level, concatenate with separator, cap by `max_bytes`.
   - Verify:
     - `pytest tests/core/test_project_doc.py -v`
 
-- [ ] T6: `core/initial_context.py` — policy/docs/env context assembly
+- [x] T6: `core/initial_context.py` — policy/docs/env context assembly
   - Implement `_policy_context(config) -> str | None`.
   - Implement `_env_context(cwd) -> str`.
   - Implement `build_initial_context(config) -> list[PromptItem]` with ordering:
@@ -115,14 +115,14 @@ Session.prepend_items(initial_context)   (once)
   - Verify:
     - `pytest tests/core/test_initial_context.py -v`
 
-- [ ] T7: `core/agent.py` — one-time initial-context injection + instructions threading
+- [x] T7: `core/agent.py` — one-time initial-context injection + instructions threading
   - Prepend initial context once before first turn.
   - Pass `config.profile.instructions` to `model_client.stream()`.
   - Keep behavior stable for subsequent turns (no re-prepend).
   - Verify:
     - `pytest tests/core/test_agent.py -k "initial_context or instructions" -v`
 
-- [ ] T8: `__main__.py` — CLI profile/instruction flags and precedence
+- [x] T8: `__main__.py` — CLI profile/instruction flags and precedence
   - Add flags:
     - `--profile`
     - `--profile-file`
@@ -134,7 +134,7 @@ Session.prepend_items(initial_context)   (once)
   - Verify:
     - `pytest tests/test_main.py -k "profile or instructions" -v`
 
-- [ ] T9: Integration tests and full quality gates
+- [x] T9: Integration tests and full quality gates
   - Run milestone-focused tests:
     - `pytest tests/core/test_agent_profile.py tests/core/test_project_doc.py tests/core/test_initial_context.py -v`
     - `pytest tests/core/test_session.py tests/core/test_model_client.py tests/core/test_agent.py tests/core/test_config.py -k "profile or instructions or system or prepend or initial_context" -v`
@@ -163,14 +163,14 @@ T3 + T4 + T6 + T8 ──> T9
 - `pytest tests/core/test_project_doc.py -v`
 
 ## Completion Checklist
-- [ ] T1 complete
-- [ ] T2 complete
-- [ ] T3 complete
-- [ ] T4 complete
-- [ ] T5 complete
-- [ ] T6 complete
-- [ ] T7 complete
-- [ ] T8 complete
-- [ ] T9 complete
-- [ ] All quality gates pass
-- [ ] Milestone verification commands pass (or runtime blocker documented)
+- [x] T1 complete
+- [x] T2 complete
+- [x] T3 complete
+- [x] T4 complete
+- [x] T5 complete
+- [x] T6 complete
+- [x] T7 complete
+- [x] T8 complete
+- [x] T9 complete
+- [x] All quality gates pass
+- [x] Milestone verification commands pass (using `PYCODEX_FAKE_MODEL=1` for local offline verification)
