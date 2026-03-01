@@ -82,12 +82,17 @@ class ModelClient:
         self,
         messages: list[PromptItem],
         tools: list[dict[str, Any]],
+        instructions: str = "",
     ) -> AsyncIterator[ResponseEvent]:
         """Stream model output as typed events with a single transient retry."""
         for attempt in range(1, _MAX_STREAM_ATTEMPTS + 1):
             emitted_any = False
             try:
-                async for event in self._stream_once(messages=messages, tools=tools):
+                async for event in self._stream_once(
+                    messages=messages,
+                    tools=tools,
+                    instructions=instructions,
+                ):
                     emitted_any = True
                     yield event
                 return
@@ -111,6 +116,7 @@ class ModelClient:
         *,
         messages: list[PromptItem],
         tools: list[dict[str, Any]],
+        instructions: str,
     ) -> AsyncIterator[ResponseEvent]:
         client = self._get_client()
         responses = getattr(client, "responses", None)
@@ -119,12 +125,16 @@ class ModelClient:
 
         input_items = _convert_prompt_to_responses_input(messages)
         normalized_tools = _normalize_tools_for_responses(tools)
-        stream = await responses.create(
-            model=self._config.model,
-            input=input_items,
-            tools=normalized_tools,
-            stream=True,
-        )
+        create_kwargs: dict[str, Any] = {
+            "model": self._config.model,
+            "input": input_items,
+            "tools": normalized_tools,
+            "stream": True,
+        }
+        if instructions:
+            create_kwargs["instructions"] = instructions
+
+        stream = await responses.create(**create_kwargs)
         if not hasattr(stream, "__aiter__"):
             raise ModelClientStreamError(
                 "responses.create(stream=True) did not return an async stream"

@@ -129,6 +129,56 @@ def test_model_client_maps_events_to_typed_dataclasses() -> None:
     assert responses.calls[0]["tools"] == [{"type": "function", "name": "shell"}]
 
 
+def test_model_client_omits_instructions_field_when_empty() -> None:
+    responses = _FakeResponses(
+        streams=[_FakeStream(events=[{"type": "response.completed", "response": {"id": "resp_1"}}])]
+    )
+    client = ModelClient(
+        config=Config(model="gpt-test"),
+        openai_factory=lambda _config: _FakeOpenAIClient(responses=responses),
+    )
+
+    async def _run() -> list[Any]:
+        events: list[Any] = []
+        async for event in client.stream(
+            messages=[{"role": "user", "content": "hello"}],
+            tools=[],
+            instructions="",
+        ):
+            events.append(event)
+        return events
+
+    events = asyncio.run(_run())
+
+    assert events == [Completed(response_id="resp_1")]
+    assert "instructions" not in responses.calls[0]
+
+
+def test_model_client_includes_instructions_field_when_non_empty() -> None:
+    responses = _FakeResponses(
+        streams=[_FakeStream(events=[{"type": "response.completed", "response": {"id": "resp_1"}}])]
+    )
+    client = ModelClient(
+        config=Config(model="gpt-test"),
+        openai_factory=lambda _config: _FakeOpenAIClient(responses=responses),
+    )
+
+    async def _run() -> list[Any]:
+        events: list[Any] = []
+        async for event in client.stream(
+            messages=[{"role": "user", "content": "hello"}],
+            tools=[],
+            instructions="You are a test agent.",
+        ):
+            events.append(event)
+        return events
+
+    events = asyncio.run(_run())
+
+    assert events == [Completed(response_id="resp_1")]
+    assert responses.calls[0]["instructions"] == "You are a test agent."
+
+
 def test_model_client_converts_function_call_and_tool_messages() -> None:
     responses = _FakeResponses(
         streams=[_FakeStream(events=[{"type": "response.completed", "response": {"id": "resp_1"}}])]

@@ -50,3 +50,17 @@
 ### Ambiguous decisions and resolutions
 - Should `prepend_items` deduplicate existing system items?
   - Resolution: no. Prepend should be a simple ordered mutation; deduplication policy belongs to higher-level context assembly, not session storage.
+
+## T4 — ModelClient `instructions` forwarding
+
+### What changed
+- Updated `pycodex/core/model_client.py`:
+  - `ModelClient.stream(...)` now accepts `instructions: str = ""`,
+  - request payload includes `instructions` only when non-empty.
+- Extended `tests/core/test_model_client.py` with explicit assertions for:
+  - omission of `instructions` on empty string,
+  - inclusion of `instructions` for non-empty values.
+
+### Ambiguous decisions and resolutions
+- Should empty instructions be sent as `instructions=\"\"` or omitted?
+  - Resolution: omit the field entirely for empty strings to avoid accidental blanking semantics at the API layer and keep payload minimal.
