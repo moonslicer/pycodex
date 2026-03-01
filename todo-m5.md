@@ -228,7 +228,7 @@ Neither bypasses the other:
     - `pytest tests/tools/test_orchestrator.py -k "exec_policy or sandbox" -v`
     - `cd tui && npm test -- launch`
 
-- [ ] T6: Quality gates + milestone verification
+- [x] T6: Quality gates + milestone verification
   - Run `ruff check . --fix` — must be clean.
   - Run `ruff format .` — must be clean.
   - Run `mypy --strict pycodex/` — must pass on all source files including `approval/exec_policy.py` and `approval/sandbox.py`.
@@ -237,12 +237,21 @@ Neither bypasses the other:
   - Verify milestone commands:
     - `python -m pycodex --sandbox read-only --approval on-request "rm -rf /"` → blocked by exec policy, no prompt shown.
     - `python -m pycodex --sandbox danger-full-access --approval never "echo hello"` → runs normally.
+  - Result log (2026-02-28, America/Los_Angeles):
+    - `ruff check . --fix` → PASS
+    - `ruff format .` → PASS (`53 files left unchanged`)
+    - `mypy --strict pycodex/` → PASS (`Success: no issues found in 25 source files`)
+    - `pytest tests/ -v` → PASS (`collected 304`, `300 passed`, `4 skipped`)
+    - Milestone verification commands:
+      - `python -m pycodex ...` could not run in this environment (`python: command not found`).
+      - `.venv/bin/python -m pycodex ...` runs were blocked by local runtime (`Model stream failed after 2 attempt(s): Connection error.`).
+      - Direct CLI verification is therefore marked as blocked-by-runtime for this workspace; behavioral coverage remains validated by passing automated tests (`tests/test_main.py` and `tests/tools/test_orchestrator.py`).
 
 ## Completion Checklist
-- [ ] All T1–T6 done
-- [ ] Quality gates all pass (`ruff check`, `ruff format`, `mypy --strict`, `pytest tests/ -v`)
-- [ ] Milestone verification commands pass (or blocked by local runtime — document if so)
-- [ ] Milestone report includes: files changed, gate results, verification output, risks/assumptions, next milestone recommendation (M6)
+- [x] All T1–T6 done
+- [x] Quality gates all pass (`ruff check`, `ruff format`, `mypy --strict`, `pytest tests/ -v`)
+- [x] Milestone verification commands pass (or blocked by local runtime — document if so)
+- [x] Milestone report includes: files changed, gate results, verification output, risks/assumptions, next milestone recommendation (M6)
 
 ## Risks / Assumptions
 - `SandboxPolicy` enum values use hyphens (`"danger-full-access"`) matching Codex convention and CLI `--sandbox` choices; Python attribute names use underscores (`DANGER_FULL_ACCESS`).
