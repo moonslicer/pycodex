@@ -348,34 +348,74 @@ Detailed sub-milestone breakdown is in `tui-plan.md`. Summary of execution plan:
 
 ### Milestone 5: Sandboxing + Command Safety
 
-**Goal**: Basic sandboxing for command execution and file operations.
+**Goal**: Add defense-in-depth for shell command execution — classify commands before they run and optionally wrap them in OS-level isolation.
+
+**Design reference**: Informed by Codex's `execpolicy`, `sandboxing.rs`, and `orchestrator.rs`. Key patterns adopted where they improve the design without adding disproportionate complexity. Deferred: Starlark policy format, execpolicy amendments, network rules, `RejectConfig`, Windows sandbox.
+
+**Architecture constraints from actual codebase:**
+- `ShellTool.is_mutating()` is always `True` — exec classification is **not** a replacement for `is_mutating()`. It is an additional short-circuit inside the orchestrator, evaluated after `is_mutating()`, before the approval prompt.
+- `ShellTool.handle()` signature stays stable (part of `ToolHandler` protocol). OS-native sandbox wrappers are an **optional duck-typed method** `sandbox_execute(args, cwd, policy)` on `ShellTool` — the same pattern used by `approval_key`. Orchestrator uses `getattr(tool, "sandbox_execute", None)` and falls back to `handle()`.
+- `OrchestratorConfig` is `frozen=True` — new optional fields are additive; existing call sites unchanged.
+
+**Layer semantics**: exec policy and sandbox policy are independent, additive layers. Neither bypasses the other — `ALLOW` from exec policy skips the approval prompt but sandbox still runs under restrictive policies. `danger-full-access` disables sandbox wrapping but approval follows `ApprovalPolicy` normally. Both guardrails must be explicitly opted out of, separately.
 
 #### Milestone 5 execution plan (clear, incremental, verifiable)
 
-1. **Define sandbox policy domain in `approval/sandbox.py`**
-   - Implement `SandboxPolicy`, path validation, and enforcement boundary API.
-   - Value: explicit, testable policy model before command integration.
-   - Verification: `pytest tests/approval/test_sandbox.py -q`
-
-2. **Implement command classification in `approval/exec_policy.py`**
-   - Prefix-rule matcher with `ALLOW | PROMPT | FORBIDDEN`.
-   - Value: deterministic command-safety decisions independent of shell execution.
+1. **Command classification in `approval/exec_policy.py`**
+   - Define `ExecDecision` enum: `ALLOW | PROMPT | FORBIDDEN`.
+   - Implement `classify(command: str, rules: list[tuple[str, ExecDecision]], heuristics: Callable[[str], ExecDecision] | None = None) -> ExecDecision`. Rules are checked in order against the **canonicalized** command string (same normalization as `_canonicalize_command_for_approval` in `shell.py` — handles wrapper forms like `/bin/bash -lc`, whitespace, and equivalent aliases). First prefix match wins; if no rule matches, call `heuristics` if provided, else return `PROMPT`.
+   - Export `DEFAULT_RULES` and `default_heuristics` as importable defaults, not hardcoded into `classify`. Both can be overridden or extended by callers.
+   - The classifier is a pure function — no I/O, no side effects.
+   - Value: deterministic command-safety decisions independent of execution context; canonicalization closes the most common evasion vectors.
    - Verification: `pytest tests/approval/test_exec_policy.py -q`
 
-3. **Integrate orchestrator sandbox flow**
-   - First run under selected sandbox; escalate on failure only where policy allows.
-   - Preserve M2 ABORT and DENIED semantics.
-   - Value: defense-in-depth with explicit escalation path.
-   - Verification: `pytest tests/tools/test_orchestrator.py -k sandbox -q`
+2. **Sandbox policy domain in `approval/sandbox.py`**
+   - Define `SandboxPolicy` enum with three values (Codex-aligned naming):
+     - `danger-full-access` — no sandbox wrapping; approval policy applies normally. The name signals the user is accepting unsandboxed execution risk.
+     - `read-only` — process may not write to the filesystem.
+     - `workspace-write` — process may write only within `cwd`; all other paths are read-only.
+   - Expose `build_sandbox_argv(command: str, policy: SandboxPolicy, cwd: Path) -> list[str]` — returns full argv for `asyncio.create_subprocess_exec`. Under `danger-full-access`, returns `["bash", "-c", command]` unchanged.
+   - Platform adapters: macOS `sandbox-exec` with a minimal inline seatbelt profile; Linux `firejail --quiet` if available, `bwrap` as fallback. If no native sandbox is present under a restrictive policy (`read-only` or `workspace-write`), emit a warning to stderr and surface `SandboxUnavailable` — do not silently no-op and proceed as if protected.
+   - Value: isolation tested independently before orchestrator wiring; fail-visible not fail-open.
+   - Verification: `pytest tests/approval/test_sandbox.py -q`
 
-4. **Optional OS-native sandbox adapters**
-   - macOS `sandbox-exec`, Linux `firejail`/`bwrap`, with soft-sandbox fallback.
-   - Value: stronger isolation where available without hard dependency.
-   - Verification: `pytest tests/approval/test_sandbox_platform.py -q`
+3. **Wire exec policy + sandbox into the orchestrator**
+   - Add two optional fields to `OrchestratorConfig`:
+     - `exec_policy_fn: Callable[[str], ExecDecision] | None = None`
+     - `sandbox_policy: SandboxPolicy | None = None`
+   - New code path in `execute_with_approval()`, after `is_mutating()`. Decision matrix (evaluated in order, first match wins):
 
-**Test it**: `python -m pycodex --sandbox workspace-write "try to delete /etc/hosts"` → blocked or prompts for escalation
+   | exec_policy result | sandbox_policy | approval_policy | Outcome |
+   |---|---|---|---|
+   | `FORBIDDEN` | any | any | `ToolError(code="forbidden")` — no sandbox, no prompt |
+   | `ALLOW` | `danger-full-access` or unset | any | `tool.handle()` — sandbox disabled, prompt skipped |
+   | `ALLOW` | `read-only` or `workspace-write` | any | `tool.sandbox_execute()` — sandbox runs, prompt skipped |
+   | `PROMPT` or unset | `danger-full-access` or unset | `NEVER` / `ON_FAILURE` | `tool.handle()` — no sandbox, no prompt (existing behavior) |
+   | `PROMPT` or unset | `danger-full-access` or unset | `ON_REQUEST` / `UNLESS_TRUSTED` | existing approval loop → `tool.handle()` |
+   | `PROMPT` or unset | `read-only` / `workspace-write` | `NEVER` | `tool.sandbox_execute()` → `ToolError(code="sandbox_blocked")` on denial, no prompt |
+   | `PROMPT` or unset | `read-only` / `workspace-write` | `ON_FAILURE` | `tool.sandbox_execute()` → on sandbox denial, offer "retry without sandbox?" prompt |
+   | `PROMPT` or unset | `read-only` / `workspace-write` | `ON_REQUEST` / `UNLESS_TRUSTED` | existing approval loop → `tool.sandbox_execute()` |
 
-**Key learning**: Defense in depth, sandbox escalation, command classification.
+   - Preserve all M2 contracts: `ABORT` terminal, `DENIED` non-terminal.
+   - Existing `ON_FAILURE` tests are unchanged — they test the no-sandbox path (`sandbox_policy=None`).
+   - Value: explicit, testable decision surface; approval prompt is last resort after exec policy and sandbox both pass.
+   - Verification: `pytest tests/tools/test_orchestrator.py -k "sandbox or exec_policy" -q`
+
+4. **`ShellTool.sandbox_execute()` + `--sandbox` CLI flag**
+   - Implement `ShellTool.sandbox_execute(args, cwd, policy)` using `build_sandbox_argv()`. Mirrors `handle()` — same timeout, output-cap, and error handling — only the subprocess argv changes.
+   - Add `--sandbox` flag to `__main__.py` with choices from `SandboxPolicy`. Default: `danger-full-access` (no behavior change for existing users). Thread through `_build_tool_router()` → `OrchestratorConfig(sandbox_policy=...)`.
+   - Value: end-to-end verifiable path from CLI flag through to subprocess wrapping.
+   - Verification: `pytest tests/approval/test_sandbox_platform.py -q` + `pytest tests/tools/test_shell.py -k sandbox -q`
+
+**Deferred (not in M5):**
+- Exec policy rule files or Starlark format — hardcoded `DEFAULT_RULES` are sufficient.
+- `proposed_execpolicy_amendment` — "add a rule so you're not asked again" UX; M6 candidate.
+- Network approval context — not needed until network-touching tools exist.
+- Windows sandbox.
+
+**Test it**: `python -m pycodex --sandbox read-only "rm -rf /"` → blocked by exec policy or sandbox; no filesystem writes.
+
+**Key learning**: Defense in depth requires independent layers — exec policy and sandbox enforce separately; neither bypasses the other. `ALLOW` skips the prompt but not the sandbox under restrictive policies. `danger-full-access` disables the sandbox but not the approval prompt. Fail-visible not fail-open: missing native sandbox under restrictive policy surfaces as a warning, not silent no-op. The decision matrix is the authoritative spec for orchestrator behavior.
 
 ---
 
