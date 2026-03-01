@@ -146,7 +146,7 @@ Neither bypasses the other:
     - `test_linux_firejail_blocks_write` (skip if not Linux or no `firejail`): analogous write-blocked assertion.
   - Verify: `pytest tests/approval/test_sandbox.py -v` + `pytest tests/approval/test_sandbox_platform.py -v`
 
-- [ ] T3: `tools/orchestrator.py` — new OrchestratorConfig fields + decision matrix
+- [x] T3: `tools/orchestrator.py` — new OrchestratorConfig fields + decision matrix
   - Add to `OrchestratorConfig` (keep `frozen=True`):
     - `exec_policy_fn: Callable[[str], ExecDecision] | None = None`
     - `sandbox_policy: SandboxPolicy | None = None`

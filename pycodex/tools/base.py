@@ -83,6 +83,8 @@ class ToolRegistry:
                     policy=self._orchestrator.policy,
                     store=self._orchestrator.store,
                     ask_user_fn=self._orchestrator.ask_user_fn,
+                    exec_policy_fn=self._orchestrator.exec_policy_fn,
+                    sandbox_policy=self._orchestrator.sandbox_policy,
                 )
         except ToolAborted:
             # Preserve abort as control-flow so the agent can terminate the turn.
