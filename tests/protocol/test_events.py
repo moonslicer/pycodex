@@ -14,6 +14,7 @@ from pycodex.protocol.events import (
     TurnCompleted,
     TurnFailed,
     TurnStarted,
+    UsageSnapshot,
 )
 from pydantic import TypeAdapter, ValidationError
 
@@ -28,7 +29,10 @@ from pydantic import TypeAdapter, ValidationError
                 thread_id="thread_1",
                 turn_id="turn_1",
                 final_text="done",
-                usage=TokenUsage(input_tokens=10, output_tokens=5),
+                usage=UsageSnapshot(
+                    turn=TokenUsage(input_tokens=10, output_tokens=5),
+                    cumulative=TokenUsage(input_tokens=10, output_tokens=5),
+                ),
             ),
             TurnCompleted,
         ),
@@ -102,7 +106,10 @@ def test_event_model_round_trip_json(event: Any, event_cls: type[Any]) -> None:
                 "thread_id": "thread_1",
                 "turn_id": "turn_1",
                 "final_text": "done",
-                "usage": {"input_tokens": 3, "output_tokens": 2},
+                "usage": {
+                    "turn": {"input_tokens": 3, "output_tokens": 2},
+                    "cumulative": {"input_tokens": 11, "output_tokens": 7},
+                },
             },
             TurnCompleted,
         ),
@@ -170,6 +177,16 @@ def test_protocol_event_union_resolves_type(
 def test_token_usage_rejects_string_values() -> None:
     with pytest.raises(ValidationError):
         TokenUsage.model_validate({"input_tokens": "10", "output_tokens": 5})
+
+
+def test_usage_snapshot_rejects_invalid_nested_values() -> None:
+    with pytest.raises(ValidationError):
+        UsageSnapshot.model_validate(
+            {
+                "turn": {"input_tokens": "10", "output_tokens": 5},
+                "cumulative": {"input_tokens": 10, "output_tokens": 5},
+            }
+        )
 
 
 @pytest.mark.parametrize("payload", [{"item_kind": "tool_output"}, {"item_kind": "unknown"}])

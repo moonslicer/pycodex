@@ -38,16 +38,16 @@ describe("reduceTurns", () => {
       turn_id: "turn_1",
       final_text: "line one\nline two",
       usage: {
-        input_tokens: 5,
-        output_tokens: 8,
+        turn: { input_tokens: 5, output_tokens: 8 },
+        cumulative: { input_tokens: 5, output_tokens: 8 },
       },
     });
 
     expect(completed.turns[0]?.status).toBe("completed");
     expect(completed.turns[0]?.assistantLines).toEqual(["line one", "line two"]);
     expect(completed.turns[0]?.usage).toEqual({
-      input_tokens: 5,
-      output_tokens: 8,
+      turn: { input_tokens: 5, output_tokens: 8 },
+      cumulative: { input_tokens: 5, output_tokens: 8 },
     });
   });
 

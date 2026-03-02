@@ -20,6 +20,13 @@ class TokenUsage(_FrozenModel):
     output_tokens: StrictInt
 
 
+class UsageSnapshot(_FrozenModel):
+    """Per-turn and cumulative token usage at turn completion."""
+
+    turn: TokenUsage
+    cumulative: TokenUsage
+
+
 class ThreadStarted(_FrozenModel):
     """Event emitted at the start of a thread/session."""
 
@@ -42,7 +49,7 @@ class TurnCompleted(_FrozenModel):
     thread_id: str
     turn_id: str
     final_text: str
-    usage: TokenUsage | None = None
+    usage: UsageSnapshot | None = None
 
 
 class TurnFailed(_FrozenModel):

@@ -263,7 +263,10 @@ describe("integration: event stream → queue → respond → dequeue", () => {
       thread_id: "t1",
       turn_id: "turn_1",
       final_text: "",
-      usage: { input_tokens: 0, output_tokens: 0 },
+      usage: {
+        turn: { input_tokens: 0, output_tokens: 0 },
+        cumulative: { input_tokens: 0, output_tokens: 0 },
+      },
     });
     expect(state.queue).toHaveLength(0);
   });

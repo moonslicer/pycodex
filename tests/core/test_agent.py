@@ -297,7 +297,10 @@ def test_run_turn_threads_usage_to_turn_completed_event(tmp_path: Path) -> None:
     assert isinstance(emitted[1], TextDeltaReceived)
     assert emitted[1].delta == "final"
     assert isinstance(emitted[2], TurnCompleted)
-    assert emitted[2].usage == {"input_tokens": 10, "output_tokens": 5}
+    assert emitted[2].usage == {
+        "turn": {"input_tokens": 10, "output_tokens": 5},
+        "cumulative": {"input_tokens": 10, "output_tokens": 5},
+    }
 
 
 def test_run_turn_emits_text_delta_metadata_from_model_stream(tmp_path: Path) -> None:

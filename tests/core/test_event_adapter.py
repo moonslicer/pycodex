@@ -18,6 +18,7 @@ from pycodex.protocol.events import (
     ThreadStarted,
     TokenUsage,
     TurnFailed,
+    UsageSnapshot,
 )
 from pycodex.protocol.events import TurnCompleted as ProtocolTurnCompleted
 from pycodex.protocol.events import TurnStarted as ProtocolTurnStarted
@@ -281,13 +282,19 @@ def test_usage_in_turn_completed() -> None:
     out = adapter.on_agent_event(
         TurnCompleted(
             final_text="done",
-            usage={"input_tokens": 10, "output_tokens": 5},
+            usage={
+                "turn": {"input_tokens": 10, "output_tokens": 5},
+                "cumulative": {"input_tokens": 15, "output_tokens": 8},
+            },
         )
     )
 
     assert len(out) == 1
     assert isinstance(out[0], ProtocolTurnCompleted)
-    assert out[0].usage == TokenUsage(input_tokens=10, output_tokens=5)
+    assert out[0].usage == UsageSnapshot(
+        turn=TokenUsage(input_tokens=10, output_tokens=5),
+        cumulative=TokenUsage(input_tokens=15, output_tokens=8),
+    )
 
 
 def test_usage_none_when_absent() -> None:

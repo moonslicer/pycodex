@@ -32,7 +32,10 @@ describe("App state integration smoke", () => {
         thread_id: "thread_1",
         turn_id: "turn_1",
         final_text: "The answer is 42",
-        usage: { input_tokens: 10, output_tokens: 5 },
+        usage: {
+          turn: { input_tokens: 10, output_tokens: 5 },
+          cumulative: { input_tokens: 10, output_tokens: 5 },
+        },
       },
     ];
 
@@ -43,8 +46,8 @@ describe("App state integration smoke", () => {
     expect(state.turns[0]?.status).toBe("completed");
     expect(state.turns[0]?.assistantLines).toEqual(["The answer is 42"]);
     expect(state.turns[0]?.usage).toEqual({
-      input_tokens: 10,
-      output_tokens: 5,
+      turn: { input_tokens: 10, output_tokens: 5 },
+      cumulative: { input_tokens: 10, output_tokens: 5 },
     });
   });
 

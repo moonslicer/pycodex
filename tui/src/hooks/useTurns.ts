@@ -1,6 +1,6 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
-import type { ProtocolEvent, TokenUsage } from "../protocol/types.js";
+import type { ProtocolEvent, UsageSnapshot } from "../protocol/types.js";
 import { sliceUnprocessedEvents } from "./eventCursor.js";
 import {
   INITIAL_LINE_BUFFER_STATE,
@@ -23,7 +23,7 @@ export type TurnState = {
   toolCalls: Record<string, ToolCallState>;
   status: "active" | "completed" | "failed";
   error: string | null;
-  usage: TokenUsage | null;
+  usage: UsageSnapshot | null;
 };
 
 export type TurnsViewState = {

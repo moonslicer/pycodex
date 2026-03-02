@@ -3,6 +3,11 @@ export type TokenUsage = {
   output_tokens: number;
 };
 
+export type UsageSnapshot = {
+  turn: TokenUsage;
+  cumulative: TokenUsage;
+};
+
 export type ThreadStartedEvent = {
   type: "thread.started";
   thread_id: string;
@@ -19,7 +24,7 @@ export type TurnCompletedEvent = {
   thread_id: string;
   turn_id: string;
   final_text: string;
-  usage: TokenUsage | null;
+  usage: UsageSnapshot | null;
 };
 
 export type TurnFailedEvent = {

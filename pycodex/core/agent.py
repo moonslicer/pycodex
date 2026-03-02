@@ -13,7 +13,7 @@ from typing import Any, Literal, Protocol
 from pycodex.core.initial_context import build_initial_context
 from pycodex.core.model_client import Completed as ModelCompleted
 from pycodex.core.model_client import OutputItemDone, OutputTextDelta
-from pycodex.core.session import PromptItem, Session
+from pycodex.core.session import PromptItem, Session, UsageSnapshot
 from pycodex.tools.orchestrator import ToolAborted
 
 _log = logging.getLogger(__name__)
@@ -52,7 +52,7 @@ class TurnCompleted:
     """Event emitted when the turn completes with final text."""
 
     final_text: str
-    usage: dict[str, int] | None = None
+    usage: UsageSnapshot | None = None
     type: Literal["turn_completed"] = "turn_completed"
 
 
@@ -131,8 +131,9 @@ class Agent:
             while True:
                 tool_calls, text, usage = await self._sample_model_once()
                 if not tool_calls:
+                    usage_snapshot = self.session.record_turn_usage(usage)
                     _log.info("turn completed: %d chars", len(text))
-                    await self._emit(TurnCompleted(final_text=text, usage=usage))
+                    await self._emit(TurnCompleted(final_text=text, usage=usage_snapshot))
                     return text
 
                 if text:

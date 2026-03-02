@@ -76,7 +76,7 @@ Session (history + cumulative usage totals)
 
 ## TODO Tasks
 
-- [ ] T1: Token accounting contract finalization (`core/model_client.py`, `core/agent.py`, `core/session.py`)
+- [x] T1: Token accounting contract finalization (`core/model_client.py`, `core/agent.py`, `core/session.py`)
   - Ensure model usage extraction is robust and type-safe.
   - Emit per-turn usage and update cumulative session totals in one ownership path.
   - Finalize `turn.completed.usage` payload shape (explicit turn + cumulative fields).
@@ -148,7 +148,7 @@ T2 + T4 + T5 ──> T6 (full gates + manual verification)
 - During an active turn, send Ctrl+C and confirm clean exit in text and JSON modes.
 
 ## Completion Checklist
-- [ ] T1 complete
+- [x] T1 complete
 - [ ] T2 complete
 - [ ] T3 complete
 - [ ] T4 complete

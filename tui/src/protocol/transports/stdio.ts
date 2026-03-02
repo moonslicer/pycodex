@@ -8,6 +8,7 @@ import type {
   Command,
   ProtocolEvent,
   TokenUsage,
+  UsageSnapshot,
 } from "../types.js";
 
 function isRecord(value: unknown): value is Record<string, unknown> {
@@ -26,6 +27,13 @@ function isTokenUsage(value: unknown): value is TokenUsage {
     typeof value["input_tokens"] === "number" &&
     typeof value["output_tokens"] === "number"
   );
+}
+
+function isUsageSnapshot(value: unknown): value is UsageSnapshot {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return isTokenUsage(value["turn"]) && isTokenUsage(value["cumulative"]);
 }
 
 function isProtocolEvent(value: unknown): value is ProtocolEvent {
@@ -48,7 +56,7 @@ function isProtocolEvent(value: unknown): value is ProtocolEvent {
         isString(threadId) &&
         isString(turnId) &&
         isString(value["final_text"]) &&
-        (value["usage"] === null || isTokenUsage(value["usage"]))
+        (value["usage"] === null || isUsageSnapshot(value["usage"]))
       );
     case "turn.failed":
       return (

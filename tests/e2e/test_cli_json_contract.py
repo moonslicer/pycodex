@@ -20,7 +20,8 @@ def test_cli_e2e_json_contract_event_sequence_and_required_fields(
     config = Config(model="test-model", api_key="test-key", cwd=tmp_path)
 
     class _FakeModelClient:
-        def __init__(self, _config: Config) -> None:
+        def __init__(self, _config: Config, request_observer: Any | None = None) -> None:
+            _ = request_observer
             self.calls: list[list[dict[str, Any]]] = []
 
         async def stream(
@@ -117,4 +118,7 @@ def test_cli_e2e_json_contract_event_sequence_and_required_fields(
     assert turn_completed["thread_id"] == thread_started["thread_id"]
     assert turn_completed["turn_id"] == turn_started["turn_id"]
     assert turn_completed["final_text"] == "json mode complete"
-    assert turn_completed["usage"] == {"input_tokens": 12, "output_tokens": 3}
+    assert turn_completed["usage"] == {
+        "turn": {"input_tokens": 12, "output_tokens": 3},
+        "cumulative": {"input_tokens": 12, "output_tokens": 3},
+    }

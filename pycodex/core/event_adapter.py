@@ -14,6 +14,7 @@ from pycodex.core.agent import (
     TurnCompleted,
 )
 from pycodex.core.agent import TurnStarted as AgentTurnStarted
+from pycodex.core.session import UsageSnapshot as SessionUsageSnapshot
 from pycodex.protocol.events import (
     ItemCompleted,
     ItemStarted,
@@ -23,6 +24,7 @@ from pycodex.protocol.events import (
     TokenUsage,
     TurnFailed,
     TurnStarted,
+    UsageSnapshot,
 )
 from pycodex.protocol.events import TurnCompleted as ProtocolTurnCompleted
 
@@ -111,7 +113,7 @@ class EventAdapter:
 
         if isinstance(event, TurnCompleted):
             turn_id = self._require_active_turn_id()
-            usage = _to_token_usage(event.usage)
+            usage = _to_usage_snapshot(event.usage)
             self._current_turn_id = None
             self._assistant_item_id = None
             return [
@@ -163,8 +165,8 @@ class EventAdapter:
         return self._assistant_item_id
 
 
-def _to_token_usage(raw_usage: dict[str, int] | None) -> TokenUsage | None:
-    if raw_usage is None:
+def _to_token_usage_counts(raw_usage: object | None) -> TokenUsage | None:
+    if raw_usage is None or not isinstance(raw_usage, dict):
         return None
 
     input_tokens = raw_usage.get("input_tokens")
@@ -181,3 +183,19 @@ def _to_token_usage(raw_usage: dict[str, int] | None) -> TokenUsage | None:
         input_tokens=input_tokens,
         output_tokens=output_tokens,
     )
+
+
+def _to_usage_snapshot(raw_usage: SessionUsageSnapshot | None) -> UsageSnapshot | None:
+    if raw_usage is None:
+        return None
+
+    turn_usage = raw_usage.get("turn")
+    cumulative_usage = raw_usage.get("cumulative")
+    turn = _to_token_usage_counts(turn_usage if isinstance(turn_usage, dict) else None)
+    cumulative = _to_token_usage_counts(
+        cumulative_usage if isinstance(cumulative_usage, dict) else None
+    )
+    if turn is None or cumulative is None:
+        return None
+
+    return UsageSnapshot(turn=turn, cumulative=cumulative)

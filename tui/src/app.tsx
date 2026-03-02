@@ -38,28 +38,19 @@ function summarizeUsageForTurns(
   latestUsage: TokenUsage | null;
 } {
   let latestUsage: TokenUsage | null = null;
-  let totalInputTokens = 0;
-  let totalOutputTokens = 0;
-  let hasUsage = false;
+  let cumulativeUsage: TokenUsage | null = null;
 
   for (const turn of turns) {
     if (turn.usage === null) {
       continue;
     }
 
-    latestUsage = turn.usage;
-    totalInputTokens += turn.usage.input_tokens;
-    totalOutputTokens += turn.usage.output_tokens;
-    hasUsage = true;
+    latestUsage = turn.usage.turn;
+    cumulativeUsage = turn.usage.cumulative;
   }
 
   return {
-    cumulativeUsage: hasUsage
-      ? {
-          input_tokens: totalInputTokens,
-          output_tokens: totalOutputTokens,
-        }
-      : null,
+    cumulativeUsage,
     latestUsage,
   };
 }

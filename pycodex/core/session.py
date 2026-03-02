@@ -60,6 +60,20 @@ PromptItem = (
 )
 
 
+class TokenUsageCounts(TypedDict):
+    """Token usage counters for one scope."""
+
+    input_tokens: int
+    output_tokens: int
+
+
+class UsageSnapshot(TypedDict):
+    """Per-turn and cumulative token usage snapshot."""
+
+    turn: TokenUsageCounts
+    cumulative: TokenUsageCounts
+
+
 @dataclass(slots=True)
 class Session:
     """Container for conversation history used to build model prompts."""
@@ -67,6 +81,8 @@ class Session:
     config: Config | None = None
     _history: list[PromptItem] = field(default_factory=list)
     _initial_context_injected: bool = False
+    _total_input_tokens: int = 0
+    _total_output_tokens: int = 0
 
     def append_user_message(self, text: str) -> None:
         """Append a user message to the conversation history."""
@@ -124,6 +140,30 @@ class Session:
         """Mark initial context as injected for this session."""
         self._initial_context_injected = True
 
+    def record_turn_usage(self, usage: dict[str, int] | None) -> UsageSnapshot | None:
+        """Record one turn's usage and return an updated snapshot."""
+        turn_usage = _normalize_usage_counts(usage)
+        if turn_usage is None:
+            return None
+
+        self._total_input_tokens += turn_usage["input_tokens"]
+        self._total_output_tokens += turn_usage["output_tokens"]
+        cumulative_usage: TokenUsageCounts = {
+            "input_tokens": self._total_input_tokens,
+            "output_tokens": self._total_output_tokens,
+        }
+        return {
+            "turn": turn_usage,
+            "cumulative": cumulative_usage,
+        }
+
+    def cumulative_usage(self) -> TokenUsageCounts:
+        """Return cumulative usage totals for the session."""
+        return {
+            "input_tokens": self._total_input_tokens,
+            "output_tokens": self._total_output_tokens,
+        }
+
     def to_prompt(self) -> list[PromptItem]:
         """Return a detached copy of history for model input payloads."""
         prompt = [item.copy() for item in self._history]
@@ -171,3 +211,25 @@ def _normalize_prompt_history(history: list[PromptItem]) -> list[PromptItem]:
         )
 
     return history
+
+
+def _normalize_usage_counts(usage: dict[str, int] | None) -> TokenUsageCounts | None:
+    if usage is None:
+        return None
+
+    input_tokens = usage.get("input_tokens")
+    output_tokens = usage.get("output_tokens")
+    if (
+        not isinstance(input_tokens, int)
+        or isinstance(input_tokens, bool)
+        or input_tokens < 0
+        or not isinstance(output_tokens, int)
+        or isinstance(output_tokens, bool)
+        or output_tokens < 0
+    ):
+        return None
+
+    return {
+        "input_tokens": input_tokens,
+        "output_tokens": output_tokens,
+    }
