@@ -97,6 +97,15 @@ class _BlockingToolRouter:
         return "unreachable"
 
 
+@dataclass(slots=True)
+class _RecordingCompactionOrchestrator:
+    calls: int = 0
+
+    def compact(self, session: Session) -> None:
+        _ = session
+        self.calls += 1
+
+
 def test_run_turn_returns_text_when_no_tool_calls(tmp_path: Path) -> None:
     session = Session()
     model_client = _FakeModelClient(
@@ -132,6 +141,27 @@ def test_run_turn_returns_text_when_no_tool_calls(tmp_path: Path) -> None:
         }
     ]
     assert session.to_prompt() == [{"role": "user", "content": "say hi"}]
+
+
+def test_run_turn_invokes_compaction_orchestrator_once_per_model_sample(tmp_path: Path) -> None:
+    session = Session()
+    model_client = _FakeModelClient(
+        turns=[[OutputTextDelta(delta="hello"), Completed(response_id="resp_1")]]
+    )
+    router = _FakeToolRouter(specs=[], results=[])
+    compaction = _RecordingCompactionOrchestrator()
+    agent = Agent(
+        session=session,
+        model_client=model_client,
+        tool_router=router,
+        cwd=tmp_path,
+        compaction_orchestrator=compaction,
+    )
+
+    result = asyncio.run(agent.run_turn("say hi"))
+
+    assert result == "hello"
+    assert compaction.calls == 1
 
 
 def test_run_turn_executes_tool_calls_and_loops(tmp_path: Path) -> None:

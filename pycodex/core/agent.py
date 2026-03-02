@@ -10,6 +10,7 @@ from inspect import isawaitable
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
+from pycodex.core.compaction import create_compaction_orchestrator
 from pycodex.core.initial_context import build_initial_context
 from pycodex.core.model_client import Completed as ModelCompleted
 from pycodex.core.model_client import OutputItemDone, OutputTextDelta
@@ -100,6 +101,13 @@ class SupportsToolRouter(Protocol):
         """Dispatch a tool call to a registered handler."""
 
 
+class SupportsCompactionOrchestrator(Protocol):
+    """Protocol for applying history compaction before model sampling."""
+
+    def compact(self, session: Session) -> object | None:
+        """Compact session history when required."""
+
+
 @dataclass(slots=True, frozen=True)
 class ParsedToolCall:
     """Normalized function-call item extracted from model output."""
@@ -118,6 +126,7 @@ class Agent:
     tool_router: SupportsToolRouter
     cwd: Path
     on_event: EventCallback | None = None
+    compaction_orchestrator: SupportsCompactionOrchestrator | None = None
 
     async def run_turn(self, user_input: str) -> str:
         """Run one user turn until the model emits no tool calls."""
@@ -129,6 +138,7 @@ class Agent:
 
         try:
             while True:
+                self._compact_history_if_needed()
                 tool_calls, text, usage = await self._sample_model_once()
                 if not tool_calls:
                     usage_snapshot = self.session.record_turn_usage(usage)
@@ -256,6 +266,20 @@ class Agent:
         if self.session.config is None:
             return ""
         return self.session.config.profile.instructions
+
+    def _compact_history_if_needed(self) -> None:
+        orchestrator = self._resolve_compaction_orchestrator()
+        if orchestrator is None:
+            return
+        orchestrator.compact(self.session)
+
+    def _resolve_compaction_orchestrator(self) -> SupportsCompactionOrchestrator | None:
+        if self.compaction_orchestrator is not None:
+            return self.compaction_orchestrator
+        if self.session.config is None:
+            return None
+        self.compaction_orchestrator = create_compaction_orchestrator()
+        return self.compaction_orchestrator
 
 
 async def run_turn(

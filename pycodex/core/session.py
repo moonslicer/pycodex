@@ -132,6 +132,19 @@ class Session:
         """Prepend prompt items before existing session history."""
         self._history = list(items) + self._history
 
+    def replace_prefix_with_system_summary(self, *, replace_count: int, summary_text: str) -> bool:
+        """Replace a leading history slice with one system summary message."""
+        if replace_count <= 0:
+            return False
+        effective_replace_count = min(replace_count, len(self._history))
+        if effective_replace_count == 0:
+            return False
+        self._history = [
+            {"role": "system", "content": summary_text},
+            *self._history[effective_replace_count:],
+        ]
+        return True
+
     def has_initial_context(self) -> bool:
         """Return whether initial context has already been injected."""
         return self._initial_context_injected

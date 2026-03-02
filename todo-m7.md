@@ -84,7 +84,7 @@ Session (history + cumulative usage totals)
   - Verify:
     - `.venv/bin/pytest tests/core/test_token_usage.py -q`
 
-- [ ] T2: Compaction interfaces + default implementations (`core/compaction.py`, `core/agent.py`, `core/session.py`)
+- [x] T2: Compaction interfaces + default implementations (`core/compaction.py`, `core/agent.py`, `core/session.py`)
   - Define interface split:
     - `CompactionStrategy` decides trigger/range (`plan(...)`),
     - `CompactionImplementation` generates summary (`summarize(...)`).
@@ -149,7 +149,7 @@ T2 + T4 + T5 ──> T6 (full gates + manual verification)
 
 ## Completion Checklist
 - [x] T1 complete
-- [ ] T2 complete
+- [x] T2 complete
 - [ ] T3 complete
 - [ ] T4 complete
 - [ ] T5 complete
