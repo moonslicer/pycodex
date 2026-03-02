@@ -53,6 +53,7 @@ class ReplayState:
     thread_id: str
     history: list[PromptItem]
     cumulative_usage: dict[str, int]
+    turn_count: int
     status: Literal["closed", "incomplete"]
     warnings: list[str]
     session_meta: SessionMeta | None = None
@@ -74,6 +75,7 @@ def replay_rollout(path: Path, *, expected_major: int = 1) -> ReplayState:
     session_meta: SessionMeta | None = None
     session_closed: SessionClosed | None = None
     cumulative_usage = {"input_tokens": 0, "output_tokens": 0}
+    turn_count = 0
 
     lines = path.read_text(encoding="utf-8").splitlines()
     for index, raw_line in enumerate(lines):
@@ -134,6 +136,8 @@ def replay_rollout(path: Path, *, expected_major: int = 1) -> ReplayState:
             cumulative_usage=cumulative_usage,
             state_warnings=warnings,
         )
+        if item.type == "turn.completed":
+            turn_count += 1
         if isinstance(item, SessionMeta):
             session_meta = item
         elif isinstance(item, SessionClosed):
@@ -144,6 +148,7 @@ def replay_rollout(path: Path, *, expected_major: int = 1) -> ReplayState:
         thread_id=thread_id,
         history=history,
         cumulative_usage=cumulative_usage,
+        turn_count=turn_count,
         status=status,
         warnings=warnings,
         session_meta=session_meta,

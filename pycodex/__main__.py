@@ -8,6 +8,7 @@ import functools
 import json
 import logging
 import os
+import shutil
 import sys
 from collections.abc import Awaitable, Callable, Sequence
 from dataclasses import replace
@@ -26,7 +27,14 @@ from pycodex.core.model_client import ModelClient
 from pycodex.core.rollout_recorder import (
     RolloutRecorder,
     build_rollout_path,
+    default_archived_sessions_root,
     default_sessions_root,
+    resolve_latest_rollout,
+)
+from pycodex.core.rollout_replay import (
+    RolloutReplayError,
+    import_legacy_session_json,
+    replay_rollout,
 )
 from pycodex.core.session import Session
 from pycodex.core.tui_bridge import TuiBridge
@@ -55,6 +63,11 @@ def _build_parser() -> argparse.ArgumentParser:
         "prompt",
         nargs="?",
         help="User prompt for the model (required unless --tui-mode).",
+    )
+    parser.add_argument(
+        "prompt_tail",
+        nargs="*",
+        help=argparse.SUPPRESS,
     )
     parser.add_argument(
         "--approval",
@@ -93,6 +106,12 @@ def _build_parser() -> argparse.ArgumentParser:
         "--dump-llm-request",
         action="store_true",
         help="Write the raw LLM request payload to stderr before each model call.",
+    )
+    parser.add_argument(
+        "--resume",
+        default=None,
+        metavar="THREAD_OR_PATH",
+        help="Resume from latest rollout by thread ID or explicit rollout path.",
     )
     parser.add_argument(
         "--tui-mode",
@@ -168,8 +187,9 @@ async def _run_prompt(
     profile_file: str | None = None,
     instructions: str | None = None,
     instructions_file: str | None = None,
+    resume: str | None = None,
 ) -> str:
-    config, session, model_client, tool_router = _build_runtime(
+    config, session, model_client, tool_router = await _build_runtime(
         approval_policy=approval_policy,
         sandbox_policy=sandbox_policy,
         dump_llm_request=dump_llm_request,
@@ -177,6 +197,7 @@ async def _run_prompt(
         profile_file=profile_file,
         instructions=instructions,
         instructions_file=instructions_file,
+        resume=resume,
     )
     try:
         return await run_turn(
@@ -190,7 +211,7 @@ async def _run_prompt(
         await session.close_rollout()
 
 
-def _build_runtime(
+async def _build_runtime(
     *,
     approval_policy: ApprovalPolicy,
     sandbox_policy: SandboxPolicy,
@@ -199,6 +220,7 @@ def _build_runtime(
     profile_file: str | None = None,
     instructions: str | None = None,
     instructions_file: str | None = None,
+    resume: str | None = None,
 ) -> tuple[Config, Session, SupportsModelClient, ToolRouter]:
     config = _resolve_runtime_config(
         profile=profile,
@@ -206,14 +228,32 @@ def _build_runtime(
         instructions=instructions,
         instructions_file=instructions_file,
     )
-    session = Session(config=config)
-    _configure_rollout_persistence(session, config=config)
+    session = await _build_session(config=config, resume=resume)
     model_client = _build_model_client(config, dump_llm_request=dump_llm_request)
     tool_router = _build_tool_router(
         approval_policy=approval_policy,
         sandbox_policy=sandbox_policy,
     )
     return config, session, model_client, tool_router
+
+
+async def _build_session(*, config: Config, resume: str | None) -> Session:
+    if resume is None:
+        session = Session(config=config)
+        _configure_rollout_persistence(session, config=config)
+        return session
+
+    rollout_path = await _resolve_resume_rollout_path(config=config, resume=resume)
+    replay_state = replay_rollout(rollout_path)
+    session = Session(config=config, thread_id=replay_state.thread_id)
+    session.restore_from_rollout(
+        history=replay_state.history,
+        cumulative_usage=replay_state.cumulative_usage,
+        turn_count=replay_state.turn_count,
+    )
+    _configure_rollout_persistence(session, config=config, resume_path=rollout_path)
+    session.mark_rollout_meta_written()
+    return session
 
 
 def _build_model_client(config: Config, *, dump_llm_request: bool = False) -> SupportsModelClient:
@@ -223,9 +263,14 @@ def _build_model_client(config: Config, *, dump_llm_request: bool = False) -> Su
     return ModelClient(config, request_observer=request_observer)
 
 
-def _configure_rollout_persistence(session: Session, *, config: Config) -> None:
+def _configure_rollout_persistence(
+    session: Session,
+    *,
+    config: Config,
+    resume_path: Path | None = None,
+) -> None:
     sessions_root = _resolve_sessions_root(config)
-    path = build_rollout_path(session.thread_id, root=sessions_root)
+    path = resume_path or build_rollout_path(session.thread_id, root=sessions_root)
     session.configure_rollout_recorder(
         recorder=RolloutRecorder(path=path),
         path=path,
@@ -237,6 +282,15 @@ def _resolve_sessions_root(config: Config) -> Path:
     if _ensure_directory(preferred):
         return preferred
     fallback = config.cwd / ".pycodex" / "sessions"
+    _ensure_directory(fallback)
+    return fallback
+
+
+def _resolve_archived_sessions_root(config: Config) -> Path:
+    preferred = default_archived_sessions_root()
+    if _ensure_directory(preferred):
+        return preferred
+    fallback = config.cwd / ".pycodex" / "archived_sessions"
     _ensure_directory(fallback)
     return fallback
 
@@ -345,6 +399,30 @@ def _render_error_message(exc: Exception) -> str:
     return str(exc).strip() or type(exc).__name__
 
 
+async def _resolve_resume_rollout_path(*, config: Config, resume: str) -> Path:
+    path_candidate = await asyncio.to_thread(lambda: Path(resume).expanduser())
+    if await asyncio.to_thread(path_candidate.exists):
+        return path_candidate
+
+    sessions_root = _resolve_sessions_root(config)
+    latest = resolve_latest_rollout(resume, root=sessions_root)
+    if latest is not None:
+        return latest
+
+    legacy_path = sessions_root / f"{resume}.json"
+    if await asyncio.to_thread(legacy_path.exists):
+        return await import_legacy_session_json(
+            legacy_path=legacy_path,
+            thread_id=resume,
+            sessions_root=sessions_root,
+        )
+
+    raise RolloutReplayError(
+        code="rollout_not_found",
+        message=f"Unable to resolve rollout for {resume!r}.",
+    )
+
+
 async def _run_prompt_json(
     prompt: str,
     *,
@@ -355,8 +433,9 @@ async def _run_prompt_json(
     profile_file: str | None = None,
     instructions: str | None = None,
     instructions_file: str | None = None,
+    resume: str | None = None,
 ) -> int:
-    config, session, model_client, tool_router = _build_runtime(
+    config, session, model_client, tool_router = await _build_runtime(
         approval_policy=approval_policy,
         sandbox_policy=sandbox_policy,
         dump_llm_request=dump_llm_request,
@@ -364,8 +443,9 @@ async def _run_prompt_json(
         profile_file=profile_file,
         instructions=instructions,
         instructions_file=instructions_file,
+        resume=resume,
     )
-    adapter = EventAdapter()
+    adapter = EventAdapter(thread_id=session.thread_id)
 
     _emit_protocol_event(adapter.start_thread())
 
@@ -388,6 +468,9 @@ async def _run_prompt_json(
     except asyncio.CancelledError:
         _emit_protocol_event(adapter.turn_failed(INTERRUPTED_ERROR))
         return INTERRUPTED_EXIT_CODE
+    except RolloutReplayError as exc:
+        _emit_protocol_event(adapter.turn_failed(f"{exc.code}: {exc.message}"))
+        return 1
     except Exception as exc:
         _emit_protocol_event(adapter.turn_failed(exc))
         return 1
@@ -405,6 +488,7 @@ async def _run_tui_mode(
     profile_file: str | None = None,
     instructions: str | None = None,
     instructions_file: str | None = None,
+    resume: str | None = None,
 ) -> int:
     config = _resolve_runtime_config(
         profile=profile,
@@ -412,7 +496,7 @@ async def _run_tui_mode(
         instructions=instructions,
         instructions_file=instructions_file,
     )
-    session = Session(config=config)
+    session = await _build_session(config=config, resume=resume)
     model_client = _build_model_client(config, dump_llm_request=dump_llm_request)
     bridge: TuiBridge | None = None
 
@@ -493,6 +577,165 @@ def _emit_interrupted_stderr() -> None:
     print(f"[ERROR] {INTERRUPTED_ERROR}", file=sys.stderr)
 
 
+def _run_session_command(
+    *,
+    args: argparse.Namespace,
+    config: Config,
+) -> int:
+    if len(args.prompt_tail) == 0:
+        print("[ERROR] Missing session subcommand. Expected one of: list, read, archive, unarchive", file=sys.stderr)
+        return 1
+
+    subcommand = args.prompt_tail[0]
+    sessions_root = _resolve_sessions_root(config)
+    archived_root = _resolve_archived_sessions_root(config)
+    if subcommand == "list":
+        return _session_list(sessions_root=sessions_root)
+    if subcommand == "read":
+        if len(args.prompt_tail) < 2:
+            print("[ERROR] session read requires an id", file=sys.stderr)
+            return 1
+        return _session_read(
+            session_id=args.prompt_tail[1],
+            sessions_root=sessions_root,
+            archived_root=archived_root,
+        )
+    if subcommand == "archive":
+        if len(args.prompt_tail) < 2:
+            print("[ERROR] session archive requires an id", file=sys.stderr)
+            return 1
+        return _session_move(
+            session_id=args.prompt_tail[1],
+            source_root=sessions_root,
+            dest_root=archived_root,
+            action="archive",
+        )
+    if subcommand == "unarchive":
+        if len(args.prompt_tail) < 2:
+            print("[ERROR] session unarchive requires an id", file=sys.stderr)
+            return 1
+        return _session_move(
+            session_id=args.prompt_tail[1],
+            source_root=archived_root,
+            dest_root=sessions_root,
+            action="unarchive",
+        )
+
+    print(
+        f"[ERROR] Unknown session subcommand {subcommand!r}. Expected one of: list, read, archive, unarchive",
+        file=sys.stderr,
+    )
+    return 1
+
+
+def _session_list(*, sessions_root: Path) -> int:
+    rollout_paths = sorted(sessions_root.glob("rollout-*.jsonl"), key=lambda p: p.name, reverse=True)
+    for path in rollout_paths:
+        state = replay_rollout(path)
+        token_total = state.cumulative_usage["input_tokens"] + state.cumulative_usage["output_tokens"]
+        date_token = _rollout_date_token(path.name)
+        print(
+            f"{state.thread_id}\t{date_token}\tturns={state.turn_count}\ttokens={token_total}\tstatus={state.status}"
+        )
+    return 0
+
+
+def _session_read(*, session_id: str, sessions_root: Path, archived_root: Path) -> int:
+    path = _resolve_session_path(
+        session_id=session_id,
+        active_root=sessions_root,
+        archived_root=archived_root,
+    )
+    state = replay_rollout(path)
+    if state.session_closed is not None:
+        token_total = {
+            "input_tokens": state.session_closed.token_total.input_tokens,
+            "output_tokens": state.session_closed.token_total.output_tokens,
+        }
+        turn_count = state.session_closed.turn_count
+        last_user_message = state.session_closed.last_user_message
+    else:
+        token_total = dict(state.cumulative_usage)
+        turn_count = state.turn_count
+        last_user_message = _last_user_message_from_history(state.history)
+
+    print(
+        json.dumps(
+            {
+                "thread_id": state.thread_id,
+                "status": state.status,
+                "turn_count": turn_count,
+                "token_total": token_total,
+                "last_user_message": last_user_message,
+            },
+            ensure_ascii=True,
+        )
+    )
+    return 0
+
+
+def _session_move(
+    *,
+    session_id: str,
+    source_root: Path,
+    dest_root: Path,
+    action: str,
+) -> int:
+    source_path = _resolve_session_path(session_id=session_id, active_root=source_root, archived_root=None)
+    _ensure_directory(dest_root)
+    dest_path = dest_root / source_path.name
+    if dest_path.exists():
+        raise RolloutReplayError(
+            code="replay_failure",
+            message=f"Cannot {action} session {session_id!r}; destination already exists.",
+        )
+    shutil.move(str(source_path), str(dest_path))
+    return 0
+
+
+def _resolve_session_path(
+    *,
+    session_id: str,
+    active_root: Path,
+    archived_root: Path | None,
+) -> Path:
+    candidate = Path(session_id).expanduser()
+    if candidate.exists():
+        return candidate
+
+    resolved = resolve_latest_rollout(session_id, root=active_root)
+    if resolved is not None:
+        return resolved
+    if archived_root is not None:
+        archived = resolve_latest_rollout(session_id, root=archived_root)
+        if archived is not None:
+            return archived
+    raise RolloutReplayError(
+        code="rollout_not_found",
+        message=f"Session {session_id!r} not found.",
+    )
+
+
+def _last_user_message_from_history(history: Sequence[object]) -> str | None:
+    for item in reversed(history):
+        if not isinstance(item, dict):
+            continue
+        if item.get("role") != "user":
+            continue
+        content = item.get("content")
+        if isinstance(content, str):
+            return content
+    return None
+
+
+def _rollout_date_token(filename: str) -> str:
+    prefix = "rollout-"
+    if not filename.startswith(prefix):
+        return "unknown"
+    remainder = filename[len(prefix) :]
+    return remainder.split("-", 1)[0]
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
@@ -524,6 +767,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             parser.error("--json cannot be used with --tui-mode")
         if args.prompt is not None:
             parser.error("prompt is not accepted with --tui-mode")
+        if args.prompt_tail:
+            parser.error("extra arguments are not accepted with --tui-mode")
         try:
             tui_kwargs: dict[str, Any] = {
                 "approval_policy": approval_policy,
@@ -540,6 +785,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "instructions_file": args.instructions_file,
                     }
                 )
+            if args.resume is not None:
+                tui_kwargs["resume"] = args.resume
             return asyncio.run(_run_tui_mode(**tui_kwargs))
         except KeyboardInterrupt:
             _emit_interrupted_stderr()
@@ -549,6 +796,19 @@ def main(argv: Sequence[str] | None = None) -> int:
             print(f"[ERROR] {message}", file=sys.stderr)
             return 1
 
+    if args.prompt == "session":
+        if args.json:
+            parser.error("--json cannot be used with session commands")
+        if args.resume is not None:
+            parser.error("--resume cannot be used with session commands")
+        try:
+            return _run_session_command(args=args, config=default_config)
+        except RolloutReplayError as exc:
+            print(f"[ERROR] {exc.code}: {exc.message}", file=sys.stderr)
+            return 1
+
+    if args.prompt_tail:
+        parser.error(f"unrecognized arguments: {' '.join(args.prompt_tail)}")
     if args.prompt is None:
         parser.error("the following arguments are required: prompt")
     prompt: str = args.prompt
@@ -571,9 +831,14 @@ def main(argv: Sequence[str] | None = None) -> int:
                         "instructions_file": args.instructions_file,
                     }
                 )
+            if args.resume is not None:
+                json_kwargs["resume"] = args.resume
             return asyncio.run(_run_prompt_json(**json_kwargs))
         except KeyboardInterrupt:
             return INTERRUPTED_EXIT_CODE
+        except RolloutReplayError as exc:
+            print(f"[ERROR] {exc.code}: {exc.message}", file=sys.stderr)
+            return 1
         except Exception as exc:
             message = _render_error_message(exc)
             print(f"[ERROR] {message}", file=sys.stderr)
@@ -596,10 +861,15 @@ def main(argv: Sequence[str] | None = None) -> int:
                     "instructions_file": args.instructions_file,
                 }
             )
+        if args.resume is not None:
+            prompt_kwargs["resume"] = args.resume
         final_text = asyncio.run(_run_prompt(**prompt_kwargs))
     except KeyboardInterrupt:
         _emit_interrupted_stderr()
         return INTERRUPTED_EXIT_CODE
+    except RolloutReplayError as exc:
+        print(f"[ERROR] {exc.code}: {exc.message}", file=sys.stderr)
+        return 1
     except Exception as exc:
         message = _render_error_message(exc)
         print(f"[ERROR] {message}", file=sys.stderr)

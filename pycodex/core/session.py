@@ -152,6 +152,20 @@ class Session:
         """Prepend prompt items before existing session history."""
         self._history = list(items) + self._history
 
+    def restore_from_rollout(
+        self,
+        *,
+        history: list[PromptItem],
+        cumulative_usage: dict[str, int],
+        turn_count: int,
+    ) -> None:
+        """Restore session state from replayed rollout records."""
+        self._history = [item.copy() for item in history]
+        self._total_input_tokens = max(0, int(cumulative_usage.get("input_tokens", 0)))
+        self._total_output_tokens = max(0, int(cumulative_usage.get("output_tokens", 0)))
+        self._turn_count = max(0, turn_count)
+        self._initial_context_injected = True
+
     def replace_prefix_with_system_summary(self, *, replace_count: int, summary_text: str) -> bool:
         """Replace a leading history slice with one system summary message."""
         if replace_count <= 0:
