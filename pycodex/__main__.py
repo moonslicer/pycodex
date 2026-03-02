@@ -37,6 +37,8 @@ from pycodex.tools.write_file import WriteFileTool
 EXPECTED_TOOL_NAMES = {"shell", "read_file", "write_file", "list_dir", "grep_files"}
 BUILTIN_PROFILES: dict[str, AgentProfile] = {"codex": CODEX_PROFILE}
 AskUserFn = Callable[[Any, dict[str, Any]], Awaitable[ReviewDecision]]
+INTERRUPTED_EXIT_CODE = 130
+INTERRUPTED_ERROR = "interrupted"
 
 
 def _build_parser() -> argparse.ArgumentParser:
@@ -345,6 +347,12 @@ async def _run_prompt_json(
             user_input=prompt,
             on_event=on_event,
         )
+    except KeyboardInterrupt:
+        _emit_protocol_event(adapter.turn_failed(INTERRUPTED_ERROR))
+        return INTERRUPTED_EXIT_CODE
+    except asyncio.CancelledError:
+        _emit_protocol_event(adapter.turn_failed(INTERRUPTED_ERROR))
+        return INTERRUPTED_EXIT_CODE
     except Exception as exc:
         _emit_protocol_event(adapter.turn_failed(exc))
         return 1
@@ -443,6 +451,10 @@ def _resolve_effective_policies(
     return approval_policy, sandbox_policy
 
 
+def _emit_interrupted_stderr() -> None:
+    print(f"[ERROR] {INTERRUPTED_ERROR}", file=sys.stderr)
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
@@ -491,6 +503,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                     }
                 )
             return asyncio.run(_run_tui_mode(**tui_kwargs))
+        except KeyboardInterrupt:
+            _emit_interrupted_stderr()
+            return INTERRUPTED_EXIT_CODE
         except Exception as exc:
             message = _render_error_message(exc)
             print(f"[ERROR] {message}", file=sys.stderr)
@@ -519,6 +534,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                     }
                 )
             return asyncio.run(_run_prompt_json(**json_kwargs))
+        except KeyboardInterrupt:
+            return INTERRUPTED_EXIT_CODE
         except Exception as exc:
             message = _render_error_message(exc)
             print(f"[ERROR] {message}", file=sys.stderr)
@@ -542,6 +559,9 @@ def main(argv: Sequence[str] | None = None) -> int:
                 }
             )
         final_text = asyncio.run(_run_prompt(**prompt_kwargs))
+    except KeyboardInterrupt:
+        _emit_interrupted_stderr()
+        return INTERRUPTED_EXIT_CODE
     except Exception as exc:
         message = _render_error_message(exc)
         print(f"[ERROR] {message}", file=sys.stderr)

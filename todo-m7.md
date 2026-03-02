@@ -108,7 +108,7 @@ Session (history + cumulative usage totals)
   - Verify:
     - `.venv/bin/pytest tests/core/test_config.py -k global_config -q`
 
-- [ ] T4: Local resiliency hardening (`core/model_client.py`, `tools/shell.py`, runtime interrupt paths)
+- [x] T4: Local resiliency hardening (`core/model_client.py`, `tools/shell.py`, runtime interrupt paths)
   - Harden retry/backoff for transient model API failures.
   - Ensure shell subprocess timeouts terminate hung processes deterministically.
   - Ensure Ctrl+C exits cleanly during active turns in text and JSON modes.
@@ -151,7 +151,7 @@ T2 + T4 + T5 ──> T6 (full gates + manual verification)
 - [x] T1 complete
 - [x] T2 complete
 - [x] T3 complete
-- [ ] T4 complete
+- [x] T4 complete
 - [ ] T5 complete
 - [ ] T6 complete
 - [ ] Compaction summary block format locked and documented

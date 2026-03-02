@@ -269,6 +269,57 @@ def test_model_client_retries_once_on_transient_stream_failure() -> None:
     assert len(responses.calls) == 2
 
 
+def test_model_client_retry_applies_backoff_sleep(monkeypatch: pytest.MonkeyPatch) -> None:
+    responses = _FakeResponses(
+        streams=[
+            _FakeStream(events=[], error=_TransientError("temporary outage")),
+            _FakeStream(events=[{"type": "response.completed", "response": {"id": "resp_ok"}}]),
+        ]
+    )
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("pycodex.core.model_client.asyncio.sleep", fake_sleep)
+    client = ModelClient(
+        config=Config(model="gpt-test"),
+        openai_factory=lambda _config: _FakeOpenAIClient(responses=responses),
+    )
+
+    events = asyncio.run(_collect_events(client))
+
+    assert events == [Completed(response_id="resp_ok")]
+    assert len(responses.calls) == 2
+    assert sleeps == [0.25]
+
+
+def test_model_client_non_retryable_failure_skips_backoff_sleep(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    responses = _FakeResponses(
+        streams=[_FakeStream(events=[], error=_FatalError("bad request from server"))]
+    )
+    sleeps: list[float] = []
+
+    async def fake_sleep(seconds: float) -> None:
+        sleeps.append(seconds)
+
+    monkeypatch.setattr("pycodex.core.model_client.asyncio.sleep", fake_sleep)
+    client = ModelClient(
+        config=Config(model="gpt-test"),
+        openai_factory=lambda _config: _FakeOpenAIClient(responses=responses),
+    )
+
+    with pytest.raises(
+        ModelClientStreamError,
+        match="Model stream failed after 1 attempt\\(s\\): bad request from server",
+    ):
+        asyncio.run(_collect_events(client))
+
+    assert sleeps == []
+
+
 def test_model_client_stops_after_retry_budget_is_exhausted() -> None:
     responses = _FakeResponses(
         streams=[

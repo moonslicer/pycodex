@@ -15,6 +15,7 @@ from pycodex.tools.base import ToolError, ToolOutcome, ToolResult
 
 DEFAULT_TIMEOUT_MS = 10_000
 MAX_OUTPUT_BYTES = 1_048_576
+_POST_KILL_WAIT_SECONDS = 1.0
 _BASH_BINARIES = {"bash", "/bin/bash", "/usr/bin/bash"}
 _SAFE_INLINE_TOKEN = re.compile(r"^[A-Za-z0-9._/:=,+-]+$")
 
@@ -150,7 +151,15 @@ async def _run_command(
         )
     except TimeoutError:
         process.kill()
-        await process.communicate()
+        try:
+            await asyncio.wait_for(process.communicate(), timeout=_POST_KILL_WAIT_SECONDS)
+        except TimeoutError:
+            return ToolError(
+                message=(
+                    f"Command timed out after {timeout_ms}ms and could not be terminated cleanly"
+                ),
+                code="timeout",
+            )
         return ToolError(message=f"Command timed out after {timeout_ms}ms", code="timeout")
 
     return _make_command_result(

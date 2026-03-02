@@ -13,6 +13,7 @@ from pycodex.core.config import Config
 from pycodex.core.session import PromptItem
 
 _MAX_STREAM_ATTEMPTS = 2
+_RETRY_BACKOFF_SECONDS = (0.25,)
 _TRANSIENT_STATUS_CODES = {408, 409, 429, 500, 502, 503, 504}
 _TRANSIENT_ERROR_NAMES = {
     "APIConnectionError",
@@ -108,6 +109,9 @@ class ModelClient:
                     attempt < _MAX_STREAM_ATTEMPTS and not emitted_any and _is_transient_error(exc)
                 )
                 if is_retryable:
+                    backoff_seconds = _retry_backoff_seconds(attempt)
+                    if backoff_seconds > 0:
+                        await asyncio.sleep(backoff_seconds)
                     continue
                 message = _describe_exception(exc)
                 raise ModelClientStreamError(
@@ -395,3 +399,12 @@ async def _maybe_await(value: Any) -> Any:
     if asyncio.iscoroutine(value):
         return await value
     return value
+
+
+def _retry_backoff_seconds(attempt: int) -> float:
+    if attempt <= 0:
+        return 0.0
+    index = attempt - 1
+    if index >= len(_RETRY_BACKOFF_SECONDS):
+        return 0.0
+    return _RETRY_BACKOFF_SECONDS[index]
