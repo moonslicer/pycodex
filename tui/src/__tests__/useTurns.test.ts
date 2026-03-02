@@ -23,6 +23,35 @@ describe("reduceTurns", () => {
     expect(next.turns).toHaveLength(1);
     expect(next.turns[0]?.turn_id).toBe("turn_1");
     expect(next.turns[0]?.status).toBe("active");
+    expect(next.turns[0]?.compaction).toEqual({
+      status: "pending",
+      detail: null,
+    });
+  });
+
+  test("context.compacted marks turn compaction state as triggered", () => {
+    const next = reduceTurnsSequence(INITIAL_TURNS_STATE, [
+      {
+        type: "turn.started",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+      },
+      {
+        type: "context.compacted",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+        strategy: "threshold_v1",
+        implementation: "local_summary_v1",
+        replaced_items: 5,
+        estimated_prompt_tokens: 9100,
+        context_window_tokens: 10000,
+        remaining_ratio: 0.09,
+        threshold_ratio: 0.2,
+      },
+    ]);
+
+    expect(next.turns[0]?.compaction.status).toBe("triggered");
+    expect(next.turns[0]?.compaction.detail?.replaced_items).toBe(5);
   });
 
   test("turn.completed records final text and usage", () => {
@@ -48,6 +77,10 @@ describe("reduceTurns", () => {
     expect(completed.turns[0]?.usage).toEqual({
       turn: { input_tokens: 5, output_tokens: 8 },
       cumulative: { input_tokens: 5, output_tokens: 8 },
+    });
+    expect(completed.turns[0]?.compaction).toEqual({
+      status: "idle",
+      detail: null,
     });
   });
 
@@ -166,6 +199,7 @@ describe("reduceTurns", () => {
       expect(next.turns[0]?.status).toBe(expectedStatus);
       expect(next.turns[0]?.error).toBe(expectedError);
       expect(next.turns[0]?.assistantLines).toEqual(expectedAssistantLines);
+      expect(next.turns[0]?.compaction.status).toBe("idle");
     },
   );
 

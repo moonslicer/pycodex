@@ -19,6 +19,7 @@ def test_config_defaults() -> None:
     assert config.profile == CODEX_PROFILE
     assert config.project_doc_max_bytes == 32_768
     assert config.compaction_threshold_ratio == 0.2
+    assert config.compaction_context_window_tokens == 128_000
     assert config.compaction_strategy == "threshold_v1"
     assert config.compaction_implementation == "local_summary_v1"
     assert config.compaction_options == {}
@@ -135,6 +136,7 @@ def test_load_config_global_config_applies_when_project_missing(tmp_path: Path) 
             [
                 'model = "global-model"',
                 "compaction_threshold_ratio = 0.33",
+                "compaction_context_window_tokens = 64000",
                 'compaction_strategy = "threshold_v1"',
                 'compaction_implementation = "local_summary_v1"',
                 'default_approval_policy = "on-request"',
@@ -157,6 +159,7 @@ def test_load_config_global_config_applies_when_project_missing(tmp_path: Path) 
 
     assert config.model == "global-model"
     assert config.compaction_threshold_ratio == 0.33
+    assert config.compaction_context_window_tokens == 64000
     assert config.compaction_strategy == "threshold_v1"
     assert config.compaction_implementation == "local_summary_v1"
     assert config.default_approval_policy == ApprovalPolicy.ON_REQUEST

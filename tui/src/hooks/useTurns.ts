@@ -1,6 +1,10 @@
 import { useCallback, useEffect, useReducer, useRef, useState } from "react";
 
-import type { ProtocolEvent, UsageSnapshot } from "../protocol/types.js";
+import type {
+  ContextCompactedEvent,
+  ProtocolEvent,
+  UsageSnapshot,
+} from "../protocol/types.js";
 import { sliceUnprocessedEvents } from "./eventCursor.js";
 import {
   INITIAL_LINE_BUFFER_STATE,
@@ -24,6 +28,10 @@ export type TurnState = {
   status: "active" | "completed" | "failed";
   error: string | null;
   usage: UsageSnapshot | null;
+  compaction: {
+    status: "pending" | "triggered" | "idle";
+    detail: ContextCompactedEvent | null;
+  };
 };
 
 export type TurnsViewState = {
@@ -236,8 +244,30 @@ export function reduceTurns(
             status: "active",
             error: null,
             usage: null,
+            compaction: {
+              status: "pending",
+              detail: null,
+            },
           },
         ],
+      };
+    }
+    case "context.compacted": {
+      const nextTurns = updateTurn(state.turns, event.turn_id, (turn) => ({
+        ...turn,
+        compaction: {
+          status: "triggered",
+          detail: event,
+        },
+      }));
+
+      if (nextTurns === state.turns) {
+        return state;
+      }
+
+      return {
+        ...state,
+        turns: nextTurns,
       };
     }
     case "turn.completed": {
@@ -257,6 +287,10 @@ export function reduceTurns(
         status: "completed",
         error: null,
         usage: event.usage,
+        compaction:
+          turn.compaction.status === "pending"
+            ? { status: "idle", detail: null }
+            : turn.compaction,
       }));
 
       if (nextTurns === state.turns) {
@@ -284,6 +318,10 @@ export function reduceTurns(
           partialLine: nextBuffer.partial,
           status: "failed",
           error: event.error,
+          compaction:
+            turn.compaction.status === "pending"
+              ? { status: "idle", detail: null }
+              : turn.compaction,
         };
       });
 

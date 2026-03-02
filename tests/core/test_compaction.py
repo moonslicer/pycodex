@@ -24,7 +24,7 @@ def test_threshold_strategy_skips_when_remaining_ratio_is_high() -> None:
     strategy = ThresholdV1Strategy(threshold_ratio=0.2, keep_recent_items=4, min_replace_items=2)
     context = CompactionContext(
         history=session.to_prompt(),
-        cumulative_usage={"input_tokens": 80, "output_tokens": 20},
+        prompt_tokens_estimate=100,
         context_window_tokens=1000,
     )
 
@@ -38,7 +38,7 @@ def test_threshold_strategy_returns_plan_when_remaining_ratio_is_low() -> None:
     strategy = ThresholdV1Strategy(threshold_ratio=0.2, keep_recent_items=4, min_replace_items=2)
     context = CompactionContext(
         history=session.to_prompt(),
-        cumulative_usage={"input_tokens": 950, "output_tokens": 0},
+        prompt_tokens_estimate=950,
         context_window_tokens=1000,
     )
 
@@ -52,12 +52,11 @@ def test_threshold_strategy_returns_plan_when_remaining_ratio_is_low() -> None:
 
 def test_compaction_orchestrator_replaces_prefix_with_summary_and_keeps_tail() -> None:
     session = _build_session_with_messages(pairs=8)
-    session.record_turn_usage({"input_tokens": 950, "output_tokens": 0})
     history_before = session.to_prompt()
     orchestrator = CompactionOrchestrator(
         strategy=ThresholdV1Strategy(threshold_ratio=0.2, keep_recent_items=4, min_replace_items=2),
         implementation=LocalSummaryV1Implementation(),
-        context_window_tokens=1000,
+        context_window_tokens=20,
         summary_max_chars=500,
     )
 
@@ -66,6 +65,10 @@ def test_compaction_orchestrator_replaces_prefix_with_summary_and_keeps_tail() -
     assert applied is not None
     assert applied.strategy == "threshold_v1"
     assert applied.implementation == "local_summary_v1"
+    assert applied.replaced_items == applied.replace_end
+    assert applied.context_window_tokens == 20
+    assert applied.estimated_prompt_tokens > 0
+    assert applied.threshold_ratio == 0.2
     history_after = session.to_prompt()
     assert len(history_after) == 5
     assert history_after[1:] == history_before[-4:]
@@ -77,11 +80,10 @@ def test_compaction_orchestrator_replaces_prefix_with_summary_and_keeps_tail() -
 
 def test_compaction_orchestrator_is_idempotent_without_new_history() -> None:
     session = _build_session_with_messages(pairs=8)
-    session.record_turn_usage({"input_tokens": 950, "output_tokens": 0})
     orchestrator = CompactionOrchestrator(
         strategy=ThresholdV1Strategy(threshold_ratio=0.2, keep_recent_items=4, min_replace_items=2),
         implementation=LocalSummaryV1Implementation(),
-        context_window_tokens=1000,
+        context_window_tokens=20,
     )
 
     first = orchestrator.compact(session)
@@ -104,3 +106,40 @@ def test_local_summary_v1_is_deterministic_for_same_input() -> None:
     second = implementation.summarize(request=request)
 
     assert first == second
+
+
+def test_local_summary_v1_skips_existing_summary_blocks() -> None:
+    implementation = LocalSummaryV1Implementation(max_lines=3, max_line_chars=80)
+    request = SummaryRequest(
+        items=[
+            {
+                "role": "system",
+                "content": "[compaction.summary.v1]\nConversation summary:\n- user: old context",
+            },
+            {"role": "user", "content": "new question"},
+        ],
+        max_chars=300,
+    )
+
+    summary = implementation.summarize(request=request)
+
+    assert "[compaction.summary.v1]" not in summary.text
+    assert "user: new question" in summary.text
+
+
+def test_compaction_orchestrator_skips_summary_only_prefix() -> None:
+    session = Session()
+    session.append_system_message("[compaction.summary.v1]\nConversation summary:\n- user: old")
+    session.append_user_message("latest")
+    session.append_assistant_message("reply")
+    history_before = session.to_prompt()
+    orchestrator = CompactionOrchestrator(
+        strategy=ThresholdV1Strategy(threshold_ratio=0.9, keep_recent_items=2, min_replace_items=1),
+        implementation=LocalSummaryV1Implementation(),
+        context_window_tokens=3,
+    )
+
+    applied = orchestrator.compact(session)
+
+    assert applied is None
+    assert session.to_prompt() == history_before

@@ -64,6 +64,20 @@ describe("StdioReader", () => {
     );
     stdout.write(
       `${JSON.stringify({
+        type: "context.compacted",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+        strategy: "threshold_v1",
+        implementation: "local_summary_v1",
+        replaced_items: 5,
+        estimated_prompt_tokens: 9100,
+        context_window_tokens: 10000,
+        remaining_ratio: 0.09,
+        threshold_ratio: 0.2,
+      })}\n`,
+    );
+    stdout.write(
+      `${JSON.stringify({
         type: "approval.request",
         thread_id: "thread_1",
         turn_id: "turn_1",
@@ -79,6 +93,7 @@ describe("StdioReader", () => {
       "thread.started",
       "item.started",
       "item.updated",
+      "context.compacted",
       "approval.request",
     ]);
   });

@@ -27,6 +27,7 @@ class Config(BaseModel):
     profile: AgentProfile = CODEX_PROFILE
     project_doc_max_bytes: int = 32_768
     compaction_threshold_ratio: float = 0.2
+    compaction_context_window_tokens: int = 128_000
     compaction_strategy: str = "threshold_v1"
     compaction_implementation: str = "local_summary_v1"
     compaction_options: dict[str, dict[str, Any]] = Field(default_factory=dict)
@@ -62,6 +63,10 @@ def _load_env_config() -> dict[str, Any]:
         parsed = _to_float(value)
         if parsed is not None:
             env["compaction_threshold_ratio"] = parsed
+    if value := os.getenv("PYCODEX_COMPACTION_CONTEXT_WINDOW_TOKENS"):
+        parsed = _to_int(value)
+        if parsed is not None and parsed > 0:
+            env["compaction_context_window_tokens"] = parsed
     if value := os.getenv("PYCODEX_COMPACTION_STRATEGY"):
         env["compaction_strategy"] = value
     if value := os.getenv("PYCODEX_COMPACTION_IMPLEMENTATION"):
@@ -115,5 +120,12 @@ def _default_global_config_path() -> Path:
 def _to_float(value: str) -> float | None:
     try:
         return float(value)
+    except ValueError:
+        return None
+
+
+def _to_int(value: str) -> int | None:
+    try:
+        return int(value)
     except ValueError:
         return None

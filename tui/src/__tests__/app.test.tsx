@@ -10,7 +10,7 @@
  * is wired up.
  */
 import type { ProtocolEvent } from "../protocol/types.js";
-import { isInputDisabled } from "../app.js";
+import { isInputDisabled, summarizeCompactionForTurns } from "../app.js";
 import {
   INITIAL_TURNS_STATE,
   reduceTurns,
@@ -164,5 +164,44 @@ describe("App state integration smoke", () => {
       { type: "thread.started", thread_id: "thread_1" },
     ]).turns;
     expect(isInputDisabled(idleTurns, 0, true)).toBe(true);
+  });
+
+  test("compaction summary reflects latest turn and does not stay stale-triggered", () => {
+    const state = reduceTurnsSequence(INITIAL_TURNS_STATE, [
+      { type: "thread.started", thread_id: "thread_1" },
+      { type: "turn.started", thread_id: "thread_1", turn_id: "turn_1" },
+      {
+        type: "context.compacted",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+        strategy: "threshold_v1",
+        implementation: "local_summary_v1",
+        replaced_items: 6,
+        estimated_prompt_tokens: 9100,
+        context_window_tokens: 10000,
+        remaining_ratio: 0.09,
+        threshold_ratio: 0.2,
+      },
+      {
+        type: "turn.completed",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+        final_text: "done",
+        usage: null,
+      },
+      { type: "turn.started", thread_id: "thread_1", turn_id: "turn_2" },
+      {
+        type: "turn.completed",
+        thread_id: "thread_1",
+        turn_id: "turn_2",
+        final_text: "done again",
+        usage: null,
+      },
+    ]);
+
+    const summary = summarizeCompactionForTurns(state.turns);
+
+    expect(summary.status).toBe("idle");
+    expect(summary.detail).toBeNull();
   });
 });

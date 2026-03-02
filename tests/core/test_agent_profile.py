@@ -11,6 +11,8 @@ def test_codex_profile_defaults() -> None:
     assert CODEX_PROFILE.name == "codex"
     assert "AGENTS.md" in CODEX_PROFILE.instruction_filenames
     assert len(CODEX_PROFILE.instructions) > 50
+    assert "short acknowledgments" in CODEX_PROFILE.instructions
+    assert "do not repeat prior summaries" in CODEX_PROFILE.instructions
     assert CODEX_PROFILE.enabled_tools is None
 
 

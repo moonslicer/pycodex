@@ -13,9 +13,13 @@ from pycodex.core.agent import (
     ToolResultReceived,
     TurnCompleted,
 )
+from pycodex.core.agent import (
+    ContextCompacted as AgentContextCompacted,
+)
 from pycodex.core.agent import TurnStarted as AgentTurnStarted
 from pycodex.core.session import UsageSnapshot as SessionUsageSnapshot
 from pycodex.protocol.events import (
+    ContextCompacted,
     ItemCompleted,
     ItemStarted,
     ItemUpdated,
@@ -73,6 +77,22 @@ class EventAdapter:
                     turn_id=turn_id,
                     item_id=item_id,
                     delta=event.delta,
+                )
+            ]
+
+        if isinstance(event, AgentContextCompacted):
+            turn_id = self._require_active_turn_id()
+            return [
+                ContextCompacted(
+                    thread_id=self.thread_id,
+                    turn_id=turn_id,
+                    strategy=event.strategy,
+                    implementation=event.implementation,
+                    replaced_items=event.replaced_items,
+                    estimated_prompt_tokens=event.estimated_prompt_tokens,
+                    context_window_tokens=event.context_window_tokens,
+                    remaining_ratio=event.remaining_ratio,
+                    threshold_ratio=event.threshold_ratio,
                 )
             ]
 

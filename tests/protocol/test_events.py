@@ -5,6 +5,7 @@ from typing import Any
 import pytest
 from pycodex.protocol.events import (
     ApprovalRequested,
+    ContextCompacted,
     ItemCompleted,
     ItemStarted,
     ItemUpdated,
@@ -24,6 +25,20 @@ from pydantic import TypeAdapter, ValidationError
     [
         (ThreadStarted(thread_id="thread_1"), ThreadStarted),
         (TurnStarted(thread_id="thread_1", turn_id="turn_1"), TurnStarted),
+        (
+            ContextCompacted(
+                thread_id="thread_1",
+                turn_id="turn_1",
+                strategy="threshold_v1",
+                implementation="local_summary_v1",
+                replaced_items=6,
+                estimated_prompt_tokens=9100,
+                context_window_tokens=10000,
+                remaining_ratio=0.09,
+                threshold_ratio=0.2,
+            ),
+            ContextCompacted,
+        ),
         (
             TurnCompleted(
                 thread_id="thread_1",
@@ -99,6 +114,21 @@ def test_event_model_round_trip_json(event: Any, event_cls: type[Any]) -> None:
         (
             {"type": "turn.started", "thread_id": "thread_1", "turn_id": "turn_1"},
             TurnStarted,
+        ),
+        (
+            {
+                "type": "context.compacted",
+                "thread_id": "thread_1",
+                "turn_id": "turn_1",
+                "strategy": "threshold_v1",
+                "implementation": "local_summary_v1",
+                "replaced_items": 6,
+                "estimated_prompt_tokens": 9100,
+                "context_window_tokens": 10000,
+                "remaining_ratio": 0.09,
+                "threshold_ratio": 0.2,
+            },
+            ContextCompacted,
         ),
         (
             {

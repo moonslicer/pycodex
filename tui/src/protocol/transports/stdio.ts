@@ -19,13 +19,17 @@ function isString(value: unknown): value is string {
   return typeof value === "string";
 }
 
+function isNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value);
+}
+
 function isTokenUsage(value: unknown): value is TokenUsage {
   if (!isRecord(value)) {
     return false;
   }
   return (
-    typeof value["input_tokens"] === "number" &&
-    typeof value["output_tokens"] === "number"
+    isNumber(value["input_tokens"]) &&
+    isNumber(value["output_tokens"])
   );
 }
 
@@ -51,6 +55,18 @@ function isProtocolEvent(value: unknown): value is ProtocolEvent {
       return isString(threadId);
     case "turn.started":
       return isString(threadId) && isString(turnId);
+    case "context.compacted":
+      return (
+        isString(threadId) &&
+        isString(turnId) &&
+        isString(value["strategy"]) &&
+        isString(value["implementation"]) &&
+        isNumber(value["replaced_items"]) &&
+        isNumber(value["estimated_prompt_tokens"]) &&
+        isNumber(value["context_window_tokens"]) &&
+        isNumber(value["remaining_ratio"]) &&
+        isNumber(value["threshold_ratio"])
+      );
     case "turn.completed":
       return (
         isString(threadId) &&

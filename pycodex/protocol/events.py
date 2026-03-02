@@ -42,6 +42,21 @@ class TurnStarted(_FrozenModel):
     turn_id: str
 
 
+class ContextCompacted(_FrozenModel):
+    """Event emitted when context history was compacted for the active turn."""
+
+    type: Literal["context.compacted"] = "context.compacted"
+    thread_id: str
+    turn_id: str
+    strategy: str
+    implementation: str
+    replaced_items: StrictInt
+    estimated_prompt_tokens: StrictInt
+    context_window_tokens: StrictInt
+    remaining_ratio: float
+    threshold_ratio: float
+
+
 class TurnCompleted(_FrozenModel):
     """Event emitted when a turn completes successfully."""
 
@@ -108,6 +123,7 @@ class ApprovalRequested(_FrozenModel):
 ProtocolEvent: TypeAlias = Annotated[
     ThreadStarted
     | TurnStarted
+    | ContextCompacted
     | TurnCompleted
     | TurnFailed
     | ItemStarted

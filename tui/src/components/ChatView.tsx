@@ -152,6 +152,33 @@ function shellCommandPreview(preview: string): string | null {
   return null;
 }
 
+function toPercentage(value: number): string {
+  return `${(Math.round(value * 1000) / 10).toFixed(1)}%`;
+}
+
+export function summarizeCompactionDebugLinesForTurn(
+  turn: Pick<TurnState, "compaction">,
+): string[] {
+  if (turn.compaction.status === "pending") {
+    return ["Compaction: pending"];
+  }
+  if (turn.compaction.status === "idle") {
+    return ["Compaction: idle"];
+  }
+  const detail = turn.compaction.detail;
+  if (detail === null) {
+    return ["Compaction: triggered"];
+  }
+  const contextFillRatio = detail.context_window_tokens <= 0
+    ? 0
+    : detail.estimated_prompt_tokens / detail.context_window_tokens;
+  const thresholdFillRatio = 1 - detail.threshold_ratio;
+  return [
+    `Compaction: triggered (${detail.strategy}/${detail.implementation})`,
+    `Compaction: replaced ${String(detail.replaced_items)} item(s); context ${toPercentage(contextFillRatio)} / threshold ${toPercentage(thresholdFillRatio)}`,
+  ];
+}
+
 export function summarizeApprovalDebugLinesForTurn(
   turn: TurnState,
   decisionLog: readonly ApprovalDecisionLog[],
@@ -208,6 +235,9 @@ function TurnRow({
   const approvalDebugLines = showToolCallSummary
     ? summarizeApprovalDebugLinesForTurn(turn, approvalDecisionLog, approvalPolicy)
     : [];
+  const compactionDebugLines = showToolCallSummary
+    ? summarizeCompactionDebugLinesForTurn(turn)
+    : [];
 
   return (
     <Box flexDirection="column" marginBottom={1}>
@@ -250,6 +280,11 @@ function TurnRow({
       {toolCallSummary !== null ? <Text dimColor>{toolCallSummary}</Text> : null}
       {approvalDebugLines.map((line) => (
         <Text dimColor key={`${turn.turn_id}:${line}`}>
+          {line}
+        </Text>
+      ))}
+      {compactionDebugLines.map((line) => (
+        <Text dimColor key={`${turn.turn_id}:compaction:${line}`}>
           {line}
         </Text>
       ))}

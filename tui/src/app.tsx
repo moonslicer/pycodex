@@ -55,6 +55,33 @@ function summarizeUsageForTurns(
   };
 }
 
+export function summarizeCompactionForTurns(
+  turns: readonly TurnState[],
+): {
+  detail: TurnState["compaction"]["detail"];
+  status: TurnState["compaction"]["status"];
+} {
+  const latestTurn = turns[turns.length - 1];
+  if (latestTurn === undefined) {
+    return {
+      detail: null,
+      status: "idle",
+    };
+  }
+
+  if (latestTurn.status === "active" && latestTurn.compaction.status === "pending") {
+    return {
+      detail: null,
+      status: "pending",
+    };
+  }
+
+  return {
+    detail: latestTurn.compaction.detail,
+    status: latestTurn.compaction.status,
+  };
+}
+
 export function App({
   approvalPolicy = "on-request",
   debug = false,
@@ -75,6 +102,7 @@ export function App({
   const isBusy = turns.some((turn) => turn.status === "active");
   const inputDisabled = isInputDisabled(turns, queueLength, hasPendingUserInput);
   const usageSummary = summarizeUsageForTurns(turns);
+  const compactionSummary = summarizeCompactionForTurns(turns);
 
   const handleSubmit = useCallback(
     (text: string): void => {
@@ -117,6 +145,8 @@ export function App({
       />
       <StatusBar
         cumulativeUsage={usageSummary.cumulativeUsage}
+        compactionDetail={compactionSummary.detail}
+        compactionStatus={compactionSummary.status}
         isBusy={isBusy}
         latestUsage={usageSummary.latestUsage}
         threadId={threadId}

@@ -4,6 +4,7 @@ import re
 
 import pytest
 from pycodex.core.agent import (
+    ContextCompacted,
     TextDeltaReceived,
     ToolCallDispatched,
     ToolResultReceived,
@@ -11,6 +12,9 @@ from pycodex.core.agent import (
     TurnStarted,
 )
 from pycodex.core.event_adapter import EventAdapter
+from pycodex.protocol.events import (
+    ContextCompacted as ProtocolContextCompacted,
+)
 from pycodex.protocol.events import (
     ItemCompleted,
     ItemStarted,
@@ -344,6 +348,33 @@ def test_arguments_dict_are_serialized_as_stable_json() -> None:
     assert out[0].arguments == '{"a": 1, "b": 2}'
 
 
+def test_context_compacted_maps_to_protocol_event() -> None:
+    adapter = EventAdapter(thread_id="thread_test")
+    adapter.on_agent_event(TurnStarted(user_input="hello"))
+
+    out = adapter.on_agent_event(
+        ContextCompacted(
+            strategy="threshold_v1",
+            implementation="local_summary_v1",
+            replaced_items=12,
+            estimated_prompt_tokens=9800,
+            context_window_tokens=10000,
+            remaining_ratio=0.02,
+            threshold_ratio=0.2,
+        )
+    )
+
+    assert len(out) == 1
+    assert isinstance(out[0], ProtocolContextCompacted)
+    assert out[0].thread_id == "thread_test"
+    assert out[0].turn_id == "turn_1"
+    assert out[0].strategy == "threshold_v1"
+    assert out[0].implementation == "local_summary_v1"
+    assert out[0].replaced_items == 12
+    assert out[0].estimated_prompt_tokens == 9800
+    assert out[0].context_window_tokens == 10000
+
+
 def test_turn_id_cleared_after_turn_completed() -> None:
     adapter = EventAdapter(thread_id="thread_test")
     adapter.on_agent_event(TurnStarted(user_input="hello"))
@@ -375,3 +406,16 @@ def test_non_start_events_require_active_turn() -> None:
 
     with pytest.raises(RuntimeError, match="without active turn"):
         adapter.on_agent_event(TurnCompleted(final_text="done"))
+
+    with pytest.raises(RuntimeError, match="without active turn"):
+        adapter.on_agent_event(
+            ContextCompacted(
+                strategy="threshold_v1",
+                implementation="local_summary_v1",
+                replaced_items=2,
+                estimated_prompt_tokens=9000,
+                context_window_tokens=10000,
+                remaining_ratio=0.1,
+                threshold_ratio=0.2,
+            )
+        )

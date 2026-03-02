@@ -19,6 +19,19 @@ export type TurnStartedEvent = {
   turn_id: string;
 };
 
+export type ContextCompactedEvent = {
+  type: "context.compacted";
+  thread_id: string;
+  turn_id: string;
+  strategy: string;
+  implementation: string;
+  replaced_items: number;
+  estimated_prompt_tokens: number;
+  context_window_tokens: number;
+  remaining_ratio: number;
+  threshold_ratio: number;
+};
+
 export type TurnCompletedEvent = {
   type: "turn.completed";
   thread_id: string;
@@ -73,6 +86,7 @@ export type ApprovalRequestedEvent = {
 export type ProtocolEvent =
   | ThreadStartedEvent
   | TurnStartedEvent
+  | ContextCompactedEvent
   | TurnCompletedEvent
   | TurnFailedEvent
   | ItemStartedEvent

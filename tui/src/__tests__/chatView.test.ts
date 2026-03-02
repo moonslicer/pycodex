@@ -2,9 +2,10 @@ import {
   formatAssistantMessageLines,
   formatUserMessageLines,
   renderSectionsForTurn,
+  summarizeCompactionDebugLinesForTurn,
   summarizeApprovalDebugLinesForTurn,
-  toolCallsInDisplayOrder,
   summarizeToolCallsForTurn,
+  toolCallsInDisplayOrder,
 } from "../components/ChatView.js";
 import type { ApprovalDecisionLog } from "../hooks/useApprovalQueue.js";
 import type { TurnState } from "../hooks/useTurns.js";
@@ -19,6 +20,10 @@ function baseTurn(overrides: Partial<TurnState> = {}): TurnState {
     status: "completed",
     error: null,
     usage: null,
+    compaction: {
+      status: "idle",
+      detail: null,
+    },
     ...overrides,
   };
 }
@@ -223,6 +228,48 @@ describe("summarizeApprovalDebugLinesForTurn", () => {
       ),
     ).toEqual([
       "Approval: no prompt for shell (likely session-cache hit)",
+    ]);
+  });
+});
+
+describe("summarizeCompactionDebugLinesForTurn", () => {
+  test("shows pending status", () => {
+    expect(
+      summarizeCompactionDebugLinesForTurn(
+        baseTurn({
+          compaction: {
+            status: "pending",
+            detail: null,
+          },
+        }),
+      ),
+    ).toEqual(["Compaction: pending"]);
+  });
+
+  test("shows triggered metrics and metadata", () => {
+    expect(
+      summarizeCompactionDebugLinesForTurn(
+        baseTurn({
+          compaction: {
+            status: "triggered",
+            detail: {
+              type: "context.compacted",
+              thread_id: "thread_1",
+              turn_id: "turn_1",
+              strategy: "threshold_v1",
+              implementation: "local_summary_v1",
+              replaced_items: 6,
+              estimated_prompt_tokens: 9100,
+              context_window_tokens: 10000,
+              remaining_ratio: 0.09,
+              threshold_ratio: 0.2,
+            },
+          },
+        }),
+      ),
+    ).toEqual([
+      "Compaction: triggered (threshold_v1/local_summary_v1)",
+      "Compaction: replaced 6 item(s); context 91.0% / threshold 80.0%",
     ]);
   });
 });
