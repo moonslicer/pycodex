@@ -202,6 +202,68 @@ def test_run_turn_builds_compaction_orchestrator_from_config(tmp_path: Path) -> 
     assert implementation.max_lines == 2
 
 
+def test_run_turn_compaction_summary_is_deterministic_from_config(tmp_path: Path) -> None:
+    config = Config(
+        model="test-model",
+        api_key="test-key",
+        cwd=tmp_path,
+        compaction_threshold_ratio=0.2,
+        compaction_strategy="threshold_v1",
+        compaction_implementation="local_summary_v1",
+        compaction_options={
+            "strategy": {"keep_recent_items": 4, "min_replace_items": 2},
+            "implementation": {"max_lines": 4, "max_line_chars": 80},
+        },
+    )
+
+    def build_seeded_session() -> Session:
+        seeded = Session(config=config)
+        for index in range(6):
+            seeded.append_user_message(f"user-{index}")
+            seeded.append_assistant_message(f"assistant-{index}")
+        seeded.record_turn_usage({"input_tokens": 200_000, "output_tokens": 0})
+        return seeded
+
+    model_turn = [[OutputTextDelta(delta="done"), Completed(response_id="resp_1")]]
+    session_one = build_seeded_session()
+    session_two = build_seeded_session()
+
+    result_one = asyncio.run(
+        Agent(
+            session=session_one,
+            model_client=_FakeModelClient(turns=[list(model_turn[0])]),
+            tool_router=_FakeToolRouter(specs=[], results=[]),
+            cwd=tmp_path,
+        ).run_turn("continue")
+    )
+    result_two = asyncio.run(
+        Agent(
+            session=session_two,
+            model_client=_FakeModelClient(turns=[list(model_turn[0])]),
+            tool_router=_FakeToolRouter(specs=[], results=[]),
+            cwd=tmp_path,
+        ).run_turn("continue")
+    )
+
+    assert result_one == "done"
+    assert result_two == "done"
+
+    def extract_summary_text(prompt: list[dict[str, Any]]) -> str:
+        for item in prompt:
+            if item.get("role") != "system":
+                continue
+            content = item.get("content", "")
+            if "[compaction.summary.v1]" in str(content):
+                return str(content)
+        raise AssertionError("expected compaction summary block in session history")
+
+    summary_one = extract_summary_text(session_one.to_prompt())
+    summary_two = extract_summary_text(session_two.to_prompt())
+    assert summary_one == summary_two
+    assert summary_one.startswith("[compaction.summary.v1]\nConversation summary:")
+    assert "strategy=" not in summary_one
+
+
 def test_run_turn_executes_tool_calls_and_loops(tmp_path: Path) -> None:
     session = Session()
     model_client = _FakeModelClient(

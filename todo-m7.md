@@ -115,7 +115,7 @@ Session (history + cumulative usage totals)
   - Verify:
     - `.venv/bin/pytest tests/e2e/test_cli_tool_failures.py tests/e2e/test_interrupts.py -q`
 
-- [ ] T5: Cross-module integration lock-in
+- [x] T5: Cross-module integration lock-in
   - Add/extend integration tests to cover:
     - token accounting + event emission consistency,
     - compaction strategy/implementation selection and deterministic summary replacement behavior,
@@ -152,7 +152,7 @@ T2 + T4 + T5 ──> T6 (full gates + manual verification)
 - [x] T2 complete
 - [x] T3 complete
 - [x] T4 complete
-- [ ] T5 complete
+- [x] T5 complete
 - [ ] T6 complete
 - [ ] Compaction summary block format locked and documented
 - [ ] Default compaction strategy/implementation shipped and configurable by name

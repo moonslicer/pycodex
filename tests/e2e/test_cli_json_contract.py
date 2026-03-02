@@ -12,7 +12,7 @@ from pycodex.core.model_client import Completed, OutputItemDone, OutputTextDelta
 pytestmark = pytest.mark.e2e
 
 
-def test_cli_e2e_json_contract_event_sequence_and_required_fields(
+def test_cli_e2e_json_contract_usage_event_sequence_and_required_fields(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
     capsys: pytest.CaptureFixture[str],
