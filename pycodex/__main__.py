@@ -23,6 +23,11 @@ from pycodex.core.config import Config, load_config
 from pycodex.core.event_adapter import EventAdapter
 from pycodex.core.fake_model_client import FakeModelClient
 from pycodex.core.model_client import ModelClient
+from pycodex.core.rollout_recorder import (
+    RolloutRecorder,
+    build_rollout_path,
+    default_sessions_root,
+)
 from pycodex.core.session import Session
 from pycodex.core.tui_bridge import TuiBridge
 from pycodex.protocol.events import ProtocolEvent
@@ -173,13 +178,16 @@ async def _run_prompt(
         instructions=instructions,
         instructions_file=instructions_file,
     )
-    return await run_turn(
-        session=session,
-        model_client=model_client,
-        tool_router=tool_router,
-        cwd=config.cwd,
-        user_input=prompt,
-    )
+    try:
+        return await run_turn(
+            session=session,
+            model_client=model_client,
+            tool_router=tool_router,
+            cwd=config.cwd,
+            user_input=prompt,
+        )
+    finally:
+        await session.close_rollout()
 
 
 def _build_runtime(
@@ -199,6 +207,7 @@ def _build_runtime(
         instructions_file=instructions_file,
     )
     session = Session(config=config)
+    _configure_rollout_persistence(session, config=config)
     model_client = _build_model_client(config, dump_llm_request=dump_llm_request)
     tool_router = _build_tool_router(
         approval_policy=approval_policy,
@@ -212,6 +221,32 @@ def _build_model_client(config: Config, *, dump_llm_request: bool = False) -> Su
         return FakeModelClient(config)
     request_observer = _dump_llm_request_to_stderr if dump_llm_request else None
     return ModelClient(config, request_observer=request_observer)
+
+
+def _configure_rollout_persistence(session: Session, *, config: Config) -> None:
+    sessions_root = _resolve_sessions_root(config)
+    path = build_rollout_path(session.thread_id, root=sessions_root)
+    session.configure_rollout_recorder(
+        recorder=RolloutRecorder(path=path),
+        path=path,
+    )
+
+
+def _resolve_sessions_root(config: Config) -> Path:
+    preferred = default_sessions_root()
+    if _ensure_directory(preferred):
+        return preferred
+    fallback = config.cwd / ".pycodex" / "sessions"
+    _ensure_directory(fallback)
+    return fallback
+
+
+def _ensure_directory(path: Path) -> bool:
+    try:
+        path.mkdir(parents=True, exist_ok=True)
+    except OSError:
+        return False
+    return True
 
 
 def _is_fake_model_enabled() -> bool:
@@ -356,6 +391,8 @@ async def _run_prompt_json(
     except Exception as exc:
         _emit_protocol_event(adapter.turn_failed(exc))
         return 1
+    finally:
+        await session.close_rollout()
     return 0
 
 
@@ -398,6 +435,7 @@ async def _run_tui_mode(
         cwd=config.cwd,
     )
     await bridge.run()
+    await session.close_rollout()
     return 0
 
 

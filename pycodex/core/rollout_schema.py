@@ -6,7 +6,7 @@ from typing import Annotated, Any, Literal, TypeAlias
 
 from pydantic import BaseModel, ConfigDict, Field, StrictInt, TypeAdapter
 
-SCHEMA_VERSION = "1.0"
+SCHEMA_VERSION: Literal["1.0"] = "1.0"
 
 
 class _FrozenModel(BaseModel):

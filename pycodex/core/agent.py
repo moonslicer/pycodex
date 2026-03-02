@@ -6,14 +6,29 @@ import asyncio
 import logging
 from collections.abc import AsyncIterator, Awaitable, Callable
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from inspect import isawaitable
 from pathlib import Path
-from typing import Any, Literal, Protocol
+from typing import Any, Literal, Protocol, cast
 
 from pycodex.core.compaction import CompactionApplied, create_compaction_orchestrator
 from pycodex.core.initial_context import build_initial_context
 from pycodex.core.model_client import Completed as ModelCompleted
 from pycodex.core.model_client import OutputItemDone, OutputTextDelta
+from pycodex.core.rollout_schema import (
+    SCHEMA_VERSION,
+    HistoryItem,
+    SessionMeta,
+)
+from pycodex.core.rollout_schema import (
+    CompactionApplied as RolloutCompactionApplied,
+)
+from pycodex.core.rollout_schema import (
+    TurnCompleted as RolloutTurnCompleted,
+)
+from pycodex.core.rollout_schema import (
+    UsageSnapshot as RolloutUsageSnapshot,
+)
 from pycodex.core.session import PromptItem, Session, UsageSnapshot
 from pycodex.tools.orchestrator import ToolAborted
 
@@ -150,8 +165,10 @@ class Agent:
     async def run_turn(self, user_input: str) -> str:
         """Run one user turn until the model emits no tool calls."""
         self._ensure_initial_context()
+        await self._persist_session_meta_if_needed()
         _log.debug("turn started: %r", user_input[:80])
         self.session.append_user_message(user_input)
+        await self._persist_latest_history_item()
         await self._emit(TurnStarted(user_input=user_input))
         pending_tool_calls: dict[str, str] = {}
 
@@ -159,6 +176,7 @@ class Agent:
             while True:
                 compaction = self._compact_history_if_needed()
                 if compaction is not None:
+                    await self._persist_compaction(compaction)
                     await self._emit(
                         ContextCompacted(
                             strategy=compaction.strategy,
@@ -174,13 +192,18 @@ class Agent:
                 if not tool_calls:
                     if text:
                         self.session.append_assistant_message(text)
+                        await self._persist_latest_history_item()
                     usage_snapshot = self.session.record_turn_usage(usage)
+                    self.session.mark_turn_completed()
+                    await self._persist_turn_completed(usage_snapshot=usage_snapshot)
+                    await self.session.flush_rollout()
                     _log.info("turn completed: %d chars", len(text))
                     await self._emit(TurnCompleted(final_text=text, usage=usage_snapshot))
                     return text
 
                 if text:
                     self.session.append_assistant_message(text)
+                    await self._persist_latest_history_item()
 
                 for tool_call in tool_calls:
                     self.session.append_function_call(
@@ -188,6 +211,7 @@ class Agent:
                         name=tool_call.name,
                         arguments=tool_call.arguments,
                     )
+                    await self._persist_latest_history_item()
                     pending_tool_calls[tool_call.call_id] = tool_call.name
                     _log.debug(
                         "dispatching tool %r (call_id=%s) args=%s",
@@ -211,25 +235,37 @@ class Agent:
                     except ToolAborted:
                         # ABORT is terminal for this turn: return immediately
                         # without dispatching additional tool calls.
-                        _append_pending_tool_outputs(
+                        pending_call_ids = _append_pending_tool_outputs(
                             session=self.session,
                             pending_tool_calls=pending_tool_calls,
                             outcome="aborted by user",
                         )
+                        await self._persist_pending_tool_outputs(
+                            call_ids=pending_call_ids,
+                            outcome="aborted by user",
+                        )
+                        self.session.mark_turn_completed()
+                        await self._persist_turn_completed(usage_snapshot=None)
+                        await self.session.flush_rollout()
                         abort_text = "Aborted by user."
                         _log.info("turn aborted by user during tool %r", tool_call.name)
                         await self._emit(TurnCompleted(final_text=abort_text))
                         return abort_text
                     except asyncio.CancelledError:
-                        _append_pending_tool_outputs(
+                        pending_call_ids = _append_pending_tool_outputs(
                             session=self.session,
                             pending_tool_calls=pending_tool_calls,
+                            outcome="interrupted",
+                        )
+                        await self._persist_pending_tool_outputs(
+                            call_ids=pending_call_ids,
                             outcome="interrupted",
                         )
                         raise
                     pending_tool_calls.pop(tool_call.call_id, None)
                     _log.debug("tool %r result: %d chars", tool_call.name, len(result))
                     self.session.append_tool_result(tool_call.call_id, result)
+                    await self._persist_latest_history_item()
                     await self._emit(
                         ToolResultReceived(
                             call_id=tool_call.call_id,
@@ -238,9 +274,13 @@ class Agent:
                         )
                     )
         except asyncio.CancelledError:
-            _append_pending_tool_outputs(
+            pending_call_ids = _append_pending_tool_outputs(
                 session=self.session,
                 pending_tool_calls=pending_tool_calls,
+                outcome="interrupted",
+            )
+            await self._persist_pending_tool_outputs(
+                call_ids=pending_call_ids,
                 outcome="interrupted",
             )
             raise
@@ -326,6 +366,103 @@ class Agent:
             context_window_tokens=config.compaction_context_window_tokens,
         )
         return self.compaction_orchestrator
+
+    async def _persist_session_meta_if_needed(self) -> None:
+        recorder = self.session.rollout_recorder()
+        if recorder is None or self.session.rollout_meta_written():
+            return
+        config = self.session.config
+        if config is None:
+            return
+
+        await recorder.record(
+            [
+                SessionMeta(
+                    schema_version=SCHEMA_VERSION,
+                    thread_id=self.session.thread_id,
+                    profile=config.profile.name,
+                    model=config.model,
+                    cwd=str(config.cwd),
+                    opened_at=_utc_timestamp(),
+                    import_source=None,
+                )
+            ]
+        )
+        self.session.mark_rollout_meta_written()
+
+    async def _persist_latest_history_item(self) -> None:
+        item = self.session.latest_history_item()
+        if item is None:
+            return
+        await self.session.record_rollout_items(
+            [
+                HistoryItem(
+                    schema_version=SCHEMA_VERSION,
+                    thread_id=self.session.thread_id,
+                    item=cast(dict[str, Any], item),
+                )
+            ]
+        )
+
+    async def _persist_turn_completed(self, *, usage_snapshot: UsageSnapshot | None) -> None:
+        usage_payload = usage_snapshot
+        if usage_payload is None:
+            usage_payload = {
+                "turn": {"input_tokens": 0, "output_tokens": 0},
+                "cumulative": self.session.cumulative_usage(),
+            }
+
+        await self.session.record_rollout_items(
+            [
+                RolloutTurnCompleted(
+                    schema_version=SCHEMA_VERSION,
+                    thread_id=self.session.thread_id,
+                    usage=RolloutUsageSnapshot.model_validate(usage_payload),
+                )
+            ]
+        )
+
+    async def _persist_compaction(self, compaction: CompactionApplied) -> None:
+        config = self.session.config
+        if config is None:
+            strategy_options: dict[str, object] = {}
+            implementation_options: dict[str, object] = {}
+        else:
+            strategy_options = _compaction_component_options(config.compaction_options, key="strategy")
+            if "threshold_ratio" not in strategy_options:
+                strategy_options["threshold_ratio"] = config.compaction_threshold_ratio
+            implementation_options = _compaction_component_options(
+                config.compaction_options, key="implementation"
+            )
+        await self.session.record_rollout_items(
+            [
+                RolloutCompactionApplied(
+                    schema_version=SCHEMA_VERSION,
+                    thread_id=self.session.thread_id,
+                    summary_text=compaction.summary_text,
+                    replace_end=compaction.replace_end,
+                    replaced_items=compaction.replaced_items,
+                    strategy=compaction.strategy,
+                    implementation=compaction.implementation,
+                    strategy_options=strategy_options,
+                    implementation_options=implementation_options,
+                )
+            ]
+        )
+
+    async def _persist_pending_tool_outputs(self, *, call_ids: list[str], outcome: str) -> None:
+        if len(call_ids) == 0:
+            return
+        for call_id in call_ids:
+            await self.session.record_rollout_items(
+                [
+                    HistoryItem(
+                        schema_version=SCHEMA_VERSION,
+                        thread_id=self.session.thread_id,
+                        item={"role": "tool", "tool_call_id": call_id, "content": outcome},
+                    )
+                ]
+            )
 
 
 def _compaction_component_options(
@@ -421,10 +558,13 @@ def _append_pending_tool_outputs(
     session: Session,
     pending_tool_calls: dict[str, str],
     outcome: str,
-) -> None:
+) -> list[str]:
+    appended_call_ids: list[str] = []
     for call_id in list(pending_tool_calls.keys()):
         session.append_tool_result(call_id, outcome)
+        appended_call_ids.append(call_id)
     pending_tool_calls.clear()
+    return appended_call_ids
 
 
 _SUMMARIZE_TRUNCATE = 120  # chars per value before truncating
@@ -447,3 +587,7 @@ def _summarize_args(arguments: str | dict[str, Any]) -> str:
             v_str = v_str[:_SUMMARIZE_TRUNCATE] + "…'"
         parts.append(f"{k}={v_str}")
     return "{" + ", ".join(parts) + "}"
+
+
+def _utc_timestamp() -> str:
+    return datetime.now(tz=UTC).isoformat(timespec="seconds").replace("+00:00", "Z")

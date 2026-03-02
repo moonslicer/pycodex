@@ -4,10 +4,16 @@ from __future__ import annotations
 
 import json
 from collections import deque
+from collections.abc import Sequence
 from dataclasses import dataclass, field
+from datetime import UTC, datetime
+from pathlib import Path
 from typing import Any, Literal, TypedDict
+from uuid import uuid4
 
 from pycodex.core.config import Config
+from pycodex.core.rollout_recorder import RolloutRecorder
+from pycodex.core.rollout_schema import RolloutItem, SessionClosed, TokenUsage
 
 MAX_TOOL_RESULT_CHARS = 200_000
 _MISSING_TOOL_OUTPUT_PLACEHOLDER = "aborted"
@@ -79,13 +85,21 @@ class Session:
     """Container for conversation history used to build model prompts."""
 
     config: Config | None = None
+    thread_id: str = field(default_factory=lambda: str(uuid4()))
     _history: list[PromptItem] = field(default_factory=list)
     _initial_context_injected: bool = False
     _total_input_tokens: int = 0
     _total_output_tokens: int = 0
+    _turn_count: int = 0
+    _last_user_message: str | None = None
+    _rollout_recorder: RolloutRecorder | None = None
+    _rollout_path: Path | None = None
+    _rollout_meta_written: bool = False
+    _rollout_closed: bool = False
 
     def append_user_message(self, text: str) -> None:
         """Append a user message to the conversation history."""
+        self._last_user_message = text
         self._history.append({"role": "user", "content": text})
 
     def append_system_message(self, text: str) -> None:
@@ -128,6 +142,12 @@ class Session:
             }
         )
 
+    def latest_history_item(self) -> PromptItem | None:
+        """Return the most recently appended history item, if present."""
+        if len(self._history) == 0:
+            return None
+        return self._history[-1].copy()
+
     def prepend_items(self, items: list[PromptItem]) -> None:
         """Prepend prompt items before existing session history."""
         self._history = list(items) + self._history
@@ -169,6 +189,82 @@ class Session:
             "turn": turn_usage,
             "cumulative": cumulative_usage,
         }
+
+    def mark_turn_completed(self) -> None:
+        """Increment completed turn count."""
+        self._turn_count += 1
+
+    def completed_turn_count(self) -> int:
+        """Return number of completed turns recorded in this session."""
+        return self._turn_count
+
+    def last_user_message(self) -> str | None:
+        """Return the most recent user message text, if any."""
+        return self._last_user_message
+
+    def configure_rollout_recorder(
+        self,
+        *,
+        recorder: RolloutRecorder,
+        path: Path,
+    ) -> None:
+        """Enable rollout persistence with a recorder owned by this session."""
+        self._rollout_recorder = recorder
+        self._rollout_path = path
+
+    def rollout_recorder(self) -> RolloutRecorder | None:
+        """Return the configured rollout recorder, if persistence is enabled."""
+        return self._rollout_recorder
+
+    def rollout_path(self) -> Path | None:
+        """Return configured rollout path, if persistence is enabled."""
+        return self._rollout_path
+
+    def rollout_meta_written(self) -> bool:
+        """Return whether session.meta has been persisted."""
+        return self._rollout_meta_written
+
+    def mark_rollout_meta_written(self) -> None:
+        """Mark session.meta as persisted."""
+        self._rollout_meta_written = True
+
+    async def record_rollout_items(self, items: Sequence[RolloutItem]) -> None:
+        """Append rollout records when persistence is enabled."""
+        recorder = self._rollout_recorder
+        if recorder is None:
+            return
+        await recorder.record(items)
+
+    async def flush_rollout(self) -> None:
+        """Flush pending rollout records when persistence is enabled."""
+        recorder = self._rollout_recorder
+        if recorder is None:
+            return
+        await recorder.flush()
+
+    async def close_rollout(self) -> None:
+        """Persist session.closed and shutdown recorder on clean exit."""
+        recorder = self._rollout_recorder
+        if recorder is None or self._rollout_closed:
+            return
+        closed_at = datetime.now(tz=UTC).isoformat(timespec="seconds").replace("+00:00", "Z")
+        await recorder.record(
+            [
+                SessionClosed(
+                    schema_version="1.0",
+                    thread_id=self.thread_id,
+                    closed_at=closed_at,
+                    last_user_message=self._last_user_message,
+                    turn_count=self._turn_count,
+                    token_total=TokenUsage(
+                        input_tokens=self._total_input_tokens,
+                        output_tokens=self._total_output_tokens,
+                    ),
+                )
+            ]
+        )
+        await recorder.shutdown()
+        self._rollout_closed = True
 
     def cumulative_usage(self) -> TokenUsageCounts:
         """Return cumulative usage totals for the session."""

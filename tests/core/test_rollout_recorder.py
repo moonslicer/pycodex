@@ -1,9 +1,15 @@
 from __future__ import annotations
 
+import json
 from datetime import UTC, datetime
 from pathlib import Path
+from typing import Any
 
 import pytest
+from pycodex.core.agent import Agent
+from pycodex.core.compaction import CompactionApplied
+from pycodex.core.config import Config
+from pycodex.core.model_client import Completed, OutputItemDone, OutputTextDelta
 from pycodex.core.rollout_recorder import (
     RolloutRecorder,
     build_rollout_path,
@@ -11,6 +17,58 @@ from pycodex.core.rollout_recorder import (
     sanitize_thread_id,
 )
 from pycodex.core.rollout_schema import SCHEMA_VERSION, HistoryItem, SessionMeta
+from pycodex.core.session import Session
+
+
+class _FakeModelClient:
+    def __init__(self, turns: list[list[Any]]) -> None:
+        self._turns = turns
+
+    async def stream(
+        self,
+        messages: list[dict[str, Any]],
+        tools: list[dict[str, Any]],
+        instructions: str = "",
+    ):
+        _ = messages, tools, instructions
+        if not self._turns:
+            raise AssertionError("No configured turns left.")
+        for event in self._turns.pop(0):
+            yield event
+
+
+class _FakeToolRouter:
+    def tool_specs(self) -> list[dict[str, Any]]:
+        return [{"type": "function", "function": {"name": "read_file"}}]
+
+    async def dispatch(self, *, name: str, arguments: str | dict[str, Any], cwd: Path) -> str:
+        _ = name, arguments, cwd
+        return "tool ok"
+
+
+class _SingleCompaction:
+    def __init__(self) -> None:
+        self._used = False
+
+    def compact(self, session: Session) -> CompactionApplied | None:
+        if self._used:
+            return None
+        self._used = True
+        session.replace_prefix_with_system_summary(
+            replace_count=1,
+            summary_text="[compaction.summary.v1]\nConversation summary:\n- user: hello",
+        )
+        return CompactionApplied(
+            strategy="threshold_v1",
+            implementation="local_summary_v1",
+            replace_end=1,
+            replaced_items=1,
+            estimated_prompt_tokens=400,
+            context_window_tokens=1000,
+            remaining_ratio=0.1,
+            threshold_ratio=0.2,
+            summary_text="[compaction.summary.v1]\nConversation summary:\n- user: hello",
+        )
 
 
 def test_build_rollout_path_uses_flat_layout() -> None:
@@ -104,3 +162,106 @@ async def test_rollout_recorder_shutdown_is_idempotent(tmp_path: Path) -> None:
     recorder = RolloutRecorder(path=path)
     await recorder.shutdown()
     await recorder.shutdown()
+
+
+@pytest.mark.asyncio
+async def test_rollout_write_points_persist_meta_history_turn_and_close(tmp_path: Path) -> None:
+    config = Config(model="gpt-4.1-mini", api_key="test", cwd=tmp_path)
+    session = Session(config=config, thread_id="thread_123")
+    path = build_rollout_path(
+        session.thread_id,
+        now=datetime(2026, 3, 2, 12, 1, 5, 120000, tzinfo=UTC),
+        root=tmp_path / "sessions",
+    )
+    session.configure_rollout_recorder(recorder=RolloutRecorder(path=path), path=path)
+    agent = Agent(
+        session=session,
+        model_client=_FakeModelClient(
+            turns=[
+                [
+                    OutputTextDelta(delta="hello"),
+                    Completed(
+                        response_id="resp_1",
+                        usage={"input_tokens": 10, "output_tokens": 4},
+                    ),
+                ]
+            ]
+        ),
+        tool_router=_FakeToolRouter(),
+        cwd=tmp_path,
+    )
+
+    result = await agent.run_turn("hi")
+    await session.close_rollout()
+
+    assert result == "hello"
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+    types = [record["type"] for record in records]
+    assert types == [
+        "session.meta",
+        "history.item",
+        "history.item",
+        "turn.completed",
+        "session.closed",
+    ]
+    assert records[3]["usage"]["cumulative"] == {"input_tokens": 10, "output_tokens": 4}
+    assert records[4]["turn_count"] == 1
+
+
+@pytest.mark.asyncio
+async def test_rollout_write_points_include_compaction_applied_record(tmp_path: Path) -> None:
+    config = Config(
+        model="gpt-4.1-mini",
+        api_key="test",
+        cwd=tmp_path,
+        compaction_threshold_ratio=0.2,
+        compaction_options={"strategy": {"threshold_ratio": 0.2}},
+    )
+    session = Session(config=config, thread_id="thread_123")
+    path = build_rollout_path(
+        session.thread_id,
+        now=datetime(2026, 3, 2, 12, 1, 5, 120000, tzinfo=UTC),
+        root=tmp_path / "sessions",
+    )
+    session.configure_rollout_recorder(recorder=RolloutRecorder(path=path), path=path)
+    session.append_user_message("seed")
+    agent = Agent(
+        session=session,
+        model_client=_FakeModelClient(
+            turns=[
+                [
+                    OutputItemDone(
+                        item={
+                            "type": "function_call",
+                            "call_id": "call_1",
+                            "name": "read_file",
+                            "arguments": "{}",
+                        }
+                    ),
+                    Completed(
+                        response_id="resp_1",
+                        usage={"input_tokens": 4, "output_tokens": 2},
+                    ),
+                ],
+                [
+                    OutputTextDelta(delta="done"),
+                    Completed(
+                        response_id="resp_2",
+                        usage={"input_tokens": 6, "output_tokens": 3},
+                    ),
+                ],
+            ]
+        ),
+        tool_router=_FakeToolRouter(),
+        cwd=tmp_path,
+        compaction_orchestrator=_SingleCompaction(),
+    )
+
+    await agent.run_turn("hi")
+    await session.close_rollout()
+    records = [json.loads(line) for line in path.read_text(encoding="utf-8").splitlines() if line]
+    compaction_records = [record for record in records if record["type"] == "compaction.applied"]
+
+    assert len(compaction_records) == 1
+    assert compaction_records[0]["strategy"] == "threshold_v1"
+    assert compaction_records[0]["implementation"] == "local_summary_v1"
