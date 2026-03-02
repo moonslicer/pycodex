@@ -34,7 +34,8 @@ def test_cli_e2e_multi_step_tool_loop(
     holder: dict[str, Any] = {}
 
     class _FakeModelClient:
-        def __init__(self, _config: Config) -> None:
+        def __init__(self, _config: Config, request_observer: Any | None = None) -> None:
+            _ = request_observer
             self.calls: list[list[dict[str, Any]]] = []
             holder["client"] = self
 

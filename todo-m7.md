@@ -123,7 +123,7 @@ Session (history + cumulative usage totals)
   - Verify:
     - `.venv/bin/pytest tests/core/test_agent.py tests/e2e/test_cli_json_contract.py -k "usage or compaction or interrupt" -q`
 
-- [ ] T6: Milestone hard gates and manual verification
+- [x] T6: Milestone hard gates and manual verification
   - Run full quality gates:
     - `.venv/bin/ruff check . --fix`
     - `.venv/bin/ruff format .`
@@ -134,6 +134,11 @@ Session (history + cumulative usage totals)
     - confirm summary block replaced older context,
     - confirm `turn.completed.usage` token totals,
     - confirm Ctrl+C clean shutdown.
+  - Completed evidence:
+    - Full gates passed (`ruff`, `mypy`, `pytest tests/ -v`: `375 passed, 4 skipped`).
+    - JSON usage verification shows `turn.completed.usage` with `turn` + `cumulative`.
+    - Manual compaction run produced one `[compaction.summary.v1]` summary block and condensed history.
+    - Ctrl+C manual checks exited with code `130` in text and JSON modes; JSON emitted `turn.failed` with `error: interrupted`.
 
 ## Task Dependency Graph
 ```
@@ -153,8 +158,8 @@ T2 + T4 + T5 ──> T6 (full gates + manual verification)
 - [x] T3 complete
 - [x] T4 complete
 - [x] T5 complete
-- [ ] T6 complete
-- [ ] Compaction summary block format locked and documented
-- [ ] Default compaction strategy/implementation shipped and configurable by name
-- [ ] All quality gates pass
-- [ ] Manual M7 verification passes (or blockers documented)
+- [x] T6 complete
+- [x] Compaction summary block format locked and documented
+- [x] Default compaction strategy/implementation shipped and configurable by name
+- [x] All quality gates pass
+- [x] Manual M7 verification passes (or blockers documented)

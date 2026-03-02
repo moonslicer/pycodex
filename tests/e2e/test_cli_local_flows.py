@@ -34,7 +34,8 @@ def test_cli_e2e_on_request_write_file_approved(
     holder: dict[str, Any] = {}
 
     class _FakeModelClient:
-        def __init__(self, _config: Config) -> None:
+        def __init__(self, _config: Config, request_observer: Any | None = None) -> None:
+            _ = request_observer
             self.calls: list[list[dict[str, Any]]] = []
             holder["client"] = self
 
@@ -101,7 +102,8 @@ def test_cli_e2e_on_request_write_file_denied(
     holder: dict[str, Any] = {}
 
     class _FakeModelClient:
-        def __init__(self, _config: Config) -> None:
+        def __init__(self, _config: Config, request_observer: Any | None = None) -> None:
+            _ = request_observer
             self.calls: list[list[dict[str, Any]]] = []
             holder["client"] = self
 
@@ -156,7 +158,8 @@ def test_cli_e2e_on_request_write_file_abort(
     holder: dict[str, Any] = {}
 
     class _FakeModelClient:
-        def __init__(self, _config: Config) -> None:
+        def __init__(self, _config: Config, request_observer: Any | None = None) -> None:
+            _ = request_observer
             self.calls: list[list[dict[str, Any]]] = []
             holder["client"] = self
 
