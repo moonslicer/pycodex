@@ -1,5 +1,6 @@
 import {
   buildPycodexArgs,
+  isTuiLlmRequestDumpEnabled,
   isTuiDebugEnabled,
   resolveApprovalPolicy,
   resolveSandboxPolicy,
@@ -51,6 +52,23 @@ describe("buildPycodexArgs", () => {
       "read-only",
     ]);
   });
+
+  test("appends dump flag when llm request dump env is enabled", () => {
+    const args = buildPycodexArgs({
+      PYCODEX_TUI_DUMP_LLM_REQUEST: "1",
+    });
+
+    expect(args).toEqual([
+      "-m",
+      "pycodex",
+      "--tui-mode",
+      "--approval",
+      "on-request",
+      "--sandbox",
+      "danger-full-access",
+      "--dump-llm-request",
+    ]);
+  });
 });
 
 describe("resolveApprovalPolicy", () => {
@@ -93,5 +111,24 @@ describe("isTuiDebugEnabled", () => {
   test("disables for unknown values", () => {
     expect(isTuiDebugEnabled({ PYCODEX_TUI_DEBUG: "debug" })).toBe(false);
     expect(isTuiDebugEnabled({ PYCODEX_TUI_DEBUG: "0" })).toBe(false);
+  });
+});
+
+describe("isTuiLlmRequestDumpEnabled", () => {
+  test("defaults to disabled", () => {
+    expect(isTuiLlmRequestDumpEnabled({})).toBe(false);
+  });
+
+  test("enables with truthy env values", () => {
+    expect(isTuiLlmRequestDumpEnabled({ PYCODEX_TUI_DUMP_LLM_REQUEST: "1" })).toBe(true);
+    expect(isTuiLlmRequestDumpEnabled({ PYCODEX_TUI_DUMP_LLM_REQUEST: "true" })).toBe(true);
+    expect(isTuiLlmRequestDumpEnabled({ PYCODEX_TUI_DUMP_LLM_REQUEST: "YES" })).toBe(true);
+  });
+
+  test("disables for unknown values", () => {
+    expect(isTuiLlmRequestDumpEnabled({ PYCODEX_TUI_DUMP_LLM_REQUEST: "debug" })).toBe(
+      false,
+    );
+    expect(isTuiLlmRequestDumpEnabled({ PYCODEX_TUI_DUMP_LLM_REQUEST: "0" })).toBe(false);
   });
 });

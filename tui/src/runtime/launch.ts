@@ -30,7 +30,7 @@ export function buildPycodexArgs(
 ): string[] {
   const approvalPolicy = resolveApprovalPolicy(env);
   const sandboxPolicy = resolveSandboxPolicy(env);
-  return [
+  const args = [
     "-m",
     "pycodex",
     "--tui-mode",
@@ -39,12 +39,26 @@ export function buildPycodexArgs(
     "--sandbox",
     sandboxPolicy,
   ];
+  if (isTuiLlmRequestDumpEnabled(env)) {
+    args.push("--dump-llm-request");
+  }
+  return args;
 }
 
 export function isTuiDebugEnabled(
   env: NodeJS.ProcessEnv = process.env,
 ): boolean {
   const raw = env.PYCODEX_TUI_DEBUG;
+  if (raw === undefined) {
+    return false;
+  }
+  return TRUE_VALUES.has(raw.trim().toLowerCase());
+}
+
+export function isTuiLlmRequestDumpEnabled(
+  env: NodeJS.ProcessEnv = process.env,
+): boolean {
+  const raw = env.PYCODEX_TUI_DUMP_LLM_REQUEST;
   if (raw === undefined) {
     return false;
   }

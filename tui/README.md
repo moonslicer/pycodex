@@ -37,6 +37,20 @@ Run built output:
 npm run start
 ```
 
+## LLM Request Dump Debugging
+
+To inspect the exact payload pycodex sends to the LLM from TUI mode, enable:
+
+```bash
+PYCODEX_TUI_DUMP_LLM_REQUEST=1 npm run start \
+  2> >(tee -a /tmp/pycodex-tui-llm.log >&2)
+```
+
+This prints `[llm-request] ...` lines to stderr (not into the chat transcript).
+
+If you also set `PYCODEX_FAKE_MODEL=1`, no real LLM request is sent, so no
+request dump entries will be produced.
+
 ## Quality Commands
 
 - `npm run typecheck`

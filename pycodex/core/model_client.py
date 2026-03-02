@@ -63,6 +63,7 @@ class Completed:
 
 ResponseEvent = OutputTextDelta | OutputItemDone | Completed
 OpenAIFactory = Callable[[Config], Any]
+RequestObserver = Callable[[dict[str, Any]], None]
 
 
 class ModelClient:
@@ -73,9 +74,11 @@ class ModelClient:
         config: Config,
         *,
         openai_factory: OpenAIFactory | None = None,
+        request_observer: RequestObserver | None = None,
     ) -> None:
         self._config = config
         self._openai_factory = openai_factory or _default_openai_factory
+        self._request_observer = request_observer
         self._client: Any | None = None
 
     async def stream(
@@ -133,6 +136,8 @@ class ModelClient:
         }
         if instructions:
             create_kwargs["instructions"] = instructions
+        if self._request_observer is not None:
+            self._request_observer(dict(create_kwargs))
 
         stream = await responses.create(**create_kwargs)
         if not hasattr(stream, "__aiter__"):

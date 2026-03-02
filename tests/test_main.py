@@ -58,6 +58,11 @@ def test_sandbox_flag_accepted_values() -> None:
     assert args.sandbox == "read-only"
 
 
+def test_dump_llm_request_flag_is_parsed() -> None:
+    args = main_module._build_parser().parse_args(["--dump-llm-request", "x"])
+    assert args.dump_llm_request is True
+
+
 def test_profile_flag_is_parsed() -> None:
     args = main_module._build_parser().parse_args(["--profile", "codex", "x"])
     assert args.profile == "codex"
@@ -376,6 +381,40 @@ def test_main_passes_profile_overrides_to_run_prompt_when_provided(
     assert captured.out.strip() == "final-answer"
 
 
+def test_main_passes_dump_llm_request_to_run_prompt_when_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    seen: dict[str, object] = {}
+
+    async def fake_run_prompt(
+        prompt: str,
+        *,
+        approval_policy: main_module.ApprovalPolicy,
+        sandbox_policy: main_module.SandboxPolicy,
+        dump_llm_request: bool = False,
+    ) -> str:
+        seen["prompt"] = prompt
+        seen["approval_policy"] = approval_policy
+        seen["sandbox_policy"] = sandbox_policy
+        seen["dump_llm_request"] = dump_llm_request
+        return "final-answer"
+
+    monkeypatch.setattr(main_module, "_run_prompt", fake_run_prompt)
+
+    exit_code = main_module.main(["--dump-llm-request", "hello from cli"])
+
+    assert exit_code == 0
+    assert seen == {
+        "prompt": "hello from cli",
+        "approval_policy": main_module.ApprovalPolicy.NEVER,
+        "sandbox_policy": main_module.SandboxPolicy.DANGER_FULL_ACCESS,
+        "dump_llm_request": True,
+    }
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "final-answer"
+
+
 def test_main_unknown_profile_returns_error(
     capsys: pytest.CaptureFixture[str],
 ) -> None:
@@ -599,6 +638,34 @@ def test_build_model_client_uses_fake_model_when_enabled(
     model_client = main_module._build_model_client(config)
 
     assert isinstance(model_client, FakeModelClient)
+
+
+def test_build_model_client_wires_request_observer_when_dump_enabled(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    monkeypatch.delenv("PYCODEX_FAKE_MODEL", raising=False)
+    config = Config(model="test-model", api_key="test-key", cwd=tmp_path)
+    seen: dict[str, object] = {}
+
+    class _CapturingModelClient:
+        def __init__(
+            self,
+            cfg: Config,
+            *,
+            request_observer: Any = None,
+        ) -> None:
+            seen["config"] = cfg
+            seen["request_observer"] = request_observer
+
+    monkeypatch.setattr(main_module, "ModelClient", _CapturingModelClient)
+
+    model_client = main_module._build_model_client(config, dump_llm_request=True)
+
+    assert model_client is not None
+    assert seen["config"] == config
+    observer = seen["request_observer"]
+    assert callable(observer)
 
 
 def test_json_mode_fake_model_produces_completed_event_without_network(

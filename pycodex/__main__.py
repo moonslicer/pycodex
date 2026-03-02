@@ -83,6 +83,11 @@ def _build_parser() -> argparse.ArgumentParser:
         help="Emit line-delimited protocol JSON events (requires prompt).",
     )
     parser.add_argument(
+        "--dump-llm-request",
+        action="store_true",
+        help="Write the raw LLM request payload to stderr before each model call.",
+    )
+    parser.add_argument(
         "--tui-mode",
         action="store_true",
         help="Run in interactive TUI bridge mode (no prompt).",
@@ -151,6 +156,7 @@ async def _run_prompt(
     *,
     approval_policy: ApprovalPolicy,
     sandbox_policy: SandboxPolicy,
+    dump_llm_request: bool = False,
     profile: str | None = None,
     profile_file: str | None = None,
     instructions: str | None = None,
@@ -159,6 +165,7 @@ async def _run_prompt(
     config, session, model_client, tool_router = _build_runtime(
         approval_policy=approval_policy,
         sandbox_policy=sandbox_policy,
+        dump_llm_request=dump_llm_request,
         profile=profile,
         profile_file=profile_file,
         instructions=instructions,
@@ -177,6 +184,7 @@ def _build_runtime(
     *,
     approval_policy: ApprovalPolicy,
     sandbox_policy: SandboxPolicy,
+    dump_llm_request: bool = False,
     profile: str | None = None,
     profile_file: str | None = None,
     instructions: str | None = None,
@@ -189,7 +197,7 @@ def _build_runtime(
         instructions_file=instructions_file,
     )
     session = Session(config=config)
-    model_client = _build_model_client(config)
+    model_client = _build_model_client(config, dump_llm_request=dump_llm_request)
     tool_router = _build_tool_router(
         approval_policy=approval_policy,
         sandbox_policy=sandbox_policy,
@@ -197,10 +205,11 @@ def _build_runtime(
     return config, session, model_client, tool_router
 
 
-def _build_model_client(config: Config) -> SupportsModelClient:
+def _build_model_client(config: Config, *, dump_llm_request: bool = False) -> SupportsModelClient:
     if _is_fake_model_enabled():
         return FakeModelClient(config)
-    return ModelClient(config)
+    request_observer = _dump_llm_request_to_stderr if dump_llm_request else None
+    return ModelClient(config, request_observer=request_observer)
 
 
 def _is_fake_model_enabled() -> bool:
@@ -208,6 +217,11 @@ def _is_fake_model_enabled() -> bool:
     if raw is None:
         return False
     return raw.strip().lower() in {"1", "true", "yes", "on"}
+
+
+def _dump_llm_request_to_stderr(payload: dict[str, Any]) -> None:
+    rendered = json.dumps(payload, ensure_ascii=False, default=str)
+    sys.stderr.write(f"[llm-request] {rendered}\n")
 
 
 def _resolve_runtime_config(
@@ -299,6 +313,7 @@ async def _run_prompt_json(
     *,
     approval_policy: ApprovalPolicy,
     sandbox_policy: SandboxPolicy,
+    dump_llm_request: bool = False,
     profile: str | None = None,
     profile_file: str | None = None,
     instructions: str | None = None,
@@ -307,6 +322,7 @@ async def _run_prompt_json(
     config, session, model_client, tool_router = _build_runtime(
         approval_policy=approval_policy,
         sandbox_policy=sandbox_policy,
+        dump_llm_request=dump_llm_request,
         profile=profile,
         profile_file=profile_file,
         instructions=instructions,
@@ -339,6 +355,7 @@ async def _run_tui_mode(
     *,
     approval_policy: ApprovalPolicy,
     sandbox_policy: SandboxPolicy,
+    dump_llm_request: bool = False,
     profile: str | None = None,
     profile_file: str | None = None,
     instructions: str | None = None,
@@ -351,7 +368,7 @@ async def _run_tui_mode(
         instructions_file=instructions_file,
     )
     session = Session(config=config)
-    model_client = _build_model_client(config)
+    model_client = _build_model_client(config, dump_llm_request=dump_llm_request)
     bridge: TuiBridge | None = None
 
     async def _tui_ask_user_fn(tool: Any, args: dict[str, Any]) -> ReviewDecision:
@@ -436,6 +453,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "approval_policy": approval_policy,
                 "sandbox_policy": sandbox_policy,
             }
+            if args.dump_llm_request:
+                tui_kwargs["dump_llm_request"] = True
             if _has_profile_cli_overrides(args):
                 tui_kwargs.update(
                     {
@@ -462,6 +481,8 @@ def main(argv: Sequence[str] | None = None) -> int:
                 "approval_policy": approval_policy,
                 "sandbox_policy": sandbox_policy,
             }
+            if args.dump_llm_request:
+                json_kwargs["dump_llm_request"] = True
             if _has_profile_cli_overrides(args):
                 json_kwargs.update(
                     {
@@ -483,6 +504,8 @@ def main(argv: Sequence[str] | None = None) -> int:
             "approval_policy": approval_policy,
             "sandbox_policy": sandbox_policy,
         }
+        if args.dump_llm_request:
+            prompt_kwargs["dump_llm_request"] = True
         if _has_profile_cli_overrides(args):
             prompt_kwargs.update(
                 {

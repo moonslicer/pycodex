@@ -179,6 +179,36 @@ def test_model_client_includes_instructions_field_when_non_empty() -> None:
     assert responses.calls[0]["instructions"] == "You are a test agent."
 
 
+def test_model_client_notifies_request_observer() -> None:
+    responses = _FakeResponses(
+        streams=[_FakeStream(events=[{"type": "response.completed", "response": {"id": "resp_1"}}])]
+    )
+    observed: list[dict[str, Any]] = []
+    client = ModelClient(
+        config=Config(model="gpt-test"),
+        openai_factory=lambda _config: _FakeOpenAIClient(responses=responses),
+        request_observer=observed.append,
+    )
+
+    async def _run() -> list[Any]:
+        events: list[Any] = []
+        async for event in client.stream(
+            messages=[{"role": "user", "content": "hello"}],
+            tools=[],
+            instructions="observe me",
+        ):
+            events.append(event)
+        return events
+
+    events = asyncio.run(_run())
+
+    assert events == [Completed(response_id="resp_1")]
+    assert len(observed) == 1
+    assert observed[0]["model"] == "gpt-test"
+    assert observed[0]["instructions"] == "observe me"
+    assert observed[0]["stream"] is True
+
+
 def test_model_client_converts_function_call_and_tool_messages() -> None:
     responses = _FakeResponses(
         streams=[_FakeStream(events=[{"type": "response.completed", "response": {"id": "resp_1"}}])]

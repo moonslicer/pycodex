@@ -50,6 +50,23 @@ Local fake model (no network call):
 PYCODEX_FAKE_MODEL=1 python -m pycodex "dry-run prompt"
 ```
 
+Inspect exact LLM request payload (debug to stderr):
+
+```bash
+python -m pycodex --dump-llm-request "Summarize this repository." 2>/tmp/pycodex-llm.log
+tail -f /tmp/pycodex-llm.log
+```
+
+TUI + payload dump:
+
+```bash
+PYCODEX_TUI_DUMP_LLM_REQUEST=1 node tui/dist/src/index.js \
+  2> >(tee -a /tmp/pycodex-tui-llm.log >&2)
+```
+
+Note: dumps are emitted only for real model calls. If `PYCODEX_FAKE_MODEL=1` is set,
+no OpenAI request is made, so there is nothing to dump.
+
 ## Development Checks
 
 Standard local review:
@@ -87,7 +104,7 @@ pytest tests/ -m e2e -v
 - `tui/`: React + Ink terminal UI.
 - `docs/`: architecture, harness workflow, memory log, milestone trackers.
 - `engineering-plan.md`: milestone roadmap and architecture details.
-- `todo-m5.md`: current active milestone tracker.
+- `todo-m6.md`: current active milestone tracker.
 
 ## Documentation Index
 
