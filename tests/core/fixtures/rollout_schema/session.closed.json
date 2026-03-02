@@ -1,0 +1,1 @@
+{"schema_version":"1.0","type":"session.closed","thread_id":"thread_123","closed_at":"2026-03-02T10:10:00Z","last_user_message":"please summarize","turn_count":3,"token_total":{"input_tokens":100,"output_tokens":40}}
