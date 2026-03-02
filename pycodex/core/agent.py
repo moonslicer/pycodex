@@ -10,7 +10,7 @@ from inspect import isawaitable
 from pathlib import Path
 from typing import Any, Literal, Protocol
 
-from pycodex.core.compaction import create_compaction_orchestrator
+from pycodex.core.compaction import CompactionApplied, create_compaction_orchestrator
 from pycodex.core.initial_context import build_initial_context
 from pycodex.core.model_client import Completed as ModelCompleted
 from pycodex.core.model_client import OutputItemDone, OutputTextDelta
@@ -67,8 +67,27 @@ class TextDeltaReceived:
     type: Literal["text_delta_received"] = "text_delta_received"
 
 
+@dataclass(slots=True, frozen=True)
+class ContextCompacted:
+    """Event emitted when context compaction is applied for the active turn."""
+
+    strategy: str
+    implementation: str
+    replaced_items: int
+    estimated_prompt_tokens: int
+    context_window_tokens: int
+    remaining_ratio: float
+    threshold_ratio: float
+    type: Literal["context_compacted"] = "context_compacted"
+
+
 AgentEvent = (
-    TurnStarted | ToolCallDispatched | ToolResultReceived | TurnCompleted | TextDeltaReceived
+    TurnStarted
+    | ToolCallDispatched
+    | ToolResultReceived
+    | TurnCompleted
+    | TextDeltaReceived
+    | ContextCompacted
 )
 EventCallback = Callable[[AgentEvent], None | Awaitable[None]]
 
@@ -104,7 +123,7 @@ class SupportsToolRouter(Protocol):
 class SupportsCompactionOrchestrator(Protocol):
     """Protocol for applying history compaction before model sampling."""
 
-    def compact(self, session: Session) -> object | None:
+    def compact(self, session: Session) -> CompactionApplied | None:
         """Compact session history when required."""
 
 
@@ -138,9 +157,23 @@ class Agent:
 
         try:
             while True:
-                self._compact_history_if_needed()
+                compaction = self._compact_history_if_needed()
+                if compaction is not None:
+                    await self._emit(
+                        ContextCompacted(
+                            strategy=compaction.strategy,
+                            implementation=compaction.implementation,
+                            replaced_items=compaction.replaced_items,
+                            estimated_prompt_tokens=compaction.estimated_prompt_tokens,
+                            context_window_tokens=compaction.context_window_tokens,
+                            remaining_ratio=compaction.remaining_ratio,
+                            threshold_ratio=compaction.threshold_ratio,
+                        )
+                    )
                 tool_calls, text, usage = await self._sample_model_once()
                 if not tool_calls:
+                    if text:
+                        self.session.append_assistant_message(text)
                     usage_snapshot = self.session.record_turn_usage(usage)
                     _log.info("turn completed: %d chars", len(text))
                     await self._emit(TurnCompleted(final_text=text, usage=usage_snapshot))
@@ -267,11 +300,11 @@ class Agent:
             return ""
         return self.session.config.profile.instructions
 
-    def _compact_history_if_needed(self) -> None:
+    def _compact_history_if_needed(self) -> CompactionApplied | None:
         orchestrator = self._resolve_compaction_orchestrator()
         if orchestrator is None:
-            return
-        orchestrator.compact(self.session)
+            return None
+        return orchestrator.compact(self.session)
 
     def _resolve_compaction_orchestrator(self) -> SupportsCompactionOrchestrator | None:
         if self.compaction_orchestrator is not None:
@@ -290,6 +323,7 @@ class Agent:
             implementation_name=config.compaction_implementation,
             strategy_options=strategy_options,
             implementation_options=implementation_options,
+            context_window_tokens=config.compaction_context_window_tokens,
         )
         return self.compaction_orchestrator
 

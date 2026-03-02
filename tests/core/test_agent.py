@@ -9,6 +9,7 @@ import pytest
 from pycodex.core.agent import (
     Agent,
     AgentEvent,
+    ContextCompacted,
     TextDeltaReceived,
     ToolCallDispatched,
     ToolResultReceived,
@@ -17,6 +18,7 @@ from pycodex.core.agent import (
     run_turn,
 )
 from pycodex.core.agent_profile import AgentProfile
+from pycodex.core.compaction import CompactionApplied
 from pycodex.core.config import Config
 from pycodex.core.model_client import Completed, OutputItemDone, OutputTextDelta, ResponseEvent
 from pycodex.core.session import Session
@@ -106,6 +108,28 @@ class _RecordingCompactionOrchestrator:
         self.calls += 1
 
 
+@dataclass(slots=True)
+class _ApplyingCompactionOrchestrator:
+    calls: int = 0
+
+    def compact(self, session: Session) -> CompactionApplied | None:
+        _ = session
+        self.calls += 1
+        if self.calls > 1:
+            return None
+        return CompactionApplied(
+            strategy="threshold_v1",
+            implementation="local_summary_v1",
+            replace_end=3,
+            replaced_items=3,
+            estimated_prompt_tokens=9100,
+            context_window_tokens=10000,
+            remaining_ratio=0.09,
+            threshold_ratio=0.2,
+            summary_text="[compaction.summary.v1]\nConversation summary:\n- user: old",
+        )
+
+
 def test_run_turn_returns_text_when_no_tool_calls(tmp_path: Path) -> None:
     session = Session()
     model_client = _FakeModelClient(
@@ -140,7 +164,10 @@ def test_run_turn_returns_text_when_no_tool_calls(tmp_path: Path) -> None:
             "instructions": "",
         }
     ]
-    assert session.to_prompt() == [{"role": "user", "content": "say hi"}]
+    assert session.to_prompt() == [
+        {"role": "user", "content": "say hi"},
+        {"role": "assistant", "content": "hello world"},
+    ]
 
 
 def test_run_turn_invokes_compaction_orchestrator_once_per_model_sample(tmp_path: Path) -> None:
@@ -164,12 +191,49 @@ def test_run_turn_invokes_compaction_orchestrator_once_per_model_sample(tmp_path
     assert compaction.calls == 1
 
 
+def test_run_turn_emits_context_compacted_event(tmp_path: Path) -> None:
+    session = Session()
+    model_client = _FakeModelClient(
+        turns=[[OutputTextDelta(delta="hello"), Completed(response_id="resp_1")]]
+    )
+    router = _FakeToolRouter(specs=[], results=[])
+    compaction = _ApplyingCompactionOrchestrator()
+    emitted: list[AgentEvent] = []
+
+    async def on_event(event: AgentEvent) -> None:
+        emitted.append(event)
+
+    result = asyncio.run(
+        Agent(
+            session=session,
+            model_client=model_client,
+            tool_router=router,
+            cwd=tmp_path,
+            on_event=on_event,
+            compaction_orchestrator=compaction,
+        ).run_turn("say hi")
+    )
+
+    assert result == "hello"
+    assert [event.type for event in emitted] == [
+        "turn_started",
+        "context_compacted",
+        "text_delta_received",
+        "turn_completed",
+    ]
+    assert isinstance(emitted[1], ContextCompacted)
+    assert emitted[1].strategy == "threshold_v1"
+    assert emitted[1].implementation == "local_summary_v1"
+    assert emitted[1].replaced_items == 3
+
+
 def test_run_turn_builds_compaction_orchestrator_from_config(tmp_path: Path) -> None:
     config = Config(
         model="test-model",
         api_key="test-key",
         cwd=tmp_path,
         compaction_threshold_ratio=0.15,
+        compaction_context_window_tokens=321,
         compaction_strategy="threshold_v1",
         compaction_implementation="local_summary_v1",
         compaction_options={
@@ -200,6 +264,7 @@ def test_run_turn_builds_compaction_orchestrator_from_config(tmp_path: Path) -> 
     assert strategy.keep_recent_items == 3
     assert implementation.name == "local_summary_v1"
     assert implementation.max_lines == 2
+    assert agent.compaction_orchestrator.context_window_tokens == 321
 
 
 def test_run_turn_compaction_summary_is_deterministic_from_config(tmp_path: Path) -> None:
@@ -208,6 +273,7 @@ def test_run_turn_compaction_summary_is_deterministic_from_config(tmp_path: Path
         api_key="test-key",
         cwd=tmp_path,
         compaction_threshold_ratio=0.2,
+        compaction_context_window_tokens=20,
         compaction_strategy="threshold_v1",
         compaction_implementation="local_summary_v1",
         compaction_options={
@@ -221,7 +287,6 @@ def test_run_turn_compaction_summary_is_deterministic_from_config(tmp_path: Path
         for index in range(6):
             seeded.append_user_message(f"user-{index}")
             seeded.append_assistant_message(f"assistant-{index}")
-        seeded.record_turn_usage({"input_tokens": 200_000, "output_tokens": 0})
         return seeded
 
     model_turn = [[OutputTextDelta(delta="done"), Completed(response_id="resp_1")]]
@@ -326,6 +391,7 @@ def test_run_turn_executes_tool_calls_and_loops(tmp_path: Path) -> None:
             "arguments": '{"file_path":"README.md"}',
         },
         {"role": "tool", "tool_call_id": "call_1", "content": "L1: # pycodex"},
+        {"role": "assistant", "content": "done"},
     ]
 
 
@@ -514,6 +580,7 @@ def test_run_turn_keeps_error_tool_output_in_session(tmp_path: Path) -> None:
             "arguments": '{"command":"false"}',
         },
         {"role": "tool", "tool_call_id": "call_1", "content": "[ERROR] Command failed"},
+        {"role": "assistant", "content": "handled"},
     ]
     assert model_client.calls[1]["messages"][1] == {
         "type": "function_call",
@@ -728,6 +795,10 @@ def test_run_turn_uses_done_item_text_when_no_text_deltas(tmp_path: Path) -> Non
     )
 
     assert result == "fallback text"
+    assert session.to_prompt() == [
+        {"role": "user", "content": "answer directly"},
+        {"role": "assistant", "content": "fallback text"},
+    ]
 
 
 def test_run_turn_preserves_text_before_tool_calls_in_same_pass(tmp_path: Path) -> None:
@@ -776,8 +847,19 @@ def test_run_turn_preserves_text_before_tool_calls_in_same_pass(tmp_path: Path) 
             "arguments": '{"file_path":"README.md"}',
         },
         {"role": "tool", "tool_call_id": "call_5", "content": "L1: # pycodex"},
+        {"role": "assistant", "content": "all set"},
     ]
-    assert model_client.calls[1]["messages"] == session.to_prompt()
+    assert model_client.calls[1]["messages"] == [
+        {"role": "user", "content": "inspect readme"},
+        {"role": "assistant", "content": "checking now"},
+        {
+            "type": "function_call",
+            "call_id": "call_5",
+            "name": "read_file",
+            "arguments": '{"file_path":"README.md"}',
+        },
+        {"role": "tool", "tool_call_id": "call_5", "content": "L1: # pycodex"},
+    ]
 
 
 def test_agent_prepends_initial_context_once_across_turns(tmp_path: Path) -> None:
@@ -802,6 +884,7 @@ def test_agent_prepends_initial_context_once_across_turns(tmp_path: Path) -> Non
 
     assert result_1 == "first"
     assert result_2 == "second"
+    assert {"role": "assistant", "content": "first"} in model_client.calls[1]["messages"]
     prompt = session.to_prompt()
     assert sum(1 for item in prompt if item.get("role") == "system") == 1
     assert prompt[0]["role"] == "system"
