@@ -488,6 +488,12 @@ Detailed sub-milestone breakdown is in `tui-plan.md`. Summary of execution plan:
 
 **Design constraint**: Items 1 and 2 have a hard ordering dependency: token accounting must exist before the compaction trigger can work. Compaction output shape (the summary block format) must be finalized here before M8 records it to JSONL.
 
+**Compaction extensibility requirement**: M7 compaction must be implemented behind a configurable interface split so future experiments do not force contract rewrites:
+- `CompactionStrategy` owns **when** and **what range** to compact (`plan(...) -> CompactionPlan | None`).
+- `CompactionImplementation` owns **how** to summarize (`summarize(...) -> SummaryOutput`).
+- A small orchestrator applies the resulting summary block to session history.
+- The summary block schema is locked in M7; strategy/implementation metadata is carried separately.
+
 **Non-goals**:
 - No session persistence or resume — that is M8's job.
 - No planner state persistence — planner state is ephemeral (M9).
@@ -502,17 +508,27 @@ Detailed sub-milestone breakdown is in `tui-plan.md`. Summary of execution plan:
    - Value: objective context-budget visibility; unblocks compaction trigger.
    - Verification: `pytest tests/core/test_token_usage.py -q`
 
-2. **Auto-compaction policy + executor** *(depends on item 1)*
-   - Trigger compaction when remaining context falls below a configurable threshold (default: 20% of model context window).
-   - Replace older context with a deterministic summary block produced by a local summarization call.
-   - Threshold controlled by new `Config` field: `compaction_threshold_ratio: float = 0.2`.
-   - Finalize the summary block format here — M8 will persist `compaction.applied` records containing this format; it must not change after M8 ships.
-   - Value: keeps long sessions functional with bounded prompt growth; establishes the stable output contract M8 depends on.
+2. **Compaction interface + default strategy/executor** *(depends on item 1)*
+   - Introduce a pluggable compaction split:
+     - strategy interface (`CompactionStrategy`) decides trigger + replace range,
+     - implementation interface (`CompactionImplementation`) performs summary generation.
+   - Add default components for M7:
+     - `threshold_v1` strategy (remaining-context ratio trigger, default 20%),
+     - `local_summary_v1` implementation (deterministic local summarization call path).
+   - Replace older context with a deterministic summary block produced through the implementation interface.
+   - Finalize summary block format here; record strategy/implementation metadata outside the summary text block.
+   - Value: keeps long sessions functional with bounded growth while enabling low-risk experimentation in future milestones.
    - Verification: `pytest tests/core/test_compaction.py -q`
 
 3. **Global user config (`~/.pycodex/config.toml`)**
    - Add discovery and loading of `~/.pycodex/config.toml` as the global defaults layer.
-   - New fields to support here: `compaction_threshold_ratio` (item 2), `default_approval_policy`, `default_sandbox_policy`. Existing fields (`model`, `profile`) also settable globally.
+   - New fields to support here:
+     - `compaction_threshold_ratio` (default strategy option),
+     - `compaction_strategy` (default `threshold_v1`),
+     - `compaction_implementation` (default `local_summary_v1`),
+     - optional strategy/implementation options table for future experiments,
+     - `default_approval_policy`, `default_sandbox_policy`.
+   - Existing fields (`model`, `profile`) remain settable globally.
    - Precedence: CLI flags > env vars > project `pycodex.toml` > `~/.pycodex/config.toml` > hardcoded defaults.
    - Value: reproducible local behavior without long CLI flags.
    - Verification: `pytest tests/core/test_config.py -k global_config -q`
@@ -576,7 +592,10 @@ Detailed sub-milestone breakdown is in `tui-plan.md`. Summary of execution plan:
    - Persist `session.meta` at session creation.
    - Persist `history.item` records after each successful turn mutation (user message, assistant message, tool call, tool result).
    - Persist `turn.completed` with per-turn and cumulative token snapshot from M7.
-   - Persist `compaction.applied` with the summary block and replaced item range when compaction runs.
+   - Persist `compaction.applied` with:
+     - summary block payload,
+     - replaced item range,
+     - strategy/implementation identifiers and selected options.
    - Persist `session.closed` on clean shutdown.
    - Value: every durable state change has a corresponding ledger record.
    - Verification: `pytest tests/core/test_rollout_recorder.py -k write_points -q`

@@ -3,7 +3,7 @@
 ## Goal
 Stabilize long-running session behavior by completing context/state fundamentals before persistence (M8):
 1. finalize token accounting (per-turn + cumulative),
-2. add deterministic auto-compaction with a locked summary block format,
+2. add a pluggable auto-compaction interface (strategy + implementation) with deterministic defaults and a locked summary block format,
 3. add global user config (`~/.pycodex/config.toml`) with clear precedence,
 4. harden local resiliency for subprocess failures/timeouts and Ctrl+C interruption.
 
@@ -16,23 +16,27 @@ Agent.run_turn()
   ├─ computes per-turn usage
   ├─ updates cumulative session usage
   ├─ emits turn.completed.usage (stable shape)
-  └─ evaluates compaction threshold
+  └─ invokes CompactionOrchestrator
         ↓
-Session
-  ├─ prompt history
-  ├─ cumulative usage totals
-  └─ compaction mutations (replace old items with summary block)
+CompactionOrchestrator
+  ├─ CompactionStrategy.plan(context) -> CompactionPlan | None
+  ├─ CompactionImplementation.summarize(request) -> SummaryOutput
+  └─ apply summary block replacement to Session
+        ↓
+Session (history + cumulative usage totals)
 ```
 
 ## Locked M7 Contracts (must be stable before M8)
 - `turn.completed.usage` must include deterministic per-turn token counts and cumulative totals.
 - Compaction summary block format must be finalized in M7 and not drift in M8.
 - Compaction trigger semantics must be config-driven (`compaction_threshold_ratio`).
+- Strategy/implementation metadata must be carried outside summary text so experiments do not alter summary block schema.
 
 ## In Scope
 - `pycodex/core/agent.py`
 - `pycodex/core/model_client.py`
 - `pycodex/core/session.py`
+- `pycodex/core/compaction.py` (new compaction interfaces/orchestration)
 - `pycodex/core/config.py`
 - `pycodex/core/event_adapter.py` (if usage payload shape changes)
 - `pycodex/protocol/events.py` (if usage schema changes)
@@ -40,6 +44,7 @@ Session
 - `pycodex/tools/shell.py` (timeout/hang handling hardening as needed)
 - `tests/core/test_token_usage.py` (new)
 - `tests/core/test_compaction.py` (new)
+- `tests/core/test_compaction_registry.py` (new)
 - `tests/core/test_config.py` (extend: global config layer)
 - `tests/e2e/test_cli_tool_failures.py` (extend)
 - `tests/e2e/test_interrupts.py` (new)
@@ -79,16 +84,24 @@ Session
   - Verify:
     - `.venv/bin/pytest tests/core/test_token_usage.py -q`
 
-- [ ] T2: Auto-compaction policy and executor (`core/agent.py`, `core/session.py`, optional `core/compaction.py`)
-  - Add threshold-based trigger using remaining-context ratio.
-  - Implement deterministic summary-block generation call path (local summarization turn).
+- [ ] T2: Compaction interfaces + default implementations (`core/compaction.py`, `core/agent.py`, `core/session.py`)
+  - Define interface split:
+    - `CompactionStrategy` decides trigger/range (`plan(...)`),
+    - `CompactionImplementation` generates summary (`summarize(...)`).
+  - Add default components:
+    - `threshold_v1` strategy (remaining-context-ratio based),
+    - `local_summary_v1` implementation (deterministic local summarization path).
+  - Add orchestrator that runs plan -> summarize -> apply.
   - Replace compacted history range with a single stable summary block.
   - Guarantee idempotent behavior when compaction runs repeatedly in long sessions.
   - Verify:
     - `.venv/bin/pytest tests/core/test_compaction.py -q`
+    - `.venv/bin/pytest tests/core/test_compaction_registry.py -q`
 
 - [ ] T3: Config plumbing for compaction and policy defaults (`core/config.py`, `__main__.py`)
   - Add `compaction_threshold_ratio: float = 0.2`.
+  - Add `compaction_strategy` and `compaction_implementation` selectors (defaults: `threshold_v1`, `local_summary_v1`).
+  - Add optional compaction strategy/implementation options mapping.
   - Add global config file loading from `~/.pycodex/config.toml`.
   - Ensure `default_approval_policy` and `default_sandbox_policy` can be set globally.
   - Enforce precedence: CLI > env > project > global > defaults.
@@ -105,7 +118,7 @@ Session
 - [ ] T5: Cross-module integration lock-in
   - Add/extend integration tests to cover:
     - token accounting + event emission consistency,
-    - compaction trigger and summary replacement behavior,
+    - compaction strategy/implementation selection and deterministic summary replacement behavior,
     - interrupt behavior during active turn/tool execution.
   - Verify:
     - `.venv/bin/pytest tests/core/test_agent.py tests/e2e/test_cli_json_contract.py -k "usage or compaction or interrupt" -q`
@@ -124,8 +137,8 @@ Session
 
 ## Task Dependency Graph
 ```
-T1 (token accounting) ──> T2 (compaction trigger/executor)
-T3 (config precedence + global defaults) ─┘
+T1 (token accounting) ──> T2 (compaction interfaces + defaults)
+T2 ──> T3 (config selection + global defaults)
 T2 + T4 + T5 ──> T6 (full gates + manual verification)
 ```
 
@@ -142,5 +155,6 @@ T2 + T4 + T5 ──> T6 (full gates + manual verification)
 - [ ] T5 complete
 - [ ] T6 complete
 - [ ] Compaction summary block format locked and documented
+- [ ] Default compaction strategy/implementation shipped and configurable by name
 - [ ] All quality gates pass
 - [ ] Manual M7 verification passes (or blockers documented)
