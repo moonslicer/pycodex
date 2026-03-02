@@ -23,7 +23,9 @@ def test_session_archive_and_unarchive_roundtrip(
 ) -> None:
     monkeypatch.setenv("PYCODEX_FAKE_MODEL", "1")
     monkeypatch.setattr(main_module, "default_sessions_root", lambda: tmp_path / "sessions")
-    monkeypatch.setattr(main_module, "default_archived_sessions_root", lambda: tmp_path / "archived")
+    monkeypatch.setattr(
+        main_module, "default_archived_sessions_root", lambda: tmp_path / "archived"
+    )
     config = Config(model="test-model", api_key="test-key", cwd=tmp_path)
     monkeypatch.setattr(main_module, "load_config", lambda: config)
 

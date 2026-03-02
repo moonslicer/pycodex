@@ -583,7 +583,10 @@ def _run_session_command(
     config: Config,
 ) -> int:
     if len(args.prompt_tail) == 0:
-        print("[ERROR] Missing session subcommand. Expected one of: list, read, archive, unarchive", file=sys.stderr)
+        print(
+            "[ERROR] Missing session subcommand. Expected one of: list, read, archive, unarchive",
+            file=sys.stderr,
+        )
         return 1
 
     subcommand = args.prompt_tail[0]
@@ -629,10 +632,14 @@ def _run_session_command(
 
 
 def _session_list(*, sessions_root: Path) -> int:
-    rollout_paths = sorted(sessions_root.glob("rollout-*.jsonl"), key=lambda p: p.name, reverse=True)
+    rollout_paths = sorted(
+        sessions_root.glob("rollout-*.jsonl"), key=lambda p: p.name, reverse=True
+    )
     for path in rollout_paths:
         state = replay_rollout(path)
-        token_total = state.cumulative_usage["input_tokens"] + state.cumulative_usage["output_tokens"]
+        token_total = (
+            state.cumulative_usage["input_tokens"] + state.cumulative_usage["output_tokens"]
+        )
         date_token = _rollout_date_token(path.name)
         print(
             f"{state.thread_id}\t{date_token}\tturns={state.turn_count}\ttokens={token_total}\tstatus={state.status}"
@@ -681,7 +688,9 @@ def _session_move(
     dest_root: Path,
     action: str,
 ) -> int:
-    source_path = _resolve_session_path(session_id=session_id, active_root=source_root, archived_root=None)
+    source_path = _resolve_session_path(
+        session_id=session_id, active_root=source_root, archived_root=None
+    )
     _ensure_directory(dest_root)
     dest_path = dest_root / source_path.name
     if dest_path.exists():

@@ -143,7 +143,9 @@ def replay_rollout(path: Path, *, expected_major: int = 1) -> ReplayState:
         elif isinstance(item, SessionClosed):
             session_closed = item
 
-    status: Literal["closed", "incomplete"] = "closed" if session_closed is not None else "incomplete"
+    status: Literal["closed", "incomplete"] = (
+        "closed" if session_closed is not None else "incomplete"
+    )
     return ReplayState(
         thread_id=thread_id,
         history=history,

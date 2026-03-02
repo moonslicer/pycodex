@@ -428,7 +428,9 @@ class Agent:
             strategy_options: dict[str, object] = {}
             implementation_options: dict[str, object] = {}
         else:
-            strategy_options = _compaction_component_options(config.compaction_options, key="strategy")
+            strategy_options = _compaction_component_options(
+                config.compaction_options, key="strategy"
+            )
             if "threshold_ratio" not in strategy_options:
                 strategy_options["threshold_ratio"] = config.compaction_threshold_ratio
             implementation_options = _compaction_component_options(
