@@ -51,15 +51,15 @@ def _build_parser() -> argparse.ArgumentParser:
     )
     parser.add_argument(
         "--approval",
-        default=ApprovalPolicy.NEVER.value,
+        default=None,
         choices=[policy.value for policy in ApprovalPolicy],
-        help="Approval policy for mutating tools (default: never).",
+        help="Approval policy for mutating tools (default: resolved from config).",
     )
     parser.add_argument(
         "--sandbox",
-        default=SandboxPolicy.DANGER_FULL_ACCESS.value,
+        default=None,
         choices=[policy.value for policy in SandboxPolicy],
-        help="Sandbox policy for tool execution (default: danger-full-access).",
+        help="Sandbox policy for tool execution (default: resolved from config).",
     )
     parser.add_argument(
         "--log-level",
@@ -426,6 +426,23 @@ def _has_profile_cli_overrides(args: argparse.Namespace) -> bool:
     )
 
 
+def _resolve_effective_policies(
+    *,
+    approval_flag: str | None,
+    sandbox_flag: str | None,
+    config: Config,
+) -> tuple[ApprovalPolicy, SandboxPolicy]:
+    approval_policy = (
+        ApprovalPolicy(approval_flag)
+        if approval_flag is not None
+        else config.default_approval_policy
+    )
+    sandbox_policy = (
+        SandboxPolicy(sandbox_flag) if sandbox_flag is not None else config.default_sandbox_policy
+    )
+    return approval_policy, sandbox_policy
+
+
 def main(argv: Sequence[str] | None = None) -> int:
     parser = _build_parser()
     args = parser.parse_args(list(argv) if argv is not None else None)
@@ -441,8 +458,17 @@ def main(argv: Sequence[str] | None = None) -> int:
                 return record.name.startswith(_prefix)
 
         logging.getLogger().handlers[0].addFilter(_PrefixFilter())
-    approval_policy = ApprovalPolicy(args.approval)
-    sandbox_policy = SandboxPolicy(args.sandbox)
+    try:
+        default_config = load_config()
+        approval_policy, sandbox_policy = _resolve_effective_policies(
+            approval_flag=args.approval,
+            sandbox_flag=args.sandbox,
+            config=default_config,
+        )
+    except Exception as exc:
+        message = _render_error_message(exc)
+        print(f"[ERROR] {message}", file=sys.stderr)
+        return 1
     if args.tui_mode:
         if args.json:
             parser.error("--json cannot be used with --tui-mode")

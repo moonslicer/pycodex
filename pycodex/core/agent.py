@@ -276,10 +276,33 @@ class Agent:
     def _resolve_compaction_orchestrator(self) -> SupportsCompactionOrchestrator | None:
         if self.compaction_orchestrator is not None:
             return self.compaction_orchestrator
-        if self.session.config is None:
+        config = self.session.config
+        if config is None:
             return None
-        self.compaction_orchestrator = create_compaction_orchestrator()
+        strategy_options = _compaction_component_options(config.compaction_options, key="strategy")
+        implementation_options = _compaction_component_options(
+            config.compaction_options, key="implementation"
+        )
+        if "threshold_ratio" not in strategy_options:
+            strategy_options["threshold_ratio"] = config.compaction_threshold_ratio
+        self.compaction_orchestrator = create_compaction_orchestrator(
+            strategy_name=config.compaction_strategy,
+            implementation_name=config.compaction_implementation,
+            strategy_options=strategy_options,
+            implementation_options=implementation_options,
+        )
         return self.compaction_orchestrator
+
+
+def _compaction_component_options(
+    raw_options: dict[str, dict[str, Any]],
+    *,
+    key: str,
+) -> dict[str, object]:
+    component = raw_options.get(key)
+    if component is None:
+        return {}
+    return dict(component)
 
 
 async def run_turn(

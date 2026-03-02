@@ -164,6 +164,44 @@ def test_run_turn_invokes_compaction_orchestrator_once_per_model_sample(tmp_path
     assert compaction.calls == 1
 
 
+def test_run_turn_builds_compaction_orchestrator_from_config(tmp_path: Path) -> None:
+    config = Config(
+        model="test-model",
+        api_key="test-key",
+        cwd=tmp_path,
+        compaction_threshold_ratio=0.15,
+        compaction_strategy="threshold_v1",
+        compaction_implementation="local_summary_v1",
+        compaction_options={
+            "strategy": {"keep_recent_items": 3},
+            "implementation": {"max_lines": 2},
+        },
+    )
+    session = Session(config=config)
+    model_client = _FakeModelClient(
+        turns=[[OutputTextDelta(delta="hello"), Completed(response_id="resp_1")]]
+    )
+    router = _FakeToolRouter(specs=[], results=[])
+    agent = Agent(
+        session=session,
+        model_client=model_client,
+        tool_router=router,
+        cwd=tmp_path,
+    )
+
+    result = asyncio.run(agent.run_turn("say hi"))
+
+    assert result == "hello"
+    assert agent.compaction_orchestrator is not None
+    strategy = agent.compaction_orchestrator.strategy
+    implementation = agent.compaction_orchestrator.implementation
+    assert strategy.name == "threshold_v1"
+    assert strategy.threshold_ratio == 0.15
+    assert strategy.keep_recent_items == 3
+    assert implementation.name == "local_summary_v1"
+    assert implementation.max_lines == 2
+
+
 def test_run_turn_executes_tool_calls_and_loops(tmp_path: Path) -> None:
     session = Session()
     model_client = _FakeModelClient(

@@ -98,7 +98,7 @@ Session (history + cumulative usage totals)
     - `.venv/bin/pytest tests/core/test_compaction.py -q`
     - `.venv/bin/pytest tests/core/test_compaction_registry.py -q`
 
-- [ ] T3: Config plumbing for compaction and policy defaults (`core/config.py`, `__main__.py`)
+- [x] T3: Config plumbing for compaction and policy defaults (`core/config.py`, `__main__.py`)
   - Add `compaction_threshold_ratio: float = 0.2`.
   - Add `compaction_strategy` and `compaction_implementation` selectors (defaults: `threshold_v1`, `local_summary_v1`).
   - Add optional compaction strategy/implementation options mapping.
@@ -150,7 +150,7 @@ T2 + T4 + T5 ──> T6 (full gates + manual verification)
 ## Completion Checklist
 - [x] T1 complete
 - [x] T2 complete
-- [ ] T3 complete
+- [x] T3 complete
 - [ ] T4 complete
 - [ ] T5 complete
 - [ ] T6 complete

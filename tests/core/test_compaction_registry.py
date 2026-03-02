@@ -30,3 +30,14 @@ def test_create_compaction_orchestrator_rejects_unknown_strategy() -> None:
 def test_create_compaction_orchestrator_rejects_unknown_implementation() -> None:
     with pytest.raises(ValueError, match="Unknown compaction implementation"):
         create_compaction_orchestrator(implementation_name="unknown")
+
+
+def test_create_compaction_orchestrator_applies_component_options() -> None:
+    orchestrator = create_compaction_orchestrator(
+        strategy_options={"threshold_ratio": 0.05, "keep_recent_items": 4},
+        implementation_options={"max_lines": 3},
+    )
+
+    assert orchestrator.strategy.threshold_ratio == 0.05
+    assert orchestrator.strategy.keep_recent_items == 4
+    assert orchestrator.implementation.max_lines == 3

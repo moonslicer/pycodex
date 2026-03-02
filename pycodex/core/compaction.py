@@ -182,6 +182,8 @@ def create_compaction_orchestrator(
     *,
     strategy_name: str = DEFAULT_COMPACTION_STRATEGY,
     implementation_name: str = DEFAULT_COMPACTION_IMPLEMENTATION,
+    strategy_options: dict[str, object] | None = None,
+    implementation_options: dict[str, object] | None = None,
     context_window_tokens: int = DEFAULT_CONTEXT_WINDOW_TOKENS,
     summary_max_chars: int = DEFAULT_SUMMARY_MAX_CHARS,
 ) -> CompactionOrchestrator:
@@ -199,25 +201,32 @@ def create_compaction_orchestrator(
         )
 
     return CompactionOrchestrator(
-        strategy=strategy_factory(),
-        implementation=implementation_factory(),
+        strategy=strategy_factory(strategy_options or {}),
+        implementation=implementation_factory(implementation_options or {}),
         context_window_tokens=context_window_tokens,
         summary_max_chars=summary_max_chars,
     )
 
 
-def _build_threshold_v1_strategy() -> CompactionStrategy:
-    return ThresholdV1Strategy()
+def _build_threshold_v1_strategy(options: dict[str, object]) -> CompactionStrategy:
+    return ThresholdV1Strategy(
+        threshold_ratio=_to_float_option(options, "threshold_ratio", 0.2),
+        keep_recent_items=_to_int_option(options, "keep_recent_items", 8),
+        min_replace_items=_to_int_option(options, "min_replace_items", 2),
+    )
 
 
-def _build_local_summary_v1_implementation() -> CompactionImplementation:
-    return LocalSummaryV1Implementation()
+def _build_local_summary_v1_implementation(options: dict[str, object]) -> CompactionImplementation:
+    return LocalSummaryV1Implementation(
+        max_lines=_to_int_option(options, "max_lines", 8),
+        max_line_chars=_to_int_option(options, "max_line_chars", 120),
+    )
 
 
-STRATEGY_REGISTRY: dict[str, Callable[[], CompactionStrategy]] = {
+STRATEGY_REGISTRY: dict[str, Callable[[dict[str, object]], CompactionStrategy]] = {
     DEFAULT_COMPACTION_STRATEGY: _build_threshold_v1_strategy,
 }
-IMPLEMENTATION_REGISTRY: dict[str, Callable[[], CompactionImplementation]] = {
+IMPLEMENTATION_REGISTRY: dict[str, Callable[[dict[str, object]], CompactionImplementation]] = {
     DEFAULT_COMPACTION_IMPLEMENTATION: _build_local_summary_v1_implementation,
 }
 
@@ -255,3 +264,21 @@ def _truncate(text: object, *, max_chars: int) -> str:
     if len(rendered) <= max_chars:
         return rendered
     return f"{rendered[:max_chars]}..."
+
+
+def _to_int_option(options: dict[str, object], key: str, default: int) -> int:
+    value = options.get(key)
+    if isinstance(value, int) and not isinstance(value, bool):
+        return value
+    if isinstance(value, float):
+        return int(value)
+    return default
+
+
+def _to_float_option(options: dict[str, object], key: str, default: float) -> float:
+    value = options.get(key)
+    if isinstance(value, bool):
+        return default
+    if isinstance(value, (int, float)):
+        return float(value)
+    return default

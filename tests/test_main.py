@@ -20,8 +20,15 @@ ABORT_TEXT = "Aborted by user."
 
 
 class _FakeModelClient:
-    def __init__(self, config: Config) -> None:
+    def __init__(self, config: Config, request_observer: Any | None = None) -> None:
+        _ = request_observer
         self.config = config
+
+
+@pytest.fixture(autouse=True)
+def _default_load_config(monkeypatch: pytest.MonkeyPatch, tmp_path: Path) -> None:
+    config = Config(model="test-model", api_key="test-key", cwd=tmp_path)
+    monkeypatch.setattr(main_module, "load_config", lambda: config)
 
 
 def test_main_help_exits_with_usage(capsys: pytest.CaptureFixture[str]) -> None:
@@ -50,7 +57,12 @@ def test_main_missing_prompt_exits_with_parser_error(capsys: pytest.CaptureFixtu
 
 def test_sandbox_flag_default_is_danger_full_access() -> None:
     args = main_module._build_parser().parse_args([])
-    assert args.sandbox == "danger-full-access"
+    assert args.sandbox is None
+
+
+def test_approval_flag_default_is_none() -> None:
+    args = main_module._build_parser().parse_args([])
+    assert args.approval is None
 
 
 def test_sandbox_flag_accepted_values() -> None:
@@ -325,6 +337,46 @@ def test_main_passes_approval_policy_to_run_prompt(
         "prompt": "hello from cli",
         "approval_policy": main_module.ApprovalPolicy.ON_REQUEST,
         "sandbox_policy": main_module.SandboxPolicy.DANGER_FULL_ACCESS,
+    }
+    captured = capsys.readouterr()
+    assert captured.out.strip() == "final-answer"
+
+
+def test_main_uses_config_default_policies_when_flags_omitted(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    config = Config(
+        model="test-model",
+        api_key="test-key",
+        cwd=tmp_path,
+        default_approval_policy=main_module.ApprovalPolicy.ON_REQUEST,
+        default_sandbox_policy=main_module.SandboxPolicy.READ_ONLY,
+    )
+    monkeypatch.setattr(main_module, "load_config", lambda: config)
+    seen: dict[str, object] = {}
+
+    async def fake_run_prompt(
+        prompt: str,
+        *,
+        approval_policy: main_module.ApprovalPolicy,
+        sandbox_policy: main_module.SandboxPolicy,
+    ) -> str:
+        seen["prompt"] = prompt
+        seen["approval_policy"] = approval_policy
+        seen["sandbox_policy"] = sandbox_policy
+        return "final-answer"
+
+    monkeypatch.setattr(main_module, "_run_prompt", fake_run_prompt)
+
+    exit_code = main_module.main(["hello from cli"])
+
+    assert exit_code == 0
+    assert seen == {
+        "prompt": "hello from cli",
+        "approval_policy": main_module.ApprovalPolicy.ON_REQUEST,
+        "sandbox_policy": main_module.SandboxPolicy.READ_ONLY,
     }
     captured = capsys.readouterr()
     assert captured.out.strip() == "final-answer"
