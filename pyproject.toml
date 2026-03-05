@@ -7,6 +7,10 @@ name = "pycodex"
 version = "0.1.0"
 description = "Agentic Python project baseline."
 requires-python = ">=3.11"
+license = {file = "LICENSE"}
+classifiers = [
+  "License :: OSI Approved :: Apache Software License",
+]
 dependencies = [
   "pydantic>=2.0",
   "openai>=1.0",

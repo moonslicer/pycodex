@@ -113,3 +113,7 @@ See [`docs/README.md`](docs/README.md) for where each documentation file lives a
 ## CI
 
 CI is defined in `.github/workflows/ci.yml`. It runs lint/type/test/security checks for Python and TUI, plus optional E2E on pull requests to `main`.
+
+## License
+
+Licensed under Apache License 2.0. See `LICENSE`.
