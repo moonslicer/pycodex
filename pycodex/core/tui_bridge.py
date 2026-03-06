@@ -52,12 +52,13 @@ class TuiBridge:
     tool_router: SupportsToolRouter
     cwd: Path
     emit_event: Callable[[ProtocolEvent], None] | None = None
-    _adapter: EventAdapter = field(default_factory=EventAdapter, init=False)
+    _adapter: EventAdapter = field(init=False)
     _active_turn: asyncio.Task[None] | None = field(default=None, init=False)
     _active_turn_id: str | None = field(default=None, init=False)
     _pending_approvals: dict[str, _PendingApproval] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
+        self._adapter = EventAdapter(thread_id=self.session.thread_id)
         self._emit_protocol_event(self._adapter.start_thread())
 
     async def run(self, *, reader: SupportsLineReader | None = None) -> None:
