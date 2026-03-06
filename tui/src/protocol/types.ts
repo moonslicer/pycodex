@@ -83,6 +83,45 @@ export type ApprovalRequestedEvent = {
   preview: string;
 };
 
+export type SessionSummaryItem = {
+  thread_id: string;
+  status: "closed" | "incomplete";
+  turn_count: number;
+  token_total: number;
+  last_user_message: string | null;
+  date: string;
+};
+
+export type SessionListedEvent = {
+  type: "session.listed";
+  sessions: SessionSummaryItem[];
+};
+
+export type SessionStatusEvent = {
+  type: "session.status";
+  thread_id: string;
+  turn_count: number;
+  input_tokens: number;
+  output_tokens: number;
+};
+
+export type SlashUnknownEvent = {
+  type: "slash.unknown";
+  command: string;
+};
+
+export type SlashBlockedEvent = {
+  type: "slash.blocked";
+  command: string;
+  reason: "active_turn";
+};
+
+export type SessionErrorEvent = {
+  type: "session.error";
+  operation: "resume" | "new" | "list";
+  message: string;
+};
+
 export type ProtocolEvent =
   | ThreadStartedEvent
   | TurnStartedEvent
@@ -92,7 +131,12 @@ export type ProtocolEvent =
   | ItemStartedEvent
   | ItemCompletedEvent
   | ItemUpdatedEvent
-  | ApprovalRequestedEvent;
+  | ApprovalRequestedEvent
+  | SessionListedEvent
+  | SessionStatusEvent
+  | SlashUnknownEvent
+  | SlashBlockedEvent
+  | SessionErrorEvent;
 
 export type ApprovalDecision =
   | "approved"
@@ -118,7 +162,21 @@ export type InterruptCommand = {
   params: Record<string, never>;
 };
 
+export type SessionResumeCommand = {
+  jsonrpc: "2.0";
+  method: "session.resume";
+  params: { thread_id: string };
+};
+
+export type SessionNewCommand = {
+  jsonrpc: "2.0";
+  method: "session.new";
+  params: Record<string, never>;
+};
+
 export type Command =
   | UserInputCommand
   | ApprovalResponseCommand
-  | InterruptCommand;
+  | InterruptCommand
+  | SessionResumeCommand
+  | SessionNewCommand;
