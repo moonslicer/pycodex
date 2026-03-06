@@ -120,6 +120,57 @@ class ApprovalRequested(_FrozenModel):
     preview: str
 
 
+class SessionSummary(_FrozenModel):
+    """Session row payload used in session.listed events."""
+
+    thread_id: str
+    status: Literal["closed", "incomplete"]
+    turn_count: StrictInt
+    token_total: StrictInt
+    last_user_message: str | None
+    date: str
+
+
+class SessionListed(_FrozenModel):
+    """Event emitted when available sessions are listed for resume."""
+
+    type: Literal["session.listed"] = "session.listed"
+    sessions: list[SessionSummary]
+
+
+class SessionStatus(_FrozenModel):
+    """Event emitted when the current session status is requested."""
+
+    type: Literal["session.status"] = "session.status"
+    thread_id: str
+    turn_count: StrictInt
+    input_tokens: StrictInt
+    output_tokens: StrictInt
+
+
+class SlashUnknown(_FrozenModel):
+    """Event emitted when a slash command is not recognized."""
+
+    type: Literal["slash.unknown"] = "slash.unknown"
+    command: str
+
+
+class SlashBlocked(_FrozenModel):
+    """Event emitted when a slash command cannot run in current state."""
+
+    type: Literal["slash.blocked"] = "slash.blocked"
+    command: str
+    reason: Literal["active_turn"]
+
+
+class SessionError(_FrozenModel):
+    """Event emitted when session/list/new/resume handlers fail."""
+
+    type: Literal["session.error"] = "session.error"
+    operation: Literal["resume", "new", "list"]
+    message: str
+
+
 ProtocolEvent: TypeAlias = Annotated[
     ThreadStarted
     | TurnStarted
@@ -129,6 +180,11 @@ ProtocolEvent: TypeAlias = Annotated[
     | ItemStarted
     | ItemCompleted
     | ItemUpdated
-    | ApprovalRequested,
+    | ApprovalRequested
+    | SessionListed
+    | SessionStatus
+    | SlashUnknown
+    | SlashBlocked
+    | SessionError,
     Field(discriminator="type"),
 ]
