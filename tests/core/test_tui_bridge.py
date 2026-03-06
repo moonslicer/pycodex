@@ -11,6 +11,7 @@ from pycodex.approval.policy import ReviewDecision
 from pycodex.core.agent import TurnCompleted, TurnStarted
 from pycodex.core.config import Config
 from pycodex.core.session import Session
+from pycodex.core.session_store import SessionSummaryRecord
 from pycodex.core.tui_bridge import TuiBridge
 
 ABORT_TEXT = "Aborted by user."
@@ -166,6 +167,124 @@ def test_user_input_command_starts_turn(
         "turn.started",
         "turn.completed",
     ]
+
+
+def test_slash_status_emits_session_status(tmp_path: Path) -> None:
+    events: list[Any] = []
+    bridge = _new_bridge(tmp_path, events)
+    bridge.session.mark_turn_completed()
+    bridge.session.record_turn_usage({"input_tokens": 12, "output_tokens": 7})
+
+    asyncio.run(bridge._handle_line(_user_input_line("/status")))
+
+    assert _event_types(events) == ["thread.started", "session.status"]
+    status_event = events[-1]
+    assert status_event.thread_id == bridge.session.thread_id
+    assert status_event.turn_count == 1
+    assert status_event.input_tokens == 12
+    assert status_event.output_tokens == 7
+
+
+def test_slash_resume_emits_filtered_session_list(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    events: list[Any] = []
+    bridge = _new_bridge(tmp_path, events)
+    current_thread_id = bridge.session.thread_id
+    monkeypatch.setattr(
+        tui_bridge_module,
+        "list_sessions",
+        lambda *, config, limit: [
+            SessionSummaryRecord(
+                thread_id=current_thread_id,
+                status="closed",
+                turn_count=1,
+                token_total=2,
+                last_user_message="current",
+                date="20260101",
+            ),
+            SessionSummaryRecord(
+                thread_id="other-thread",
+                status="incomplete",
+                turn_count=3,
+                token_total=9,
+                last_user_message="other",
+                date="20260102",
+            ),
+        ],
+    )
+
+    asyncio.run(bridge._handle_line(_user_input_line("/resume")))
+
+    assert _event_types(events) == ["thread.started", "session.listed"]
+    listed_event = events[-1]
+    assert len(listed_event.sessions) == 1
+    assert listed_event.sessions[0].thread_id == "other-thread"
+    assert listed_event.sessions[0].status == "incomplete"
+
+
+def test_slash_resume_blocked_when_turn_is_active(tmp_path: Path) -> None:
+    events: list[Any] = []
+
+    async def scenario() -> None:
+        bridge = _new_bridge(tmp_path, events)
+        blocker = asyncio.Event()
+        bridge._active_turn = asyncio.create_task(blocker.wait())
+        await bridge._handle_line(_user_input_line("/resume"))
+        bridge._active_turn.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await bridge._active_turn
+
+    asyncio.run(scenario())
+
+    assert _event_types(events) == ["thread.started", "slash.blocked"]
+    blocked_event = events[-1]
+    assert blocked_event.command == "resume"
+    assert blocked_event.reason == "active_turn"
+
+
+def test_slash_new_emits_new_thread_started(tmp_path: Path) -> None:
+    events: list[Any] = []
+    bridge = _new_bridge(tmp_path, events)
+    old_thread_id = bridge.session.thread_id
+
+    asyncio.run(bridge._handle_line(_user_input_line("/new")))
+
+    assert _event_types(events) == ["thread.started", "thread.started"]
+    new_thread_event = events[-1]
+    assert new_thread_event.thread_id != old_thread_id
+    assert bridge.session.thread_id == new_thread_event.thread_id
+
+
+def test_slash_new_blocked_when_turn_is_active(tmp_path: Path) -> None:
+    events: list[Any] = []
+
+    async def scenario() -> None:
+        bridge = _new_bridge(tmp_path, events)
+        blocker = asyncio.Event()
+        bridge._active_turn = asyncio.create_task(blocker.wait())
+        await bridge._handle_line(_user_input_line("/new"))
+        bridge._active_turn.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await bridge._active_turn
+
+    asyncio.run(scenario())
+
+    assert _event_types(events) == ["thread.started", "slash.blocked"]
+    blocked_event = events[-1]
+    assert blocked_event.command == "new"
+    assert blocked_event.reason == "active_turn"
+
+
+def test_unknown_slash_command_emits_slash_unknown(tmp_path: Path) -> None:
+    events: list[Any] = []
+    bridge = _new_bridge(tmp_path, events)
+
+    asyncio.run(bridge._handle_line(_user_input_line("/nope")))
+
+    assert _event_types(events) == ["thread.started", "slash.unknown"]
+    assert events[-1].command == "nope"
 
 
 def test_interrupt_cancels_active_turn(
