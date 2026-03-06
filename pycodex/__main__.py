@@ -36,6 +36,7 @@ from pycodex.core.rollout_replay import (
     import_legacy_session_json,
     replay_rollout,
 )
+from pycodex.core.rollout_schema import SessionClosed, validate_rollout_item
 from pycodex.core.session import Session
 from pycodex.core.tui_bridge import TuiBridge
 from pycodex.protocol.events import ProtocolEvent
@@ -251,8 +252,10 @@ async def _build_session(*, config: Config, resume: str | None) -> Session:
         cumulative_usage=replay_state.cumulative_usage,
         turn_count=replay_state.turn_count,
     )
-    _configure_rollout_persistence(session, config=config, resume_path=rollout_path)
-    session.mark_rollout_meta_written()
+    session.configure_rollout_recorder(
+        recorder=RolloutRecorder(path=rollout_path),
+        path=rollout_path,
+    )
     return session
 
 
@@ -267,10 +270,9 @@ def _configure_rollout_persistence(
     session: Session,
     *,
     config: Config,
-    resume_path: Path | None = None,
 ) -> None:
     sessions_root = _resolve_sessions_root(config)
-    path = resume_path or build_rollout_path(session.thread_id, root=sessions_root)
+    path = build_rollout_path(session.thread_id, root=sessions_root)
     session.configure_rollout_recorder(
         recorder=RolloutRecorder(path=path),
         path=path,
@@ -283,6 +285,10 @@ def _resolve_sessions_root(config: Config) -> Path:
         return preferred
     fallback = config.cwd / ".pycodex" / "sessions"
     _ensure_directory(fallback)
+    sys.stderr.write(
+        f"[WARNING] Could not create sessions directory {preferred}; "
+        f"using fallback {fallback}\n"
+    )
     return fallback
 
 
@@ -292,6 +298,10 @@ def _resolve_archived_sessions_root(config: Config) -> Path:
         return preferred
     fallback = config.cwd / ".pycodex" / "archived_sessions"
     _ensure_directory(fallback)
+    sys.stderr.write(
+        f"[WARNING] Could not create archived sessions directory {preferred}; "
+        f"using fallback {fallback}\n"
+    )
     return fallback
 
 
@@ -631,19 +641,85 @@ def _run_session_command(
     return 1
 
 
+def _read_session_closed(path: Path) -> SessionClosed | None:
+    """Read only the last line of a rollout file and return a SessionClosed record if present.
+
+    This is a best-effort fast path for closed sessions so that ``_session_list``
+    avoids a full replay when the session already has a closing summary record.
+    Returns ``None`` on any parse / validation error or if the last record is not
+    a ``SessionClosed``.
+    """
+    try:
+        with path.open("rb") as f:
+            f.seek(0, 2)
+            end = f.tell()
+            if end == 0:
+                return None
+
+            # Chunk-based backward scan to find the last non-empty line.
+            chunk_size = 4096
+            buf = b""
+            pos = end
+            line_start = -1
+            line_end = -1
+            while pos > 0:
+                read_size = min(chunk_size, pos)
+                pos -= read_size
+                f.seek(pos)
+                chunk = f.read(read_size)
+                buf = chunk + buf
+                # Search buf from the right for line boundaries.
+                # buf covers bytes [pos, pos+len(buf)) within the file.
+                if line_end == -1:
+                    # Skip trailing newlines to find end of last line.
+                    stripped = buf.rstrip(b"\r\n")
+                    if not stripped:
+                        continue
+                    line_end = pos + len(stripped)
+                # Find the newline before the last line.
+                nl = buf.rfind(b"\n", 0, line_end - pos)
+                if nl == -1:
+                    nl = buf.rfind(b"\r", 0, line_end - pos)
+                if nl != -1:
+                    line_start = pos + nl + 1
+                    break
+            if line_end == -1:
+                return None
+            if line_start == -1:
+                line_start = 0
+            f.seek(line_start)
+            last_line = f.read(line_end - line_start).decode("utf-8")
+        parsed = json.loads(last_line)
+        item = validate_rollout_item(parsed)
+        if isinstance(item, SessionClosed):
+            return item
+        return None
+    except Exception:
+        return None
+
+
 def _session_list(*, sessions_root: Path) -> int:
     rollout_paths = sorted(
         sessions_root.glob("rollout-*.jsonl"), key=lambda p: p.name, reverse=True
     )
     for path in rollout_paths:
-        state = replay_rollout(path)
-        token_total = (
-            state.cumulative_usage["input_tokens"] + state.cumulative_usage["output_tokens"]
-        )
         date_token = _rollout_date_token(path.name)
-        print(
-            f"{state.thread_id}\t{date_token}\tturns={state.turn_count}\ttokens={token_total}\tstatus={state.status}"
-        )
+        session_closed = _read_session_closed(path)
+        if session_closed is not None:
+            token_total = (
+                session_closed.token_total.input_tokens + session_closed.token_total.output_tokens
+            )
+            print(
+                f"{session_closed.thread_id}\t{date_token}\tturns={session_closed.turn_count}\ttokens={token_total}\tstatus=closed"
+            )
+        else:
+            state = replay_rollout(path)
+            token_total = (
+                state.cumulative_usage["input_tokens"] + state.cumulative_usage["output_tokens"]
+            )
+            print(
+                f"{state.thread_id}\t{date_token}\tturns={state.turn_count}\ttokens={token_total}\tstatus={state.status}"
+            )
     return 0
 
 

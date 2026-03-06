@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import json
 import os
 import re
 from collections.abc import Sequence
@@ -91,6 +92,7 @@ class RolloutRecorder:
     """Queue-backed single-writer JSONL recorder for one session."""
 
     path: Path
+    flush_timeout: float = 30.0
     _queue: asyncio.Queue[_QueueItem] = field(init=False, default_factory=asyncio.Queue)
     _worker_task: asyncio.Task[None] | None = None
     _closed: bool = False
@@ -120,7 +122,16 @@ class RolloutRecorder:
         self._ensure_worker()
         future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         await self._queue.put(_FlushRequest(future=future))
-        await future
+        try:
+            await asyncio.wait_for(asyncio.shield(future), timeout=self.flush_timeout)
+        except TimeoutError:
+            self._closed = True
+            if self._worker_task is not None:
+                self._worker_task.cancel()
+            raise RuntimeError(
+                f"Rollout flush timed out after {self.flush_timeout}s — "
+                "possible disk stall or worker deadlock."
+            ) from None
 
     async def shutdown(self) -> None:
         """Flush all pending records and stop the writer task."""
@@ -133,7 +144,16 @@ class RolloutRecorder:
         self._ensure_worker()
         future: asyncio.Future[None] = asyncio.get_running_loop().create_future()
         await self._queue.put(_ShutdownRequest(future=future))
-        await future
+        try:
+            await asyncio.wait_for(asyncio.shield(future), timeout=self.flush_timeout)
+        except TimeoutError:
+            self._closed = True
+            if self._worker_task is not None:
+                self._worker_task.cancel()
+            raise RuntimeError(
+                f"Rollout shutdown timed out after {self.flush_timeout}s — "
+                "possible disk stall or worker deadlock."
+            ) from None
         task = self._worker_task
         if task is not None:
             await task
@@ -147,6 +167,7 @@ class RolloutRecorder:
 
     async def _run_worker(self) -> None:
         try:
+            _guard_newline_boundary(self.path)
             with self.path.open("a", encoding="utf-8") as handle:
                 while True:
                     request = await self._queue.get()
@@ -163,6 +184,10 @@ class RolloutRecorder:
                     finally:
                         self._queue.task_done()
         except Exception as exc:  # pragma: no cover - defensive boundary
+            # Set _closed before _fail_pending_waiters so any concurrent record()/
+            # flush()/shutdown() calls that pass the _worker_error guard will hit
+            # the _closed guard instead and not enqueue new items after the drain.
+            self._closed = True
             self._worker_error = exc
             await self._fail_pending_waiters(exc)
             raise
@@ -183,6 +208,68 @@ class RolloutRecorder:
         for item in items:
             handle.write(item.model_dump_json())
             handle.write("\n")
+
+
+def _guard_newline_boundary(path: Path) -> None:
+    """Ensure EOF has a safe line boundary before appending JSONL records.
+
+    If the last line is a complete JSON object but just missing ``\\n``, append
+    the newline to preserve that record. If the tail is partial/invalid JSON,
+    truncate back to the last newline boundary so future appends remain replayable.
+    """
+    try:
+        size = path.stat().st_size
+    except FileNotFoundError:
+        return
+    if size == 0:
+        return
+
+    with path.open("rb") as f:
+        f.seek(-1, 2)
+        if f.read(1) == b"\n":
+            return
+
+    boundary = _last_newline_boundary(path=path, size=size)
+    with path.open("rb") as f:
+        f.seek(boundary)
+        tail = f.read()
+
+    if _is_complete_json_object_line(tail):
+        with path.open("ab") as f:
+            f.write(b"\n")
+        return
+
+    with path.open("r+b") as f:
+        f.truncate(boundary)
+
+
+def _last_newline_boundary(*, path: Path, size: int) -> int:
+    chunk_size = 4096
+    pos = size
+    with path.open("rb") as f:
+        while pos > 0:
+            read_size = min(chunk_size, pos)
+            pos -= read_size
+            f.seek(pos)
+            chunk = f.read(read_size)
+            newline_offset = chunk.rfind(b"\n")
+            if newline_offset != -1:
+                return pos + newline_offset + 1
+    return 0
+
+
+def _is_complete_json_object_line(raw_tail: bytes) -> bool:
+    try:
+        decoded = raw_tail.decode("utf-8").strip()
+    except UnicodeDecodeError:
+        return False
+    if not decoded:
+        return False
+    try:
+        payload = json.loads(decoded)
+    except json.JSONDecodeError:
+        return False
+    return isinstance(payload, dict)
 
 
 def _flush_handle(handle: TextIO) -> None:
