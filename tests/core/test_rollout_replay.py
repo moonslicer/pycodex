@@ -145,3 +145,25 @@ def test_replay_rollout_returns_not_found_error_when_missing_path(tmp_path: Path
         replay_rollout(path)
 
     assert exc_info.value.code == "rollout_not_found"
+
+
+def test_replay_rollout_skips_malformed_history_item_with_warning(tmp_path: Path) -> None:
+    path = tmp_path / "rollout.jsonl"
+    records = _build_rollout_records()
+    # Insert a history.item whose inner dict has neither 'role' nor 'type=function_call'
+    records.insert(
+        1,
+        {
+            "schema_version": SCHEMA_VERSION,
+            "type": "history.item",
+            "thread_id": "thread_123",
+            "item": {"garbage": True},
+        },
+    )
+    _write_jsonl(path, records)
+
+    state = replay_rollout(path)
+
+    assert any("malformed history item" in w for w in state.warnings)
+    # The malformed item must not appear in reconstructed history
+    assert all("garbage" not in str(h) for h in state.history)

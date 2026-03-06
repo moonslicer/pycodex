@@ -1,5 +1,11 @@
 from __future__ import annotations
 
+from unittest.mock import AsyncMock, patch
+
+import pytest
+
+from pycodex.core.config import Config
+from pycodex.core.rollout_recorder import RolloutRecorder, build_rollout_path
 from pycodex.core.session import MAX_TOOL_RESULT_CHARS, Session
 
 
@@ -139,6 +145,43 @@ def test_prepend_items_places_items_before_existing_history() -> None:
         {"role": "system", "content": "project docs"},
         {"role": "user", "content": "user message"},
     ]
+
+
+@pytest.mark.asyncio
+async def test_session_context_manager_closes_rollout_on_exit(tmp_path):
+    config = Config(model="gpt-4.1-mini", api_key="test", cwd=tmp_path)
+    session = Session(config=config)
+    path = build_rollout_path(session.thread_id, root=tmp_path)
+    session.configure_rollout_recorder(recorder=RolloutRecorder(path=path), path=path)
+
+    async with session:
+        pass
+
+    assert session._rollout_closed is True
+
+
+@pytest.mark.asyncio
+async def test_session_context_manager_does_not_mask_body_exception(tmp_path):
+    config = Config(model="gpt-4.1-mini", api_key="test", cwd=tmp_path)
+    session = Session(config=config)
+
+    mock = AsyncMock(side_effect=RuntimeError("cleanup error"))
+    with patch.object(Session, "close_rollout", mock):
+        with pytest.raises(ValueError, match="body error"):
+            async with session:
+                raise ValueError("body error")
+
+
+@pytest.mark.asyncio
+async def test_session_context_manager_propagates_cleanup_error_when_body_succeeds(tmp_path):
+    config = Config(model="gpt-4.1-mini", api_key="test", cwd=tmp_path)
+    session = Session(config=config)
+
+    mock = AsyncMock(side_effect=RuntimeError("cleanup error"))
+    with patch.object(Session, "close_rollout", mock):
+        with pytest.raises(RuntimeError, match="cleanup error"):
+            async with session:
+                pass
 
 
 def test_append_tool_result_truncates_oversized_content() -> None:

@@ -127,3 +127,38 @@ def test_validate_rollout_item_requires_schema_version() -> None:
 
     with pytest.raises(ValidationError):
         validate_rollout_item(item)
+
+
+def test_session_meta_accepts_valid_iso_timestamp() -> None:
+    item = SessionMeta(
+        schema_version=SCHEMA_VERSION,
+        thread_id="thread_123",
+        profile="codex",
+        model="gpt-4.1-mini",
+        cwd="/tmp/project",
+        opened_at="2026-03-05T14:30:22Z",
+    )
+    assert item.opened_at == "2026-03-05T14:30:22Z"
+
+
+def test_session_meta_rejects_invalid_opened_at() -> None:
+    with pytest.raises(ValidationError, match="opened_at"):
+        SessionMeta(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            profile="codex",
+            model="gpt-4.1-mini",
+            cwd="/tmp/project",
+            opened_at="not-a-date",
+        )
+
+
+def test_session_closed_rejects_invalid_closed_at() -> None:
+    with pytest.raises(ValidationError, match="closed_at"):
+        SessionClosed(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            closed_at="not-a-date",
+            turn_count=1,
+            token_total=TokenUsage(input_tokens=10, output_tokens=4),
+        )

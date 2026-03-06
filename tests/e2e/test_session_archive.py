@@ -61,3 +61,29 @@ def test_session_archive_and_unarchive_roundtrip(
     read_output = capsys.readouterr().out.strip()
     summary = json.loads(read_output)
     assert summary["thread_id"] == thread_id
+
+
+def test_session_list_output_format(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    monkeypatch.setenv("PYCODEX_FAKE_MODEL", "1")
+    monkeypatch.setattr(main_module, "default_sessions_root", lambda: tmp_path / "sessions")
+    monkeypatch.setattr(
+        main_module, "default_archived_sessions_root", lambda: tmp_path / "archived"
+    )
+    config = Config(model="test-model", api_key="test-key", cwd=tmp_path)
+    monkeypatch.setattr(main_module, "load_config", lambda: config)
+
+    run_exit = main_module.main(["some prompt"])
+    assert run_exit == 0
+    capsys.readouterr()
+
+    list_exit = main_module.main(["session", "list"])
+    assert list_exit == 0
+    list_output = capsys.readouterr().out
+
+    assert "turns=" in list_output
+    assert "tokens=" in list_output
+    assert "status=closed" in list_output

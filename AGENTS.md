@@ -32,7 +32,8 @@ This file defines repo-level operating rules for coding agents.
 2. Plan smallest safe change with acceptance criteria.
 3. Implement in focused units.
 4. Verify with matching quality gates.
-5. Report what changed, evidence, and residual risks.
+5. **Re-read every modified file in full, top to bottom** — treat this as a separate review pass, not a glance at the diff. Tests passing is necessary but not sufficient. Explicitly check: (a) dead code or parameters introduced by the fix, (b) duplicated logic that should be extracted, (c) every error path cleans up state correctly, (d) implementation matches the design intent of the fix.
+6. Report what changed, evidence, and residual risks.
 - If blocked, try one alternative, then report blocker with options.
 - Max two attempts on the same failure.
 

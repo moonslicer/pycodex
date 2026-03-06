@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import logging
 from collections import deque
 from collections.abc import Sequence
 from dataclasses import dataclass, field
@@ -14,6 +15,8 @@ from uuid import uuid4
 from pycodex.core.config import Config
 from pycodex.core.rollout_recorder import RolloutRecorder
 from pycodex.core.rollout_schema import RolloutItem, SessionClosed, TokenUsage
+
+_log = logging.getLogger(__name__)
 
 MAX_TOOL_RESULT_CHARS = 200_000
 _MISSING_TOOL_OUTPUT_PLACEHOLDER = "aborted"
@@ -279,6 +282,17 @@ class Session:
         )
         await recorder.shutdown()
         self._rollout_closed = True
+
+    async def __aenter__(self) -> "Session":
+        return self
+
+    async def __aexit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:
+        try:
+            await self.close_rollout()
+        except Exception as cleanup_exc:
+            if exc_type is None:
+                raise
+            _log.warning("close_rollout() failed during context manager exit: %s", cleanup_exc)
 
     def cumulative_usage(self) -> TokenUsageCounts:
         """Return cumulative usage totals for the session."""

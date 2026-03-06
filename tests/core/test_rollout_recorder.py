@@ -1,6 +1,8 @@
 from __future__ import annotations
 
+import asyncio
 import json
+import os
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any
@@ -165,6 +167,96 @@ async def test_rollout_recorder_shutdown_is_idempotent(tmp_path: Path) -> None:
 
 
 @pytest.mark.asyncio
+async def test_rollout_recorder_shutdown_is_idempotent_after_writes(tmp_path: Path) -> None:
+    path = tmp_path / "sessions" / "rollout-20260302-120105120000-thread_123.jsonl"
+    recorder = RolloutRecorder(path=path)
+    await recorder.record(
+        [
+            HistoryItem(
+                schema_version=SCHEMA_VERSION,
+                thread_id="thread_123",
+                item={"role": "user", "content": "hello"},
+            )
+        ]
+    )
+    await recorder.shutdown()
+    content_after_first = path.read_text(encoding="utf-8")
+
+    await recorder.shutdown()
+
+    assert path.read_text(encoding="utf-8") == content_after_first
+
+
+@pytest.mark.asyncio
+async def test_rollout_recorder_record_raises_after_shutdown(tmp_path: Path) -> None:
+    path = tmp_path / "sessions" / "rollout-20260302-120105120000-thread_123.jsonl"
+    recorder = RolloutRecorder(path=path)
+    await recorder.shutdown()
+
+    with pytest.raises(RuntimeError, match="already closed"):
+        await recorder.record(
+            [
+                HistoryItem(
+                    schema_version=SCHEMA_VERSION,
+                    thread_id="thread_123",
+                    item={"role": "user", "content": "late"},
+                )
+            ]
+        )
+
+
+@pytest.mark.asyncio
+async def test_rollout_recorder_flush_is_noop_after_shutdown(tmp_path: Path) -> None:
+    path = tmp_path / "sessions" / "rollout-20260302-120105120000-thread_123.jsonl"
+    recorder = RolloutRecorder(path=path)
+    await recorder.shutdown()
+    # flush() after shutdown is a no-op — should not raise
+    await recorder.flush()
+
+
+@pytest.mark.asyncio
+async def test_rollout_recorder_preserves_valid_unterminated_last_line(tmp_path: Path) -> None:
+    path = tmp_path / "sessions" / "rollout-20260302-120105120000-thread_123.jsonl"
+    path.parent.mkdir(parents=True, exist_ok=True)
+    first = {
+        "schema_version": SCHEMA_VERSION,
+        "type": "history.item",
+        "thread_id": "thread_123",
+        "item": {"role": "user", "content": "first"},
+    }
+    # Simulate a crash after writing valid JSON but before writing trailing newline.
+    path.write_text(json.dumps(first, ensure_ascii=True), encoding="utf-8")
+
+    recorder = RolloutRecorder(path=path)
+    await recorder.record(
+        [
+            HistoryItem(
+                schema_version=SCHEMA_VERSION,
+                thread_id="thread_123",
+                item={"role": "user", "content": "second"},
+            )
+        ]
+    )
+    await recorder.shutdown()
+
+    lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(lines) == 2
+    parsed = [json.loads(line) for line in lines]
+    assert parsed[0] == first
+    assert parsed[1]["item"]["content"] == "second"
+
+
+def test_rollout_recorder_flush_timeout_field_has_default() -> None:
+    recorder = RolloutRecorder(path=Path(os.devnull))
+    assert recorder.flush_timeout == 30.0
+
+
+def test_rollout_recorder_flush_timeout_field_is_configurable() -> None:
+    recorder = RolloutRecorder(path=Path(os.devnull), flush_timeout=5.0)
+    assert recorder.flush_timeout == 5.0
+
+
+@pytest.mark.asyncio
 async def test_rollout_write_points_persist_meta_history_turn_and_close(tmp_path: Path) -> None:
     config = Config(model="gpt-4.1-mini", api_key="test", cwd=tmp_path)
     session = Session(config=config, thread_id="thread_123")
@@ -265,3 +357,29 @@ async def test_rollout_write_points_include_compaction_applied_record(tmp_path: 
     assert len(compaction_records) == 1
     assert compaction_records[0]["strategy"] == "threshold_v1"
     assert compaction_records[0]["implementation"] == "local_summary_v1"
+
+
+@pytest.mark.asyncio
+async def test_rollout_recorder_concurrent_records_do_not_interleave(tmp_path: Path) -> None:
+    path = tmp_path / "sessions" / "rollout.jsonl"
+    recorder = RolloutRecorder(path=path)
+
+    # Fire 50 concurrent record() calls — each with one item
+    items = [
+        HistoryItem(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            item={"role": "user", "content": f"msg-{i}"},
+        )
+        for i in range(50)
+    ]
+    await asyncio.gather(*[recorder.record([item]) for item in items])
+    await recorder.shutdown()
+
+    lines = [line for line in path.read_text(encoding="utf-8").splitlines() if line.strip()]
+    assert len(lines) == 50
+    # Every line must be valid JSON — no interleaving would corrupt JSON
+    parsed = [json.loads(line) for line in lines]
+    assert all(p["type"] == "history.item" for p in parsed)
+    contents = {json.loads(line)["item"]["content"] for line in lines}
+    assert contents == {f"msg-{i}" for i in range(50)}

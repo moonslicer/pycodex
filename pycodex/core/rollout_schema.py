@@ -2,9 +2,10 @@
 
 from __future__ import annotations
 
+from datetime import datetime
 from typing import Annotated, Any, Literal, TypeAlias
 
-from pydantic import BaseModel, ConfigDict, Field, StrictInt, TypeAdapter
+from pydantic import BaseModel, ConfigDict, Field, StrictInt, TypeAdapter, field_validator
 
 SCHEMA_VERSION: Literal["1.0"] = "1.0"
 
@@ -29,6 +30,18 @@ class UsageSnapshot(_FrozenModel):
     cumulative: TokenUsage
 
 
+def _validate_iso_timestamp(field_name: str, v: object) -> object:
+    if isinstance(v, str):
+        normalized = v.replace("Z", "+00:00") if v.endswith("Z") else v
+        try:
+            datetime.fromisoformat(normalized)
+        except ValueError:
+            raise ValueError(
+                f"{field_name} must be a valid ISO 8601 timestamp, got: {v!r}"
+            )
+    return v
+
+
 class SessionMeta(_FrozenModel):
     """Session-open metadata written once at rollout creation."""
 
@@ -40,6 +53,11 @@ class SessionMeta(_FrozenModel):
     cwd: str
     opened_at: str
     import_source: str | None = None
+
+    @field_validator("opened_at", mode="before")
+    @classmethod
+    def _validate_opened_at(cls, v: object) -> object:
+        return _validate_iso_timestamp("opened_at", v)
 
 
 class HistoryItem(_FrozenModel):
@@ -85,6 +103,11 @@ class SessionClosed(_FrozenModel):
     last_user_message: str | None = None
     turn_count: StrictInt
     token_total: TokenUsage
+
+    @field_validator("closed_at", mode="before")
+    @classmethod
+    def _validate_closed_at(cls, v: object) -> object:
+        return _validate_iso_timestamp("closed_at", v)
 
 
 RolloutItem: TypeAlias = Annotated[

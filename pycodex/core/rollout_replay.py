@@ -237,7 +237,11 @@ def _apply_rollout_item(
     state_warnings: list[str],
 ) -> None:
     if isinstance(item, HistoryItem):
-        history.append(cast(PromptItem, item.item))
+        raw = item.item
+        if isinstance(raw, dict) and ("role" in raw or raw.get("type") == "function_call"):
+            history.append(cast(PromptItem, raw))
+        else:
+            state_warnings.append("ignored malformed history item: missing role/type")
         return
 
     item_type = item.type
@@ -247,8 +251,11 @@ def _apply_rollout_item(
         cumulative_usage["input_tokens"] = int(cumulative.input_tokens)
         cumulative_usage["output_tokens"] = int(cumulative.output_tokens)
     elif item_type == "compaction.applied":
-        # Compaction metadata is replay-safe but does not mutate history directly.
-        _ = state_warnings
+        # Compaction is already reflected in the history.item records written after it —
+        # those records represent the post-compaction state. The compaction.applied record
+        # carries audit metadata (strategy, summary text) only and does not need to mutate
+        # history during replay.
+        pass
     elif item_type in {"session.meta", "session.closed"}:
         return
 
