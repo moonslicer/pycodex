@@ -12,6 +12,17 @@ from pycodex.core.agent import ToolCallDispatched, ToolResultReceived, TurnCompl
 from pycodex.core.agent_profile import CODEX_PROFILE, AgentProfile
 from pycodex.core.config import Config
 from pycodex.core.fake_model_client import FakeModelClient
+from pycodex.core.rollout_schema import (
+    SCHEMA_VERSION,
+    HistoryItem,
+    SessionClosed,
+    SessionMeta,
+    TokenUsage,
+    UsageSnapshot,
+)
+from pycodex.core.rollout_schema import (
+    TurnCompleted as RolloutTurnCompleted,
+)
 from pycodex.core.session import Session
 
 pytestmark = pytest.mark.integration
@@ -23,6 +34,65 @@ class _FakeModelClient:
     def __init__(self, config: Config, request_observer: Any | None = None) -> None:
         _ = request_observer
         self.config = config
+
+
+def _write_rollout(path: Path, items: list[Any]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    path.write_text("\n".join(item.model_dump_json() for item in items) + "\n", encoding="utf-8")
+
+
+def _session_meta(thread_id: str) -> SessionMeta:
+    return SessionMeta(
+        schema_version=SCHEMA_VERSION,
+        thread_id=thread_id,
+        profile="test",
+        model="test-model",
+        cwd="/workspace",
+        opened_at="2026-01-01T00:00:00Z",
+    )
+
+
+def _session_closed(
+    *,
+    thread_id: str,
+    turn_count: int,
+    input_tokens: int,
+    output_tokens: int,
+    last_user_message: str | None,
+) -> SessionClosed:
+    return SessionClosed(
+        schema_version=SCHEMA_VERSION,
+        thread_id=thread_id,
+        closed_at="2026-01-01T00:01:00Z",
+        last_user_message=last_user_message,
+        turn_count=turn_count,
+        token_total=TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens),
+    )
+
+
+def _incomplete_rollout(
+    *,
+    thread_id: str,
+    user_message: str,
+    input_tokens: int,
+    output_tokens: int,
+) -> list[Any]:
+    return [
+        _session_meta(thread_id),
+        HistoryItem(
+            schema_version=SCHEMA_VERSION,
+            thread_id=thread_id,
+            item={"role": "user", "content": user_message},
+        ),
+        RolloutTurnCompleted(
+            schema_version=SCHEMA_VERSION,
+            thread_id=thread_id,
+            usage=UsageSnapshot(
+                turn=TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens),
+                cumulative=TokenUsage(input_tokens=input_tokens, output_tokens=output_tokens),
+            ),
+        ),
+    ]
 
 
 @pytest.fixture(autouse=True)
@@ -231,6 +301,134 @@ def test_tui_mode_top_level_exception_reports_stderr(
     captured = capsys.readouterr()
     assert captured.out == ""
     assert captured.err.strip() == "[ERROR] RuntimeError"
+
+
+def test_session_list_command_works_after_session_store_extraction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    sessions_root = tmp_path / "sessions"
+    archived_root = tmp_path / "archived"
+    _write_rollout(
+        sessions_root / "rollout-20260101-000000000000-thread-a.jsonl",
+        [
+            _session_meta("thread-a"),
+            _session_closed(
+                thread_id="thread-a",
+                turn_count=2,
+                input_tokens=3,
+                output_tokens=4,
+                last_user_message="hello",
+            ),
+        ],
+    )
+    _write_rollout(
+        sessions_root / "rollout-20260102-000000000000-thread-b.jsonl",
+        _incomplete_rollout(
+            thread_id="thread-b",
+            user_message="pending",
+            input_tokens=10,
+            output_tokens=6,
+        ),
+    )
+    monkeypatch.setattr(main_module, "_resolve_sessions_root", lambda _config: sessions_root)
+    monkeypatch.setattr(
+        main_module,
+        "_resolve_archived_sessions_root",
+        lambda _config: archived_root,
+    )
+
+    exit_code = main_module.main(["session", "list"])
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    lines = captured.out.strip().splitlines()
+    assert len(lines) == 2
+    assert lines[0].startswith("thread-b\t20260102\t")
+    assert "status=incomplete" in lines[0]
+    assert lines[1].startswith("thread-a\t20260101\t")
+    assert "status=closed" in lines[1]
+
+
+def test_session_read_command_works_after_session_store_extraction(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+    capsys: pytest.CaptureFixture[str],
+) -> None:
+    sessions_root = tmp_path / "sessions"
+    archived_root = tmp_path / "archived"
+    _write_rollout(
+        sessions_root / "rollout-20260101-000000000000-thread-read.jsonl",
+        [
+            _session_meta("thread-read"),
+            _session_closed(
+                thread_id="thread-read",
+                turn_count=5,
+                input_tokens=7,
+                output_tokens=11,
+                last_user_message="read me",
+            ),
+        ],
+    )
+    monkeypatch.setattr(main_module, "_resolve_sessions_root", lambda _config: sessions_root)
+    monkeypatch.setattr(
+        main_module,
+        "_resolve_archived_sessions_root",
+        lambda _config: archived_root,
+    )
+
+    exit_code = main_module.main(["session", "read", "thread-read"])
+
+    assert exit_code == 0
+    captured = capsys.readouterr()
+    payload = json.loads(captured.out)
+    assert payload["thread_id"] == "thread-read"
+    assert payload["status"] == "closed"
+    assert payload["turn_count"] == 5
+    assert payload["token_total"] == {"input_tokens": 7, "output_tokens": 11}
+    assert payload["last_user_message"] == "read me"
+
+
+def test_session_archive_and_unarchive_commands_still_work(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    sessions_root = tmp_path / "sessions"
+    archived_root = tmp_path / "archived"
+    session_path = sessions_root / "rollout-20260101-000000000000-thread-move.jsonl"
+    _write_rollout(
+        session_path,
+        [
+            _session_meta("thread-move"),
+            _session_closed(
+                thread_id="thread-move",
+                turn_count=1,
+                input_tokens=1,
+                output_tokens=2,
+                last_user_message=None,
+            ),
+        ],
+    )
+    monkeypatch.setattr(main_module, "_resolve_sessions_root", lambda _config: sessions_root)
+    monkeypatch.setattr(
+        main_module,
+        "_resolve_archived_sessions_root",
+        lambda _config: archived_root,
+    )
+
+    archive_exit_code = main_module.main(["session", "archive", "thread-move"])
+
+    assert archive_exit_code == 0
+    archived_path = archived_root / session_path.name
+    assert not session_path.exists()
+    assert archived_path.exists()
+
+    unarchive_exit_code = main_module.main(["session", "unarchive", "thread-move"])
+
+    assert unarchive_exit_code == 0
+    assert session_path.exists()
+    assert not archived_path.exists()
 
 
 def test_main_runs_turn_and_prints_output(

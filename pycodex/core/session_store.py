@@ -30,22 +30,27 @@ class SessionSummaryRecord:
     date: str
 
 
-async def resolve_resume_rollout_path(*, config: Config, resume: str) -> Path:
+async def resolve_resume_rollout_path(
+    *,
+    config: Config,
+    resume: str,
+    sessions_root: Path | None = None,
+) -> Path:
     path_candidate = await asyncio.to_thread(lambda: Path(resume).expanduser())
     if await asyncio.to_thread(path_candidate.exists):
         return path_candidate
 
-    sessions_root = _resolve_sessions_root(config)
-    latest = resolve_latest_rollout(resume, root=sessions_root)
+    resolved_sessions_root = sessions_root or _resolve_sessions_root(config)
+    latest = resolve_latest_rollout(resume, root=resolved_sessions_root)
     if latest is not None:
         return latest
 
-    legacy_path = sessions_root / f"{resume}.json"
+    legacy_path = resolved_sessions_root / f"{resume}.json"
     if await asyncio.to_thread(legacy_path.exists):
         return await import_legacy_session_json(
             legacy_path=legacy_path,
             thread_id=resume,
-            sessions_root=sessions_root,
+            sessions_root=resolved_sessions_root,
         )
 
     raise RolloutReplayError(
@@ -100,13 +105,18 @@ def read_session_closed(path: Path) -> SessionClosed | None:
         return None
 
 
-def list_sessions(*, config: Config, limit: int | None = None) -> list[SessionSummaryRecord]:
+def list_sessions(
+    *,
+    config: Config,
+    limit: int | None = None,
+    sessions_root: Path | None = None,
+) -> list[SessionSummaryRecord]:
     if limit is not None and limit <= 0:
         return []
 
-    sessions_root = _resolve_sessions_root(config)
+    resolved_sessions_root = sessions_root or _resolve_sessions_root(config)
     rollout_paths = sorted(
-        sessions_root.glob("rollout-*.jsonl"), key=lambda p: p.name, reverse=True
+        resolved_sessions_root.glob("rollout-*.jsonl"), key=lambda p: p.name, reverse=True
     )
     records: list[SessionSummaryRecord] = []
     for path in rollout_paths:

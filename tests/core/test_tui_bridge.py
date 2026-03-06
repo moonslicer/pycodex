@@ -101,10 +101,32 @@ def _user_input_line(text: str) -> str:
 def test_thread_started_emitted_on_init(tmp_path: Path) -> None:
     events: list[Any] = []
 
-    _ = _new_bridge(tmp_path, events)
+    bridge = _new_bridge(tmp_path, events)
 
     assert len(events) == 1
     assert events[0].type == "thread.started"
+    assert events[0].thread_id == bridge.session.thread_id
+
+
+def test_thread_started_uses_resumed_session_thread_id(tmp_path: Path) -> None:
+    events: list[Any] = []
+    resumed_thread_id = "replayed-thread-id"
+    resumed_session = Session(
+        config=Config(model="test-model", api_key="test-key", cwd=tmp_path),
+        thread_id=resumed_thread_id,
+    )
+
+    _ = TuiBridge(
+        session=resumed_session,
+        model_client=_FakeModelClient(),
+        tool_router=_FakeToolRouter(),
+        cwd=tmp_path,
+        emit_event=events.append,
+    )
+
+    assert len(events) == 1
+    assert events[0].type == "thread.started"
+    assert events[0].thread_id == resumed_thread_id
 
 
 def test_user_input_command_starts_turn(

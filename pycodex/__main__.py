@@ -415,7 +415,11 @@ def _render_error_message(exc: Exception) -> str:
 
 
 async def _resolve_resume_rollout_path(*, config: Config, resume: str) -> Path:
-    return await resolve_resume_rollout_path(config=config, resume=resume)
+    return await resolve_resume_rollout_path(
+        config=config,
+        resume=resume,
+        sessions_root=_resolve_sessions_root(config),
+    )
 
 
 async def _run_prompt_json(
@@ -631,7 +635,11 @@ def _read_session_closed(path: Path) -> SessionClosed | None:
 
 
 def _session_list(*, config: Config) -> int:
-    for record in list_sessions(config=config, limit=None):
+    for record in list_sessions(
+        config=config,
+        limit=None,
+        sessions_root=_resolve_sessions_root(config),
+    ):
         print(
             f"{record.thread_id}\t{record.date}\tturns={record.turn_count}\ttokens={record.token_total}\tstatus={record.status}"
         )
