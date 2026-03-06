@@ -10,6 +10,7 @@ import pytest
 from pycodex.approval.policy import ReviewDecision
 from pycodex.core.agent import TurnCompleted, TurnStarted
 from pycodex.core.config import Config
+from pycodex.core.rollout_replay import ReplayState
 from pycodex.core.session import Session
 from pycodex.core.session_store import SessionSummaryRecord
 from pycodex.core.tui_bridge import TuiBridge
@@ -285,6 +286,155 @@ def test_unknown_slash_command_emits_slash_unknown(tmp_path: Path) -> None:
 
     assert _event_types(events) == ["thread.started", "slash.unknown"]
     assert events[-1].command == "nope"
+
+
+def test_activate_session_replaces_bridge_session_and_clears_pending_approvals(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    events: list[Any] = []
+    bridge = _new_bridge(tmp_path, events)
+    close_calls = 0
+
+    async def fake_close_rollout(self: Session) -> None:
+        _ = self
+        nonlocal close_calls
+        close_calls += 1
+
+    monkeypatch.setattr(Session, "close_rollout", fake_close_rollout)
+    bridge._pending_approvals["req_1"] = tui_bridge_module._PendingApproval()
+    new_session = Session(
+        config=Config(model="test-model", api_key="test-key", cwd=tmp_path),
+        thread_id="new-thread-id",
+    )
+
+    asyncio.run(bridge._activate_session(new_session))
+
+    assert close_calls == 1
+    assert bridge.session.thread_id == "new-thread-id"
+    assert bridge._pending_approvals == {}
+    assert _event_types(events) == ["thread.started", "thread.started"]
+    assert events[-1].thread_id == "new-thread-id"
+
+
+def test_session_new_method_emits_thread_started(tmp_path: Path) -> None:
+    events: list[Any] = []
+    bridge = _new_bridge(tmp_path, events)
+    old_thread_id = bridge.session.thread_id
+
+    asyncio.run(
+        bridge._handle_line(json.dumps({"jsonrpc": "2.0", "method": "session.new", "params": {}}))
+    )
+
+    assert _event_types(events) == ["thread.started", "thread.started"]
+    assert events[-1].thread_id != old_thread_id
+    assert bridge.session.thread_id == events[-1].thread_id
+
+
+def test_session_new_method_active_turn_emits_session_error(tmp_path: Path) -> None:
+    events: list[Any] = []
+
+    async def scenario() -> None:
+        bridge = _new_bridge(tmp_path, events)
+        blocker = asyncio.Event()
+        bridge._active_turn = asyncio.create_task(blocker.wait())
+        await bridge._handle_line(
+            json.dumps({"jsonrpc": "2.0", "method": "session.new", "params": {}})
+        )
+        bridge._active_turn.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await bridge._active_turn
+
+    asyncio.run(scenario())
+
+    assert _event_types(events) == ["thread.started", "session.error"]
+    assert events[-1].operation == "new"
+
+
+def test_session_resume_method_missing_thread_id_emits_session_error(tmp_path: Path) -> None:
+    events: list[Any] = []
+    bridge = _new_bridge(tmp_path, events)
+
+    asyncio.run(
+        bridge._handle_line(
+            json.dumps({"jsonrpc": "2.0", "method": "session.resume", "params": {}})
+        )
+    )
+
+    assert _event_types(events) == ["thread.started", "session.error"]
+    assert events[-1].operation == "resume"
+
+
+def test_session_resume_method_same_thread_emits_session_error(tmp_path: Path) -> None:
+    events: list[Any] = []
+    bridge = _new_bridge(tmp_path, events)
+
+    asyncio.run(
+        bridge._handle_line(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "session.resume",
+                    "params": {"thread_id": bridge.session.thread_id},
+                }
+            )
+        )
+    )
+
+    assert _event_types(events) == ["thread.started", "session.error"]
+    assert events[-1].operation == "resume"
+
+
+def test_session_resume_method_replays_and_emits_thread_started(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    events: list[Any] = []
+    bridge = _new_bridge(tmp_path, events)
+    replay_path = tmp_path / "rollout-20260101-000000000000-replayed-thread.jsonl"
+    replay_state = ReplayState(
+        thread_id="replayed-thread",
+        history=[{"role": "user", "content": "hello"}],
+        cumulative_usage={"input_tokens": 5, "output_tokens": 8},
+        turn_count=3,
+        status="closed",
+        warnings=[],
+        session_meta=None,
+        session_closed=None,
+    )
+
+    async def fake_resolve_resume_rollout_path(
+        *,
+        config: Config,
+        resume: str,
+        sessions_root: Path | None = None,
+    ) -> Path:
+        _ = config, resume, sessions_root
+        return replay_path
+
+    monkeypatch.setattr(
+        tui_bridge_module,
+        "resolve_resume_rollout_path",
+        fake_resolve_resume_rollout_path,
+    )
+    monkeypatch.setattr(tui_bridge_module, "replay_rollout", lambda path: replay_state)
+
+    asyncio.run(
+        bridge._handle_line(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "session.resume",
+                    "params": {"thread_id": "replayed-thread"},
+                }
+            )
+        )
+    )
+
+    assert _event_types(events) == ["thread.started", "thread.started"]
+    assert events[-1].thread_id == "replayed-thread"
+    assert bridge.session.thread_id == "replayed-thread"
+    assert bridge.session.completed_turn_count() == 3
 
 
 def test_interrupt_cancels_active_turn(

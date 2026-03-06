@@ -18,8 +18,9 @@ from pycodex.core.agent import AgentEvent, SupportsModelClient, SupportsToolRout
 from pycodex.core.config import Config
 from pycodex.core.event_adapter import EventAdapter
 from pycodex.core.rollout_recorder import RolloutRecorder, build_rollout_path, default_sessions_root
+from pycodex.core.rollout_replay import replay_rollout
 from pycodex.core.session import Session
-from pycodex.core.session_store import list_sessions
+from pycodex.core.session_store import list_sessions, resolve_resume_rollout_path
 from pycodex.protocol.events import (
     ApprovalRequested,
     ProtocolEvent,
@@ -126,6 +127,14 @@ class TuiBridge:
             self._handle_approval_response(params)
             return
 
+        if method == "session.resume":
+            await self._handle_session_resume(params)
+            return
+
+        if method == "session.new":
+            await self._handle_session_new()
+            return
+
         if method == "interrupt":
             self._handle_interrupt()
 
@@ -190,12 +199,70 @@ class TuiBridge:
             self._emit_protocol_event(SlashBlocked(command="new", reason="active_turn"))
             return
         try:
+            new_session = self._create_new_session()
+            await self._activate_session(new_session)
+        except Exception as exc:
+            self._emit_protocol_event(SessionError(operation="new", message=_error_message(exc)))
+
+    async def _handle_session_resume(self, params: dict[str, Any]) -> None:
+        if self._turn_is_active():
+            self._emit_protocol_event(
+                SessionError(
+                    operation="resume",
+                    message="Cannot resume while a turn is active.",
+                )
+            )
+            return
+
+        thread_id = params.get("thread_id")
+        if not isinstance(thread_id, str) or not thread_id:
+            self._emit_protocol_event(
+                SessionError(operation="resume", message="session.resume requires a thread_id.")
+            )
+            return
+        if thread_id == self.session.thread_id:
+            self._emit_protocol_event(
+                SessionError(
+                    operation="resume",
+                    message="Cannot resume the currently active thread.",
+                )
+            )
+            return
+
+        try:
             config = self._require_session_config()
-            new_session = Session(config=config)
-            self._configure_rollout_persistence(new_session, config=config)
-            self.session = new_session
-            self._adapter = EventAdapter(thread_id=self.session.thread_id)
-            self._emit_protocol_event(self._adapter.start_thread())
+            rollout_path = await resolve_resume_rollout_path(
+                config=config,
+                resume=thread_id,
+                sessions_root=self._resolve_sessions_root(config),
+            )
+            replay_state = replay_rollout(rollout_path)
+            resumed_session = Session(config=config, thread_id=replay_state.thread_id)
+            resumed_session.restore_from_rollout(
+                history=replay_state.history,
+                cumulative_usage=replay_state.cumulative_usage,
+                turn_count=replay_state.turn_count,
+            )
+            resumed_session.configure_rollout_recorder(
+                recorder=RolloutRecorder(path=rollout_path),
+                path=rollout_path,
+            )
+            await self._activate_session(resumed_session)
+        except Exception as exc:
+            self._emit_protocol_event(SessionError(operation="resume", message=_error_message(exc)))
+
+    async def _handle_session_new(self) -> None:
+        if self._turn_is_active():
+            self._emit_protocol_event(
+                SessionError(
+                    operation="new",
+                    message="Cannot create a new session while a turn is active.",
+                )
+            )
+            return
+        try:
+            new_session = self._create_new_session()
+            await self._activate_session(new_session)
         except Exception as exc:
             self._emit_protocol_event(SessionError(operation="new", message=_error_message(exc)))
 
@@ -288,11 +355,24 @@ class TuiBridge:
     def _turn_is_active(self) -> bool:
         return self._active_turn is not None and not self._active_turn.done()
 
+    async def _activate_session(self, new_session: Session) -> None:
+        await self.session.close_rollout()
+        self._pending_approvals.clear()
+        self.session = new_session
+        self._adapter = EventAdapter(thread_id=new_session.thread_id)
+        self._emit_protocol_event(self._adapter.start_thread())
+
     def _require_session_config(self) -> Config:
         config = self.session.config
         if config is None:
             raise RuntimeError("Session config is not available.")
         return config
+
+    def _create_new_session(self) -> Session:
+        config = self._require_session_config()
+        new_session = Session(config=config)
+        self._configure_rollout_persistence(new_session, config=config)
+        return new_session
 
     def _configure_rollout_persistence(
         self,
