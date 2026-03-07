@@ -186,6 +186,23 @@ def test_slash_status_emits_session_status(tmp_path: Path) -> None:
     assert status_event.output_tokens == 7
 
 
+def test_slash_status_allowed_during_active_turn(tmp_path: Path) -> None:
+    events: list[Any] = []
+
+    async def scenario() -> None:
+        bridge = _new_bridge(tmp_path, events)
+        blocker = asyncio.Event()
+        bridge._active_turn = asyncio.create_task(blocker.wait())
+        await bridge._handle_line(_user_input_line("/status"))
+        bridge._active_turn.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await bridge._active_turn
+
+    asyncio.run(scenario())
+
+    assert _event_types(events) == ["thread.started", "session.status"]
+
+
 def test_slash_resume_emits_filtered_session_list(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -225,6 +242,20 @@ def test_slash_resume_emits_filtered_session_list(
     assert listed_event.sessions[0].status == "incomplete"
 
 
+def test_slash_resume_with_no_sessions_emits_empty_list(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    events: list[Any] = []
+    bridge = _new_bridge(tmp_path, events)
+    monkeypatch.setattr(tui_bridge_module, "list_sessions", lambda *, config, limit: [])
+
+    asyncio.run(bridge._handle_line(_user_input_line("/resume")))
+
+    assert _event_types(events) == ["thread.started", "session.listed"]
+    assert events[-1].sessions == []
+
+
 def test_slash_resume_blocked_when_turn_is_active(tmp_path: Path) -> None:
     events: list[Any] = []
 
@@ -243,6 +274,25 @@ def test_slash_resume_blocked_when_turn_is_active(tmp_path: Path) -> None:
     blocked_event = events[-1]
     assert blocked_event.command == "resume"
     assert blocked_event.reason == "active_turn"
+
+
+def test_slash_resume_list_error_emits_session_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    events: list[Any] = []
+    bridge = _new_bridge(tmp_path, events)
+
+    def fail_list_sessions(*, config: Config, limit: int) -> list[SessionSummaryRecord]:
+        _ = config, limit
+        raise RuntimeError("list failed")
+
+    monkeypatch.setattr(tui_bridge_module, "list_sessions", fail_list_sessions)
+
+    asyncio.run(bridge._handle_line(_user_input_line("/resume")))
+
+    assert _event_types(events) == ["thread.started", "session.error"]
+    assert events[-1].operation == "list"
 
 
 def test_slash_new_emits_new_thread_started(tmp_path: Path) -> None:
@@ -385,6 +435,70 @@ def test_session_resume_method_same_thread_emits_session_error(tmp_path: Path) -
     assert events[-1].operation == "resume"
 
 
+def test_session_resume_method_active_turn_emits_session_error(tmp_path: Path) -> None:
+    events: list[Any] = []
+
+    async def scenario() -> None:
+        bridge = _new_bridge(tmp_path, events)
+        blocker = asyncio.Event()
+        bridge._active_turn = asyncio.create_task(blocker.wait())
+        await bridge._handle_line(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "session.resume",
+                    "params": {"thread_id": "other-thread"},
+                }
+            )
+        )
+        bridge._active_turn.cancel()
+        with pytest.raises(asyncio.CancelledError):
+            await bridge._active_turn
+
+    asyncio.run(scenario())
+
+    assert _event_types(events) == ["thread.started", "session.error"]
+    assert events[-1].operation == "resume"
+
+
+def test_session_resume_method_unknown_thread_id_emits_session_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    events: list[Any] = []
+    bridge = _new_bridge(tmp_path, events)
+
+    async def fail_resolve_resume_rollout_path(
+        *,
+        config: Config,
+        resume: str,
+        sessions_root: Path | None = None,
+    ) -> Path:
+        _ = config, resume, sessions_root
+        raise FileNotFoundError("unknown session")
+
+    monkeypatch.setattr(
+        tui_bridge_module,
+        "resolve_resume_rollout_path",
+        fail_resolve_resume_rollout_path,
+    )
+
+    asyncio.run(
+        bridge._handle_line(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "session.resume",
+                    "params": {"thread_id": "missing-thread"},
+                }
+            )
+        )
+    )
+
+    assert _event_types(events) == ["thread.started", "session.error"]
+    assert events[-1].operation == "resume"
+
+
 def test_session_resume_method_replays_and_emits_thread_started(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
@@ -435,6 +549,82 @@ def test_session_resume_method_replays_and_emits_thread_started(
     assert events[-1].thread_id == "replayed-thread"
     assert bridge.session.thread_id == "replayed-thread"
     assert bridge.session.completed_turn_count() == 3
+
+
+def test_session_resume_method_activate_session_error_emits_session_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    events: list[Any] = []
+    bridge = _new_bridge(tmp_path, events)
+    replay_path = tmp_path / "rollout-20260101-000000000000-replayed-thread.jsonl"
+    replay_state = ReplayState(
+        thread_id="replayed-thread",
+        history=[{"role": "user", "content": "hello"}],
+        cumulative_usage={"input_tokens": 5, "output_tokens": 8},
+        turn_count=3,
+        status="closed",
+        warnings=[],
+        session_meta=None,
+        session_closed=None,
+    )
+
+    async def fake_resolve_resume_rollout_path(
+        *,
+        config: Config,
+        resume: str,
+        sessions_root: Path | None = None,
+    ) -> Path:
+        _ = config, resume, sessions_root
+        return replay_path
+
+    async def fail_activate_session(self: TuiBridge, new_session: Session) -> None:
+        _ = self, new_session
+        raise RuntimeError("activate failed")
+
+    monkeypatch.setattr(
+        tui_bridge_module,
+        "resolve_resume_rollout_path",
+        fake_resolve_resume_rollout_path,
+    )
+    monkeypatch.setattr(tui_bridge_module, "replay_rollout", lambda path: replay_state)
+    monkeypatch.setattr(TuiBridge, "_activate_session", fail_activate_session)
+
+    asyncio.run(
+        bridge._handle_line(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "session.resume",
+                    "params": {"thread_id": "replayed-thread"},
+                }
+            )
+        )
+    )
+
+    assert _event_types(events) == ["thread.started", "session.error"]
+    assert events[-1].operation == "resume"
+
+
+def test_session_new_method_activate_session_error_emits_session_error(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    events: list[Any] = []
+    bridge = _new_bridge(tmp_path, events)
+
+    async def fail_activate_session(self: TuiBridge, new_session: Session) -> None:
+        _ = self, new_session
+        raise RuntimeError("activate failed")
+
+    monkeypatch.setattr(TuiBridge, "_activate_session", fail_activate_session)
+
+    asyncio.run(
+        bridge._handle_line(json.dumps({"jsonrpc": "2.0", "method": "session.new", "params": {}}))
+    )
+
+    assert _event_types(events) == ["thread.started", "session.error"]
+    assert events[-1].operation == "new"
 
 
 def test_interrupt_cancels_active_turn(

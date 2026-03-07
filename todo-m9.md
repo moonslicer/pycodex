@@ -173,7 +173,7 @@ cd tui && npm test
   - Verify:
     - `cd tui && npm run typecheck`
 
-- [ ] T16: Python tests for PR 2 (`tests/core/test_tui_bridge.py`)
+- [x] T16: Python tests for PR 2 (`tests/core/test_tui_bridge.py`)
   - `/status` emits `session.status` with correct counts; also allowed during mocked active turn.
   - `/resume` emits `session.listed` excluding current `thread_id`; emits `slash.blocked` during active turn; returns empty list when no sessions.
   - `/new` swaps session, emits `thread.started` with different `thread_id`; emits `slash.blocked` during active turn.
@@ -261,7 +261,7 @@ T15 + T16 + T17                 ──> T18 (final gates)
 - [x] T13 complete
 - [x] T14 complete
 - [x] T15 complete
-- [ ] T16 complete
+- [x] T16 complete
 - [ ] T17 complete
 - [ ] T18 complete
 - [ ] All quality gates pass
