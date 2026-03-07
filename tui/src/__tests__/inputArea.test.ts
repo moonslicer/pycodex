@@ -2,6 +2,7 @@ import {
   computeKeyEvent,
   deleteBackward,
   deleteForward,
+  handleSlashPopupKey,
   handleCtrlC,
   handleCtrlX,
   HISTORY_MAX,
@@ -27,6 +28,8 @@ function makeKey(overrides: {
   downArrow?: boolean;
   leftArrow?: boolean;
   rightArrow?: boolean;
+  tab?: boolean;
+  escape?: boolean;
 } = {}) {
   return {
     ctrl: false,
@@ -38,6 +41,8 @@ function makeKey(overrides: {
     downArrow: false,
     leftArrow: false,
     rightArrow: false,
+    tab: false,
+    escape: false,
     ...overrides,
   };
 }
@@ -541,5 +546,84 @@ describe("computeKeyEvent", () => {
   test("input that sanitizes to empty is a no-op", () => {
     const result = computeKeyEvent(INITIAL_EDITOR_STATE, "\u0007", noKey, false);
     expect(result.type).toBe("noop");
+  });
+});
+
+describe("handleSlashPopupKey", () => {
+  test("up/down arrows are intercepted for popup navigation", () => {
+    const callbacks = {
+      complete: jest.fn(() => "/resume "),
+      dismiss: jest.fn(),
+      selectNext: jest.fn(),
+      selectPrevious: jest.fn(),
+    };
+
+    const upResult = handleSlashPopupKey(true, makeKey({ upArrow: true }), callbacks);
+    const downResult = handleSlashPopupKey(
+      true,
+      makeKey({ downArrow: true }),
+      callbacks,
+    );
+
+    expect(upResult).toEqual({ handled: true, completion: null });
+    expect(downResult).toEqual({ handled: true, completion: null });
+    expect(callbacks.selectPrevious).toHaveBeenCalledTimes(1);
+    expect(callbacks.selectNext).toHaveBeenCalledTimes(1);
+  });
+
+  test("enter completes command when a match exists", () => {
+    const callbacks = {
+      complete: jest.fn(() => "/resume "),
+      dismiss: jest.fn(),
+      selectNext: jest.fn(),
+      selectPrevious: jest.fn(),
+    };
+
+    const result = handleSlashPopupKey(true, makeKey({ return: true }), callbacks);
+
+    expect(result).toEqual({ handled: true, completion: "/resume " });
+    expect(callbacks.complete).toHaveBeenCalledTimes(1);
+  });
+
+  test("tab falls through when no completion is available", () => {
+    const callbacks = {
+      complete: jest.fn(() => null),
+      dismiss: jest.fn(),
+      selectNext: jest.fn(),
+      selectPrevious: jest.fn(),
+    };
+
+    const result = handleSlashPopupKey(true, makeKey({ tab: true }), callbacks);
+
+    expect(result).toEqual({ handled: false, completion: null });
+    expect(callbacks.complete).toHaveBeenCalledTimes(1);
+  });
+
+  test("escape dismisses popup", () => {
+    const callbacks = {
+      complete: jest.fn(() => "/resume "),
+      dismiss: jest.fn(),
+      selectNext: jest.fn(),
+      selectPrevious: jest.fn(),
+    };
+
+    const result = handleSlashPopupKey(true, makeKey({ escape: true }), callbacks);
+
+    expect(result).toEqual({ handled: true, completion: null });
+    expect(callbacks.dismiss).toHaveBeenCalledTimes(1);
+  });
+
+  test("when popup is closed, keys fall through", () => {
+    const callbacks = {
+      complete: jest.fn(() => "/resume "),
+      dismiss: jest.fn(),
+      selectNext: jest.fn(),
+      selectPrevious: jest.fn(),
+    };
+
+    const result = handleSlashPopupKey(false, makeKey({ upArrow: true }), callbacks);
+
+    expect(result).toEqual({ handled: false, completion: null });
+    expect(callbacks.selectPrevious).not.toHaveBeenCalled();
   });
 });

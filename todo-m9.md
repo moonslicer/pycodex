@@ -146,7 +146,7 @@ cd tui && npm test
   - Verify:
     - `cd tui && npm run typecheck`
 
-- [ ] T13: `InputArea` autocomplete integration (`tui/src/components/InputArea.tsx`)
+- [x] T13: `InputArea` autocomplete integration (`tui/src/components/InputArea.tsx`)
   - Import `useSlashCompletion` and `SlashCommandPopup`.
   - Call `useSlashCompletion(editorState.value)` inside component.
   - Add popup key intercept in `useInput` before `computeKeyEvent`: `↑`/`↓` move selection (suspend history recall while open); `Enter`/`Tab` complete (Tab falls through if no match); `Esc` dismisses; other keys fall through.
@@ -258,7 +258,7 @@ T15 + T16 + T17                 ──> T18 (final gates)
 - [x] T10 complete
 - [x] T11 complete
 - [x] T12 complete
-- [ ] T13 complete
+- [x] T13 complete
 - [ ] T14 complete
 - [ ] T15 complete
 - [ ] T16 complete

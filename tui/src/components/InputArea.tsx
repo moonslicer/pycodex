@@ -1,6 +1,9 @@
 import { useEffect, useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
 
+import { useSlashCompletion } from "../hooks/useSlashCompletion.js";
+import { SlashCommandPopup } from "./SlashCommandPopup.js";
+
 type InputAreaProps = {
   disabled: boolean;
   hasActiveTurn: boolean;
@@ -229,6 +232,74 @@ interface MinimalKey {
   rightArrow: boolean;
 }
 
+type PopupKey = MinimalKey & {
+  tab?: boolean;
+  escape?: boolean;
+};
+
+type PopupCallbacks = {
+  complete: () => string | null;
+  dismiss: () => void;
+  selectNext: () => void;
+  selectPrevious: () => void;
+};
+
+export function handleSlashPopupKey(
+  isOpen: boolean,
+  key: PopupKey,
+  callbacks: PopupCallbacks,
+): {
+  handled: boolean;
+  completion: string | null;
+} {
+  if (!isOpen || key.ctrl || key.meta) {
+    return {
+      handled: false,
+      completion: null,
+    };
+  }
+
+  if (key.upArrow) {
+    callbacks.selectPrevious();
+    return {
+      handled: true,
+      completion: null,
+    };
+  }
+  if (key.downArrow) {
+    callbacks.selectNext();
+    return {
+      handled: true,
+      completion: null,
+    };
+  }
+  if (key.escape ?? false) {
+    callbacks.dismiss();
+    return {
+      handled: true,
+      completion: null,
+    };
+  }
+  if (key.return || (key.tab ?? false)) {
+    const completion = callbacks.complete();
+    if (completion === null) {
+      return {
+        handled: false,
+        completion: null,
+      };
+    }
+    return {
+      handled: true,
+      completion,
+    };
+  }
+
+  return {
+    handled: false,
+    completion: null,
+  };
+}
+
 export function computeKeyEvent(
   state: EditorState,
   input: string,
@@ -336,6 +407,7 @@ export function InputArea({
     INITIAL_EDITOR_STATE,
   );
   const editorStateRef = useRef<EditorState>(INITIAL_EDITOR_STATE);
+  const slashCompletion = useSlashCompletion(editorState.value);
 
   const setEditorState = (next: EditorState): void => {
     editorStateRef.current = next;
@@ -364,6 +436,29 @@ export function InputArea({
       return;
     }
 
+    const popupResult = handleSlashPopupKey(
+      slashCompletion.isOpen,
+      key,
+      {
+        complete: slashCompletion.complete,
+        dismiss: slashCompletion.dismiss,
+        selectNext: slashCompletion.selectNext,
+        selectPrevious: slashCompletion.selectPrevious,
+      },
+    );
+    if (popupResult.handled) {
+      if (popupResult.completion !== null) {
+        setEditorState({
+          ...editorStateRef.current,
+          value: popupResult.completion,
+          cursorIndex: popupResult.completion.length,
+          historyIndex: null,
+          draftBeforeHistory: "",
+        });
+      }
+      return;
+    }
+
     const result = computeKeyEvent(editorStateRef.current, input, key, disabled);
     switch (result.type) {
       case "submit":
@@ -383,18 +478,26 @@ export function InputArea({
   const after = editorState.value.slice(editorState.cursorIndex + 1);
 
   return (
-    <Box borderStyle="single" paddingX={1}>
-      {disabled ? (
-        <Text color="yellow">
-          Input disabled while a turn is active or approval is pending
-        </Text>
-      ) : (
-        <>
-          <Text>{before}</Text>
-          <Text inverse>{atCursor}</Text>
-          {after.length > 0 ? <Text>{after}</Text> : null}
-        </>
-      )}
+    <Box flexDirection="column">
+      {slashCompletion.isOpen && slashCompletion.matches.length > 0 ? (
+        <SlashCommandPopup
+          matches={slashCompletion.matches}
+          selectedIndex={slashCompletion.selectedIndex}
+        />
+      ) : null}
+      <Box borderStyle="single" paddingX={1}>
+        {disabled ? (
+          <Text color="yellow">
+            Input disabled while a turn is active or approval is pending
+          </Text>
+        ) : (
+          <>
+            <Text>{before}</Text>
+            <Text inverse>{atCursor}</Text>
+            {after.length > 0 ? <Text>{after}</Text> : null}
+          </>
+        )}
+      </Box>
     </Box>
   );
 }
