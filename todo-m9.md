@@ -198,7 +198,7 @@ cd tui && npm test
   - Verify:
     - `cd tui && npm test`
 
-- [ ] T18: Final quality gates (PR 2 lock-in)
+- [x] T18: Final quality gates (PR 2 lock-in)
   - Verify:
     - `.venv/bin/ruff check . --fix && .venv/bin/ruff format .`
     - `.venv/bin/mypy --strict pycodex/`
@@ -263,6 +263,6 @@ T15 + T16 + T17                 ──> T18 (final gates)
 - [x] T15 complete
 - [x] T16 complete
 - [x] T17 complete
-- [ ] T18 complete
-- [ ] All quality gates pass
+- [x] T18 complete
+- [x] All quality gates pass
 - [ ] Manual acceptance criteria verified
