@@ -155,7 +155,7 @@ cd tui && npm test
   - Verify:
     - `cd tui && npm run typecheck && npm test -- --testPathPattern inputArea`
 
-- [ ] T14: `SessionPickerModal` component (`tui/src/components/SessionPickerModal.tsx`, new)
+- [x] T14: `SessionPickerModal` component (`tui/src/components/SessionPickerModal.tsx`, new)
   - Props: `sessions: SessionSummaryItem[]`, `onSelect: (threadId: string) => void`, `onDismiss: () => void`.
   - Bordered box with title, session rows (date / truncated thread_id / turns / tokens / status / truncated last message), selected row highlighted, footer `[Enter] resume  [Esc] cancel`.
   - Keys: `↑`/`k` up, `↓`/`j` down, `Enter` -> `onSelect`, `Esc` -> `onDismiss`.
@@ -259,7 +259,7 @@ T15 + T16 + T17                 ──> T18 (final gates)
 - [x] T11 complete
 - [x] T12 complete
 - [x] T13 complete
-- [ ] T14 complete
+- [x] T14 complete
 - [ ] T15 complete
 - [ ] T16 complete
 - [ ] T17 complete
