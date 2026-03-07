@@ -90,7 +90,7 @@ dependencies = [
 
 ---
 
-## Build-Up Plan: 11 Incremental Milestones
+## Build-Up Plan: 12 Incremental Milestones
 
 Each milestone produces a **runnable system**. You can stop at any milestone and have something useful.
 
@@ -342,7 +342,7 @@ Detailed sub-milestone breakdown is in `tui-plan.md`. Summary of execution plan:
 
 **Test it**: `node tui/dist/index.js` → interactive chat; try "read the README.md file" then "create a test.py file" (approval modal appears); Ctrl+C mid-turn cancels cleanly.
 
-**Key learning**: TypeScript/Python process boundary; JSON-RPC framing over stdio pipes; React + Ink component model; bidirectional request/response protocol with asyncio.Event suspension; transport-agnostic envelope design (pipes now, WebSocket in M11).
+**Key learning**: TypeScript/Python process boundary; JSON-RPC framing over stdio pipes; React + Ink component model; bidirectional request/response protocol with asyncio.Event suspension; transport-agnostic envelope design (pipes now, WebSocket in M12).
 
 ---
 
@@ -496,9 +496,9 @@ Detailed sub-milestone breakdown is in `tui-plan.md`. Summary of execution plan:
 
 **Non-goals**:
 - No session persistence or resume — that is M8's job.
-- No planner state persistence — planner state is ephemeral (M9).
-- No network tool resiliency — that scope belongs to M10.
-- No transport migration — deferred to M11.
+- No planner state persistence — planner state is ephemeral (M10).
+- No network tool resiliency — that scope belongs to M11.
+- No transport migration — deferred to M12.
 
 #### Milestone 7 execution plan (clear, incremental, verifiable)
 
@@ -533,7 +533,7 @@ Detailed sub-milestone breakdown is in `tui-plan.md`. Summary of execution plan:
    - Value: reproducible local behavior without long CLI flags.
    - Verification: `pytest tests/core/test_config.py -k global_config -q`
 
-4. **Local resiliency pass** *(scope: subprocess and shell tool failures only — network resiliency is M10)*
+4. **Local resiliency pass** *(scope: subprocess and shell tool failures only — network resiliency is M11)*
    - Finalize retry/backoff for transient model API errors (partially done in M1; harden edge cases).
    - Add explicit timeout handling for shell tool subprocess hangs beyond the configured limit.
    - Verify clean Ctrl+C interruption of active turns in text mode and JSON mode (non-TUI paths).
@@ -558,7 +558,7 @@ Detailed sub-milestone breakdown is in `tui-plan.md`. Summary of execution plan:
 - **Close summary in `session.closed`** — `session.closed` stores last user message, turn count, final token total, and closed timestamp so `session read` is a single-record lookup when the session ended cleanly.
 
 **Non-goals**:
-- No planner state persistence — planner state is ephemeral (M9).
+- No planner state persistence — planner state is ephemeral (M10).
 - No web result caching or network resiliency changes.
 - No transport or server changes.
 - No SQLite in this milestone (optional later as index only).
@@ -651,7 +651,80 @@ Detailed sub-milestone breakdown is in `tui-plan.md`. Summary of execution plan:
 
 ---
 
-### Milestone 9: Agent Guidance Layer (Planner + Skills)
+### Milestone 9: TUI Resume UX + Slash Commands
+
+**Goal**: Add first-class session switching UX in TUI mode via `/resume`, `/status`, and
+`/new`, including slash autocomplete and a session picker, while preserving M8 session
+ledger behavior and CLI session command semantics.
+
+**Design decisions**:
+- Delivery is split into two sequential PRs:
+  - **PR1**: `session_store` extraction + thread-id bug fix in `TuiBridge`.
+  - **PR2**: atomic Python+TUI protocol and UI feature delivery.
+- Session list capping is a bridge UX concern only:
+  - Shared `list_sessions(config, *, limit: int | None = None)` remains uncapped by default.
+  - CLI uses `limit=None` (no behavior change), bridge `/resume` uses `limit=500`.
+- Slash availability rules are bridge-level contracts:
+  - `/status` allowed during active turn.
+  - `/resume` and `/new` blocked during active turn.
+  - TUI input may still be disabled during active turn; these contracts are validated via JSON-RPC tests.
+- Same-thread resume is explicitly blocked (both slash listing path and direct `session.resume` path).
+- All slash and session RPC handlers are exception-contained and emit structured `session.error` on failure.
+
+**Non-goals**:
+- Full upstream parity for slash commands (search, pagination, sort, `/fork`, `/rename`).
+- Live session list refresh.
+- Feature flags for slash-command routing.
+
+#### Milestone 9 execution plan (clear, incremental, verifiable)
+
+1. **PR1: extract `session_store` module with no CLI behavior change**
+   - Move session list/read helpers from `__main__.py` into `core/session_store.py`.
+   - Expose `list_sessions(config, *, limit=None)` and keep CLI subcommands behavior-identical.
+   - Verification: `pytest tests/test_main.py -k "session list or session read or archive or unarchive" -q`
+
+2. **PR1: fix `TuiBridge` thread identity on startup**
+   - Initialize `EventAdapter` with `session.thread_id` in `TuiBridge.__post_init__`.
+   - Verification: `pytest tests/core/test_tui_bridge.py -k thread_started -q`
+
+3. **PR2: Python protocol + RPC surface**
+   - Add protocol events: `session.listed`, `session.status`, `slash.unknown`, `slash.blocked`, `session.error`.
+   - Add RPC methods: `session.resume`, `session.new`.
+   - Verification: `pytest tests/protocol/test_events.py tests/core/test_tui_bridge.py -k "session or slash" -q`
+
+4. **PR2: Bridge slash/session handlers + activation path**
+   - Intercept slash input in bridge.
+   - Add `_activate_session(new_session)` as single swap path.
+   - Enforce active-turn guards, same-thread resume guard, and `try/except -> session.error`.
+   - Verification: `pytest tests/core/test_tui_bridge.py -k "resume or new or status or blocked or error" -q`
+
+5. **PR2: TUI protocol, autocomplete, picker, and notices**
+   - Extend TS protocol types/parser/writer for new events/commands.
+   - Add `useSlashCompletion`, `SlashCommandPopup`, `SessionPickerModal`, `useSystemNotices`.
+   - Add app-level normalizer for `session.listed` rows before opening picker.
+   - Verification: `cd tui && npm run typecheck && npm test -- --runInBand`
+
+6. **PR2: Turn-state reset and UI consistency**
+   - Reset turns on `thread.started` when thread id changes.
+   - Keep same-thread resumes impossible via bridge guard.
+   - Verification: `cd tui && npm test -- --runInBand --findRelatedTests src/hooks/useTurns.ts src/app.tsx`
+
+7. **Contract lock-in**
+   - Add regression tests for handler fault injection (`session.error` + no bridge-loop crash).
+   - Ensure `ProtocolWriter` test mocks are updated for new methods.
+   - Verification: `pytest tests/core/test_tui_bridge.py -q && cd tui && npm test`
+
+**Test it**: Launch `--tui-mode`, confirm slash autocomplete (`/`, `/r`, Tab/Enter),
+`/resume` picker behavior, `/new` thread swap, and JSON-RPC-level active-turn blocking
+and same-thread resume errors.
+
+**Key learning**: Keeping session-switching logic in the bridge and treating the TUI as
+a typed view layer yields simpler invariants: one activation path, explicit event
+contracts, and testable failure semantics without coupling UI state to persistence internals.
+
+---
+
+### Milestone 10: Agent Guidance Layer (Planner + Skills)
 
 **Goal**: Add visible planning/progress and skill extensibility on top of the stable session foundation from M7–M8.
 
@@ -660,7 +733,7 @@ Detailed sub-milestone breakdown is in `tui-plan.md`. Summary of execution plan:
 - Planner state is **ephemeral** — not persisted to `~/.pycodex/sessions/`. A resumed session starts with no active plan. This keeps the M8 session persistence format stable.
 - Skills are discovered once at session start; no hot-reload.
 
-#### Milestone 9 execution plan (clear, incremental, verifiable)
+#### Milestone 10 execution plan (clear, incremental, verifiable)
 
 1. **Planner as state/progress signaling**
    - Implement explicit step state (`pending | in_progress | completed`) updated as tool calls complete.
@@ -688,11 +761,11 @@ Detailed sub-milestone breakdown is in `tui-plan.md`. Summary of execution plan:
 
 ---
 
-### Milestone 10: Web Tooling + Network Safety
+### Milestone 11: Web Tooling + Network Safety
 
 **Goal**: Introduce web retrieval with strict safety constraints and deterministic outputs, without changing transport architecture.
 
-**Scope decision**: M10 ships `web_search` only. `web_fetch` (arbitrary page content retrieval) is deferred — it carries a larger attack surface, higher prompt-injection risk, and requires separate approval semantics. Revisit after M10 is stable.
+**Scope decision**: M11 ships `web_search` only. `web_fetch` (arbitrary page content retrieval) is deferred — it carries a larger attack surface, higher prompt-injection risk, and requires separate approval semantics. Revisit after M11 is stable.
 
 **Prompt injection defense**: Web search results are untrusted external content. Results must be delivered to the model wrapped in a structured delimiter (e.g., `[web_search result: <url>] ... [/web_search result]`) so they are visually and semantically distinct from developer instructions. The base system prompt (from M6) must include a standing instruction that tool results from web searches are untrusted and may contain adversarial content.
 
@@ -701,7 +774,7 @@ Detailed sub-milestone breakdown is in `tui-plan.md`. Summary of execution plan:
 - No cached web mode — insufficient value without a stable cache store.
 - No transport or multi-client changes.
 
-#### Milestone 10 execution plan (clear, incremental, verifiable)
+#### Milestone 11 execution plan (clear, incremental, verifiable)
 
 1. **`web_search` tool**
    - Add `tools/web_search.py` with normalized output schema: `title`, `url`, `snippet`, `retrieved_at`.
@@ -735,7 +808,7 @@ Detailed sub-milestone breakdown is in `tui-plan.md`. Summary of execution plan:
 
 ---
 
-### Milestone 11: Transport Upgrade + Multi-Client Runtime
+### Milestone 12: Transport Upgrade + Multi-Client Runtime
 
 **Goal**: Move from stdio-only interaction to an optional local WebSocket transport with correct event broadcast, approval routing, and interruption semantics across multiple clients.
 
@@ -748,7 +821,7 @@ Detailed sub-milestone breakdown is in `tui-plan.md`. Summary of execution plan:
 - No remote (non-localhost) server exposure.
 - No authentication on the local socket.
 
-#### Milestone 11 execution plan (clear, incremental, verifiable)
+#### Milestone 12 execution plan (clear, incremental, verifiable)
 
 1. **Server transport layer** *(asyncio WebSocket, `websockets` library, `localhost:<port>` + optional Unix socket)*
    - Add `core/server.py` with WebSocket server that reuses `TuiBridge` command-dispatch logic from M4.
@@ -814,8 +887,8 @@ Detailed sub-milestone breakdown is in `tui-plan.md`. Summary of execution plan:
 | Network proxy | Full MITM proxy | Skipped |
 | Multi-agent | Agent spawn/wait/close | Skipped |
 | Compaction | Remote API + inline compact | Local summarization |
-| Skills/hooks | Full skill system, lifecycle hooks | Simplified loader + deterministic resolution (M9) |
-| Web fetch | Full web_fetch + MITM proxy | `web_search` only (M10); `web_fetch` deferred |
+| Skills/hooks | Full skill system, lifecycle hooks | Simplified loader + deterministic resolution (M10) |
+| Web fetch | Full web_fetch + MITM proxy | `web_search` only (M11); `web_fetch` deferred |
 
 ## Verification Plan
 
@@ -829,6 +902,7 @@ After each milestone, verify with these tests:
 - **M6**: `python -m pycodex "What is your role?"` — default `CODEX_PROFILE` identity; `python -m pycodex --profile-file custom.toml "what are you?"` — custom profile loads; `AGENTS.md` in project tree injects automatically
 - **M7**: Run a long multi-turn session until compaction triggers; confirm the summary block replaces older context correctly; verify token totals in `turn.completed.usage`; verify Ctrl+C exits cleanly (no `--resume` yet — that is M8)
 - **M8**: Run a multi-turn session; `session list` shows it; `--resume <id>` continues it; kill the process mid-write and recover cleanly from the last valid turn; `session archive <id>` / `session unarchive <id>` roundtrip succeeds
-- **M9**: Task that names a skill and requires multi-step execution — visible plan state transitions, deterministic skill selection, clear error on missing skill
-- **M10**: `web_search_mode=live` query returns structured results; `disabled` (default) blocks without network calls; domain allowlist rejects off-list requests
-- **M11**: Two clients connected to one session — both observe consistent event stream; approval from one client resolves for both; Ctrl+C from either client cancels the active turn
+- **M9**: In TUI mode, slash autocomplete and picker flow work end-to-end (`/`, `/r`, Tab completion, `/resume`, `/new`, `/status`) and bridge-level JSON-RPC guards (`session.error`/`slash.blocked`) hold under active-turn and same-thread cases
+- **M10**: Task that names a skill and requires multi-step execution — visible plan state transitions, deterministic skill selection, clear error on missing skill
+- **M11**: `web_search_mode=live` query returns structured results; `disabled` (default) blocks without network calls; domain allowlist rejects off-list requests
+- **M12**: Two clients connected to one session — both observe consistent event stream; approval from one client resolves for both; Ctrl+C from either client cancels the active turn
