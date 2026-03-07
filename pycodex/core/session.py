@@ -167,7 +167,6 @@ class Session:
         self._total_input_tokens = max(0, int(cumulative_usage.get("input_tokens", 0)))
         self._total_output_tokens = max(0, int(cumulative_usage.get("output_tokens", 0)))
         self._turn_count = max(0, turn_count)
-        self._initial_context_injected = True
 
     def replace_prefix_with_system_summary(self, *, replace_count: int, summary_text: str) -> bool:
         """Replace a leading history slice with one system summary message."""

@@ -199,3 +199,9 @@ def test_append_tool_result_truncates_oversized_content() -> None:
     assert isinstance(tool_item["content"], str)
     assert len(tool_item["content"]) > MAX_TOOL_RESULT_CHARS
     assert tool_item["content"].endswith("\n...[truncated by session history cap]")
+
+
+def test_restore_from_rollout_does_not_mark_initial_context_injected() -> None:
+    session = Session()
+    session.restore_from_rollout(history=[], cumulative_usage={}, turn_count=0)
+    assert not session.has_initial_context()
