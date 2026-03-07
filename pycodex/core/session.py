@@ -283,7 +283,7 @@ class Session:
         await recorder.shutdown()
         self._rollout_closed = True
 
-    async def __aenter__(self) -> "Session":
+    async def __aenter__(self) -> Session:
         return self
 
     async def __aexit__(self, exc_type: object, exc_val: object, exc_tb: object) -> None:

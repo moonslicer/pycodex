@@ -339,6 +339,11 @@ export function reduceTurns(
     case "item.completed":
       return applyItemCompletedEvent(state, event);
     case "approval.request":
+    case "session.listed":
+    case "session.status":
+    case "slash.unknown":
+    case "slash.blocked":
+    case "session.error":
       return state;
     case "item.updated":
       return applyItemUpdatedDelta(state, {

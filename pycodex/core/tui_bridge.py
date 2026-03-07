@@ -15,9 +15,22 @@ from uuid import uuid4
 
 from pycodex.approval.policy import ReviewDecision
 from pycodex.core.agent import AgentEvent, SupportsModelClient, SupportsToolRouter, run_turn
+from pycodex.core.config import Config
 from pycodex.core.event_adapter import EventAdapter
+from pycodex.core.rollout_recorder import RolloutRecorder, build_rollout_path, default_sessions_root
+from pycodex.core.rollout_replay import replay_rollout
 from pycodex.core.session import Session
-from pycodex.protocol.events import ApprovalRequested, ProtocolEvent
+from pycodex.core.session_store import list_sessions, resolve_resume_rollout_path
+from pycodex.protocol.events import (
+    ApprovalRequested,
+    ProtocolEvent,
+    SessionError,
+    SessionListed,
+    SessionStatus,
+    SessionSummary,
+    SlashBlocked,
+    SlashUnknown,
+)
 
 _MAX_PENDING_APPROVALS = 100
 _MAX_SHELL_COMMAND_PREVIEW_CHARS = 240
@@ -52,12 +65,13 @@ class TuiBridge:
     tool_router: SupportsToolRouter
     cwd: Path
     emit_event: Callable[[ProtocolEvent], None] | None = None
-    _adapter: EventAdapter = field(default_factory=EventAdapter, init=False)
+    _adapter: EventAdapter = field(init=False)
     _active_turn: asyncio.Task[None] | None = field(default=None, init=False)
     _active_turn_id: str | None = field(default=None, init=False)
     _pending_approvals: dict[str, _PendingApproval] = field(default_factory=dict, init=False)
 
     def __post_init__(self) -> None:
+        self._adapter = EventAdapter(thread_id=self.session.thread_id)
         self._emit_protocol_event(self._adapter.start_thread())
 
     async def run(self, *, reader: SupportsLineReader | None = None) -> None:
@@ -113,14 +127,144 @@ class TuiBridge:
             self._handle_approval_response(params)
             return
 
+        if method == "session.resume":
+            await self._handle_session_resume(params)
+            return
+
+        if method == "session.new":
+            await self._handle_session_new()
+            return
+
         if method == "interrupt":
             self._handle_interrupt()
 
     async def _handle_user_input(self, text: str) -> None:
+        if text.startswith("/"):
+            await self._handle_slash_command(text)
+            return
         if self._active_turn is not None and not self._active_turn.done():
             return
 
         self._active_turn = asyncio.create_task(self._run_turn(text))
+
+    async def _handle_slash_command(self, text: str) -> None:
+        command = text[1:].strip().split(maxsplit=1)[0].lower() if text.strip() else ""
+        if command == "status":
+            await self._slash_status()
+            return
+        if command == "resume":
+            await self._slash_resume()
+            return
+        if command == "new":
+            await self._slash_new()
+            return
+        self._emit_protocol_event(SlashUnknown(command=command))
+
+    async def _slash_status(self) -> None:
+        usage = self.session.cumulative_usage()
+        self._emit_protocol_event(
+            SessionStatus(
+                thread_id=self.session.thread_id,
+                turn_count=self.session.completed_turn_count(),
+                input_tokens=usage["input_tokens"],
+                output_tokens=usage["output_tokens"],
+            )
+        )
+
+    async def _slash_resume(self) -> None:
+        if self._turn_is_active():
+            self._emit_protocol_event(SlashBlocked(command="resume", reason="active_turn"))
+            return
+        try:
+            config = self._require_session_config()
+            records = list_sessions(config=config, limit=500)
+            summaries = [
+                SessionSummary(
+                    thread_id=record.thread_id,
+                    status=record.status,
+                    turn_count=record.turn_count,
+                    token_total=record.token_total,
+                    last_user_message=record.last_user_message,
+                    date=record.date,
+                )
+                for record in records
+                if record.thread_id != self.session.thread_id
+            ]
+            self._emit_protocol_event(SessionListed(sessions=summaries))
+        except Exception as exc:
+            self._emit_protocol_event(SessionError(operation="list", message=_error_message(exc)))
+
+    async def _slash_new(self) -> None:
+        if self._turn_is_active():
+            self._emit_protocol_event(SlashBlocked(command="new", reason="active_turn"))
+            return
+        try:
+            new_session = self._create_new_session()
+            await self._activate_session(new_session)
+        except Exception as exc:
+            self._emit_protocol_event(SessionError(operation="new", message=_error_message(exc)))
+
+    async def _handle_session_resume(self, params: dict[str, Any]) -> None:
+        if self._turn_is_active():
+            self._emit_protocol_event(
+                SessionError(
+                    operation="resume",
+                    message="Cannot resume while a turn is active.",
+                )
+            )
+            return
+
+        thread_id = params.get("thread_id")
+        if not isinstance(thread_id, str) or not thread_id:
+            self._emit_protocol_event(
+                SessionError(operation="resume", message="session.resume requires a thread_id.")
+            )
+            return
+        if thread_id == self.session.thread_id:
+            self._emit_protocol_event(
+                SessionError(
+                    operation="resume",
+                    message="Cannot resume the currently active thread.",
+                )
+            )
+            return
+
+        try:
+            config = self._require_session_config()
+            rollout_path = await resolve_resume_rollout_path(
+                config=config,
+                resume=thread_id,
+                sessions_root=self._resolve_sessions_root(config),
+            )
+            replay_state = replay_rollout(rollout_path)
+            resumed_session = Session(config=config, thread_id=replay_state.thread_id)
+            resumed_session.restore_from_rollout(
+                history=replay_state.history,
+                cumulative_usage=replay_state.cumulative_usage,
+                turn_count=replay_state.turn_count,
+            )
+            resumed_session.configure_rollout_recorder(
+                recorder=RolloutRecorder(path=rollout_path),
+                path=rollout_path,
+            )
+            await self._activate_session(resumed_session)
+        except Exception as exc:
+            self._emit_protocol_event(SessionError(operation="resume", message=_error_message(exc)))
+
+    async def _handle_session_new(self) -> None:
+        if self._turn_is_active():
+            self._emit_protocol_event(
+                SessionError(
+                    operation="new",
+                    message="Cannot create a new session while a turn is active.",
+                )
+            )
+            return
+        try:
+            new_session = self._create_new_session()
+            await self._activate_session(new_session)
+        except Exception as exc:
+            self._emit_protocol_event(SessionError(operation="new", message=_error_message(exc)))
 
     async def _run_turn(self, text: str) -> None:
         def on_event(event: AgentEvent) -> None:
@@ -208,6 +352,59 @@ class TuiBridge:
         sys.stdout.write(f"{event.model_dump_json()}\n")
         sys.stdout.flush()
 
+    def _turn_is_active(self) -> bool:
+        return self._active_turn is not None and not self._active_turn.done()
+
+    async def _activate_session(self, new_session: Session) -> None:
+        await self.session.close_rollout()
+        self._pending_approvals.clear()
+        self.session = new_session
+        self._adapter = EventAdapter(thread_id=new_session.thread_id)
+        self._emit_protocol_event(self._adapter.start_thread())
+
+    def _require_session_config(self) -> Config:
+        config = self.session.config
+        if config is None:
+            raise RuntimeError("Session config is not available.")
+        return config
+
+    def _create_new_session(self) -> Session:
+        config = self._require_session_config()
+        new_session = Session(config=config)
+        self._configure_rollout_persistence(new_session, config=config)
+        return new_session
+
+    def _configure_rollout_persistence(
+        self,
+        session: Session,
+        *,
+        config: Config,
+    ) -> None:
+        sessions_root = self._resolve_sessions_root(config)
+        path = build_rollout_path(session.thread_id, root=sessions_root)
+        session.configure_rollout_recorder(
+            recorder=RolloutRecorder(path=path),
+            path=path,
+        )
+
+    def _resolve_sessions_root(self, config: Config) -> Path:
+        preferred = default_sessions_root()
+        if self._ensure_directory(preferred):
+            return preferred
+        fallback = config.cwd / ".pycodex" / "sessions"
+        self._ensure_directory(fallback)
+        sys.stderr.write(
+            f"[WARNING] Could not create sessions directory {preferred}; using fallback {fallback}\n"
+        )
+        return fallback
+
+    def _ensure_directory(self, path: Path) -> bool:
+        try:
+            path.mkdir(parents=True, exist_ok=True)
+        except OSError:
+            return False
+        return True
+
 
 def _parse_approval_decision(raw_decision: Any) -> ReviewDecision | None:
     if raw_decision == ReviewDecision.APPROVED.value:
@@ -219,6 +416,10 @@ def _parse_approval_decision(raw_decision: Any) -> ReviewDecision | None:
     if raw_decision == ReviewDecision.ABORT.value:
         return ReviewDecision.ABORT
     return None
+
+
+def _error_message(exc: Exception) -> str:
+    return str(exc).strip() or type(exc).__name__
 
 
 def _render_approval_preview(*, tool_name: str, args: dict[str, Any]) -> str:

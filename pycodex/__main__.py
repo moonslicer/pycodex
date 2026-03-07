@@ -33,11 +33,17 @@ from pycodex.core.rollout_recorder import (
 )
 from pycodex.core.rollout_replay import (
     RolloutReplayError,
-    import_legacy_session_json,
     replay_rollout,
 )
-from pycodex.core.rollout_schema import SessionClosed, validate_rollout_item
+from pycodex.core.rollout_schema import SessionClosed
 from pycodex.core.session import Session
+from pycodex.core.session_store import (
+    last_user_message_from_history,
+    list_sessions,
+    read_session_closed,
+    resolve_resume_rollout_path,
+    rollout_date_token,
+)
 from pycodex.core.tui_bridge import TuiBridge
 from pycodex.protocol.events import ProtocolEvent
 from pycodex.tools.base import ToolRegistry, ToolRouter
@@ -286,8 +292,7 @@ def _resolve_sessions_root(config: Config) -> Path:
     fallback = config.cwd / ".pycodex" / "sessions"
     _ensure_directory(fallback)
     sys.stderr.write(
-        f"[WARNING] Could not create sessions directory {preferred}; "
-        f"using fallback {fallback}\n"
+        f"[WARNING] Could not create sessions directory {preferred}; using fallback {fallback}\n"
     )
     return fallback
 
@@ -410,26 +415,10 @@ def _render_error_message(exc: Exception) -> str:
 
 
 async def _resolve_resume_rollout_path(*, config: Config, resume: str) -> Path:
-    path_candidate = await asyncio.to_thread(lambda: Path(resume).expanduser())
-    if await asyncio.to_thread(path_candidate.exists):
-        return path_candidate
-
-    sessions_root = _resolve_sessions_root(config)
-    latest = resolve_latest_rollout(resume, root=sessions_root)
-    if latest is not None:
-        return latest
-
-    legacy_path = sessions_root / f"{resume}.json"
-    if await asyncio.to_thread(legacy_path.exists):
-        return await import_legacy_session_json(
-            legacy_path=legacy_path,
-            thread_id=resume,
-            sessions_root=sessions_root,
-        )
-
-    raise RolloutReplayError(
-        code="rollout_not_found",
-        message=f"Unable to resolve rollout for {resume!r}.",
+    return await resolve_resume_rollout_path(
+        config=config,
+        resume=resume,
+        sessions_root=_resolve_sessions_root(config),
     )
 
 
@@ -600,10 +589,10 @@ def _run_session_command(
         return 1
 
     subcommand = args.prompt_tail[0]
+    if subcommand == "list":
+        return _session_list(config=config)
     sessions_root = _resolve_sessions_root(config)
     archived_root = _resolve_archived_sessions_root(config)
-    if subcommand == "list":
-        return _session_list(sessions_root=sessions_root)
     if subcommand == "read":
         if len(args.prompt_tail) < 2:
             print("[ERROR] session read requires an id", file=sys.stderr)
@@ -642,84 +631,18 @@ def _run_session_command(
 
 
 def _read_session_closed(path: Path) -> SessionClosed | None:
-    """Read only the last line of a rollout file and return a SessionClosed record if present.
-
-    This is a best-effort fast path for closed sessions so that ``_session_list``
-    avoids a full replay when the session already has a closing summary record.
-    Returns ``None`` on any parse / validation error or if the last record is not
-    a ``SessionClosed``.
-    """
-    try:
-        with path.open("rb") as f:
-            f.seek(0, 2)
-            end = f.tell()
-            if end == 0:
-                return None
-
-            # Chunk-based backward scan to find the last non-empty line.
-            chunk_size = 4096
-            buf = b""
-            pos = end
-            line_start = -1
-            line_end = -1
-            while pos > 0:
-                read_size = min(chunk_size, pos)
-                pos -= read_size
-                f.seek(pos)
-                chunk = f.read(read_size)
-                buf = chunk + buf
-                # Search buf from the right for line boundaries.
-                # buf covers bytes [pos, pos+len(buf)) within the file.
-                if line_end == -1:
-                    # Skip trailing newlines to find end of last line.
-                    stripped = buf.rstrip(b"\r\n")
-                    if not stripped:
-                        continue
-                    line_end = pos + len(stripped)
-                # Find the newline before the last line.
-                nl = buf.rfind(b"\n", 0, line_end - pos)
-                if nl == -1:
-                    nl = buf.rfind(b"\r", 0, line_end - pos)
-                if nl != -1:
-                    line_start = pos + nl + 1
-                    break
-            if line_end == -1:
-                return None
-            if line_start == -1:
-                line_start = 0
-            f.seek(line_start)
-            last_line = f.read(line_end - line_start).decode("utf-8")
-        parsed = json.loads(last_line)
-        item = validate_rollout_item(parsed)
-        if isinstance(item, SessionClosed):
-            return item
-        return None
-    except Exception:
-        return None
+    return read_session_closed(path)
 
 
-def _session_list(*, sessions_root: Path) -> int:
-    rollout_paths = sorted(
-        sessions_root.glob("rollout-*.jsonl"), key=lambda p: p.name, reverse=True
-    )
-    for path in rollout_paths:
-        date_token = _rollout_date_token(path.name)
-        session_closed = _read_session_closed(path)
-        if session_closed is not None:
-            token_total = (
-                session_closed.token_total.input_tokens + session_closed.token_total.output_tokens
-            )
-            print(
-                f"{session_closed.thread_id}\t{date_token}\tturns={session_closed.turn_count}\ttokens={token_total}\tstatus=closed"
-            )
-        else:
-            state = replay_rollout(path)
-            token_total = (
-                state.cumulative_usage["input_tokens"] + state.cumulative_usage["output_tokens"]
-            )
-            print(
-                f"{state.thread_id}\t{date_token}\tturns={state.turn_count}\ttokens={token_total}\tstatus={state.status}"
-            )
+def _session_list(*, config: Config) -> int:
+    for record in list_sessions(
+        config=config,
+        limit=None,
+        sessions_root=_resolve_sessions_root(config),
+    ):
+        print(
+            f"{record.thread_id}\t{record.date}\tturns={record.turn_count}\ttokens={record.token_total}\tstatus={record.status}"
+        )
     return 0
 
 
@@ -802,23 +725,11 @@ def _resolve_session_path(
 
 
 def _last_user_message_from_history(history: Sequence[object]) -> str | None:
-    for item in reversed(history):
-        if not isinstance(item, dict):
-            continue
-        if item.get("role") != "user":
-            continue
-        content = item.get("content")
-        if isinstance(content, str):
-            return content
-    return None
+    return last_user_message_from_history(history)
 
 
 def _rollout_date_token(filename: str) -> str:
-    prefix = "rollout-"
-    if not filename.startswith(prefix):
-        return "unknown"
-    remainder = filename[len(prefix) :]
-    return remainder.split("-", 1)[0]
+    return rollout_date_token(filename)
 
 
 def main(argv: Sequence[str] | None = None) -> int:

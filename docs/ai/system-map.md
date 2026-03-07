@@ -22,6 +22,7 @@ This document is the architecture map for agent behavior and contracts in this r
 ## Ownership Map (Current)
 - Core agent loop and turn orchestration: `pycodex/core/agent.py`
 - Session and conversation state: `pycodex/core/session.py`
+- Session listing and resume path resolution helpers: `pycodex/core/session_store.py`
 - Model transport and streaming mapping: `pycodex/core/model_client.py`
 - Internal-to-protocol event mapping and IDs: `pycodex/core/event_adapter.py`
 - TUI mode JSON-RPC command bridge: `pycodex/core/tui_bridge.py`
