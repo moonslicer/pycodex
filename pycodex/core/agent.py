@@ -289,6 +289,7 @@ class Agent:
         text_parts: list[str] = []
         tool_calls: list[ParsedToolCall] = []
         usage: dict[str, int] | None = None
+        saw_text_delta = False
 
         async for event in self.model_client.stream(
             messages=self.session.to_prompt(),
@@ -297,6 +298,7 @@ class Agent:
         ):
             if isinstance(event, OutputTextDelta):
                 text_parts.append(event.delta)
+                saw_text_delta = True
                 await self._emit(
                     TextDeltaReceived(
                         delta=event.delta,
@@ -308,7 +310,7 @@ class Agent:
                 parsed = _parse_tool_call_item(item=event.item, ordinal=len(tool_calls) + 1)
                 if parsed is not None:
                     tool_calls.append(parsed)
-                elif not text_parts:
+                elif not saw_text_delta:
                     completed_text = _extract_assistant_text_from_item(event.item)
                     if completed_text is not None:
                         text_parts.append(completed_text)

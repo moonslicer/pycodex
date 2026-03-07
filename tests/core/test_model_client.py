@@ -78,6 +78,96 @@ async def _collect_events(client: ModelClient) -> list[Any]:
     return events
 
 
+def test_model_client_complete_joins_output_text_deltas_and_disables_tools() -> None:
+    responses = _FakeResponses(
+        streams=[
+            _FakeStream(
+                events=[
+                    {"type": "response.output_text.delta", "delta": "hello"},
+                    {
+                        "type": "response.output_item.done",
+                        "item": {
+                            "type": "function_call",
+                            "name": "ignored_tool",
+                            "arguments": "{}",
+                            "call_id": "call_1",
+                        },
+                    },
+                    {"type": "response.output_text.delta", "delta": " world"},
+                    {"type": "response.completed", "response": {"id": "resp_complete"}},
+                ]
+            )
+        ]
+    )
+    client = ModelClient(
+        config=Config(model="gpt-test"),
+        openai_factory=lambda _config: _FakeOpenAIClient(responses=responses),
+    )
+
+    text = asyncio.run(
+        client.complete(
+            messages=[{"role": "user", "content": "summarize this"}],
+            instructions="Only summarize.",
+            max_output_tokens=321,
+        )
+    )
+
+    assert text == "hello world"
+    assert len(responses.calls) == 1
+    assert responses.calls[0]["tools"] == []
+    assert responses.calls[0]["instructions"] == "Only summarize."
+    assert responses.calls[0]["max_output_tokens"] == 321
+
+
+def test_model_client_complete_returns_empty_string_without_text_deltas() -> None:
+    responses = _FakeResponses(
+        streams=[
+            _FakeStream(
+                events=[
+                    {
+                        "type": "response.output_item.done",
+                        "item": {"type": "message", "content": []},
+                    },
+                    {"type": "response.completed", "response": {"id": "resp_complete"}},
+                ]
+            )
+        ]
+    )
+    client = ModelClient(
+        config=Config(model="gpt-test"),
+        openai_factory=lambda _config: _FakeOpenAIClient(responses=responses),
+    )
+
+    text = asyncio.run(client.complete(messages=[{"role": "user", "content": "summarize this"}]))
+
+    assert text == ""
+
+
+def test_model_client_stream_omits_max_output_tokens_when_zero() -> None:
+    responses = _FakeResponses(
+        streams=[_FakeStream(events=[{"type": "response.completed", "response": {"id": "resp_1"}}])]
+    )
+    client = ModelClient(
+        config=Config(model="gpt-test"),
+        openai_factory=lambda _config: _FakeOpenAIClient(responses=responses),
+    )
+
+    async def _run() -> list[Any]:
+        events: list[Any] = []
+        async for event in client.stream(
+            messages=[{"role": "user", "content": "hello"}],
+            tools=[],
+            max_output_tokens=0,
+        ):
+            events.append(event)
+        return events
+
+    events = asyncio.run(_run())
+
+    assert events == [Completed(response_id="resp_1")]
+    assert "max_output_tokens" not in responses.calls[0]
+
+
 def test_model_client_maps_events_to_typed_dataclasses() -> None:
     responses = _FakeResponses(
         streams=[

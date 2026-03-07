@@ -801,6 +801,48 @@ def test_run_turn_uses_done_item_text_when_no_text_deltas(tmp_path: Path) -> Non
     ]
 
 
+def test_run_turn_concatenates_multiple_done_item_texts_without_deltas(tmp_path: Path) -> None:
+    session = Session()
+    model_client = _FakeModelClient(
+        turns=[
+            [
+                OutputItemDone(
+                    item={
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "first "}],
+                    }
+                ),
+                OutputItemDone(
+                    item={
+                        "type": "message",
+                        "role": "assistant",
+                        "content": [{"type": "output_text", "text": "second"}],
+                    }
+                ),
+                Completed(response_id="resp_final"),
+            ]
+        ]
+    )
+    router = _FakeToolRouter(specs=[], results=[])
+
+    result = asyncio.run(
+        run_turn(
+            session=session,
+            model_client=model_client,
+            tool_router=router,
+            cwd=tmp_path,
+            user_input="answer directly",
+        )
+    )
+
+    assert result == "first second"
+    assert session.to_prompt() == [
+        {"role": "user", "content": "answer directly"},
+        {"role": "assistant", "content": "first second"},
+    ]
+
+
 def test_run_turn_preserves_text_before_tool_calls_in_same_pass(tmp_path: Path) -> None:
     session = Session()
     model_client = _FakeModelClient(

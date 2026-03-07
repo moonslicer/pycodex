@@ -87,6 +87,7 @@ class ModelClient:
         messages: list[PromptItem],
         tools: list[dict[str, Any]],
         instructions: str = "",
+        max_output_tokens: int = 0,
     ) -> AsyncIterator[ResponseEvent]:
         """Stream model output as typed events with a single transient retry."""
         for attempt in range(1, _MAX_STREAM_ATTEMPTS + 1):
@@ -96,6 +97,7 @@ class ModelClient:
                     messages=messages,
                     tools=tools,
                     instructions=instructions,
+                    max_output_tokens=max_output_tokens,
                 ):
                     emitted_any = True
                     yield event
@@ -118,12 +120,32 @@ class ModelClient:
                     f"Model stream failed after {attempt} attempt(s): {message}"
                 ) from exc
 
+    async def complete(
+        self,
+        messages: list[PromptItem],
+        *,
+        instructions: str = "",
+        max_output_tokens: int = 4096,
+    ) -> str:
+        """Collect full model text response from streaming deltas."""
+        text_parts: list[str] = []
+        async for event in self.stream(
+            messages=messages,
+            tools=[],
+            instructions=instructions,
+            max_output_tokens=max_output_tokens,
+        ):
+            if isinstance(event, OutputTextDelta):
+                text_parts.append(event.delta)
+        return "".join(text_parts)
+
     async def _stream_once(
         self,
         *,
         messages: list[PromptItem],
         tools: list[dict[str, Any]],
         instructions: str,
+        max_output_tokens: int,
     ) -> AsyncIterator[ResponseEvent]:
         client = self._get_client()
         responses = getattr(client, "responses", None)
@@ -140,6 +162,8 @@ class ModelClient:
         }
         if instructions:
             create_kwargs["instructions"] = instructions
+        if max_output_tokens > 0:
+            create_kwargs["max_output_tokens"] = max_output_tokens
         if self._request_observer is not None:
             self._request_observer(dict(create_kwargs))
 
