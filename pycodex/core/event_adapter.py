@@ -16,10 +16,14 @@ from pycodex.core.agent import (
 from pycodex.core.agent import (
     ContextCompacted as AgentContextCompacted,
 )
+from pycodex.core.agent import (
+    ContextPressure as AgentContextPressure,
+)
 from pycodex.core.agent import TurnStarted as AgentTurnStarted
 from pycodex.core.session import UsageSnapshot as SessionUsageSnapshot
 from pycodex.protocol.events import (
     ContextCompacted,
+    ContextPressure,
     ItemCompleted,
     ItemStarted,
     ItemUpdated,
@@ -93,6 +97,18 @@ class EventAdapter:
                     context_window_tokens=event.context_window_tokens,
                     remaining_ratio=event.remaining_ratio,
                     threshold_ratio=event.threshold_ratio,
+                )
+            ]
+
+        if isinstance(event, AgentContextPressure):
+            turn_id = self._require_active_turn_id()
+            return [
+                ContextPressure(
+                    thread_id=self.thread_id,
+                    turn_id=turn_id,
+                    remaining_ratio=event.remaining_ratio,
+                    context_window_tokens=event.context_window_tokens,
+                    estimated_prompt_tokens=event.estimated_prompt_tokens,
                 )
             ]
 

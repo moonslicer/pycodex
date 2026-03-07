@@ -1,4 +1,9 @@
-import { formatCompactionSummary, formatUsageSummary } from "../components/StatusBar.js";
+import {
+  formatCompactionCount,
+  formatCompactionSummary,
+  formatContextMeter,
+  formatUsageSummary,
+} from "../components/StatusBar.js";
 
 describe("formatUsageSummary", () => {
   test("returns n/a when usage is unavailable", () => {
@@ -69,5 +74,35 @@ describe("formatCompactionSummary", () => {
         threshold_ratio: 0.2,
       }),
     ).toBe("compaction: triggered (replaced 6; context 91.0% / threshold 80.0%)");
+  });
+});
+
+describe("formatContextMeter", () => {
+  test("returns null when session status is missing", () => {
+    expect(formatContextMeter(null)).toBeNull();
+  });
+
+  test("renders ascii context fill meter", () => {
+    expect(
+      formatContextMeter({
+        type: "session.status",
+        thread_id: "thread_1",
+        turn_count: 2,
+        input_tokens: 64000,
+        output_tokens: 1234,
+        context_window_tokens: 128000,
+        compaction_count: 1,
+      }),
+    ).toBe("context: [#####-----] 50.0% (128k)");
+  });
+});
+
+describe("formatCompactionCount", () => {
+  test("hides compaction count when zero", () => {
+    expect(formatCompactionCount(0)).toBeNull();
+  });
+
+  test("shows compaction count suffix when nonzero", () => {
+    expect(formatCompactionCount(2)).toBe("compacted: 2x");
   });
 });

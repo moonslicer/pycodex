@@ -5,6 +5,7 @@ import re
 import pytest
 from pycodex.core.agent import (
     ContextCompacted,
+    ContextPressure,
     TextDeltaReceived,
     ToolCallDispatched,
     ToolResultReceived,
@@ -14,6 +15,9 @@ from pycodex.core.agent import (
 from pycodex.core.event_adapter import EventAdapter
 from pycodex.protocol.events import (
     ContextCompacted as ProtocolContextCompacted,
+)
+from pycodex.protocol.events import (
+    ContextPressure as ProtocolContextPressure,
 )
 from pycodex.protocol.events import (
     ItemCompleted,
@@ -375,6 +379,27 @@ def test_context_compacted_maps_to_protocol_event() -> None:
     assert out[0].context_window_tokens == 10000
 
 
+def test_context_pressure_maps_to_protocol_event() -> None:
+    adapter = EventAdapter(thread_id="thread_test")
+    adapter.on_agent_event(TurnStarted(user_input="hello"))
+
+    out = adapter.on_agent_event(
+        ContextPressure(
+            remaining_ratio=0.24,
+            context_window_tokens=10000,
+            estimated_prompt_tokens=7600,
+        )
+    )
+
+    assert len(out) == 1
+    assert isinstance(out[0], ProtocolContextPressure)
+    assert out[0].thread_id == "thread_test"
+    assert out[0].turn_id == "turn_1"
+    assert out[0].remaining_ratio == 0.24
+    assert out[0].context_window_tokens == 10000
+    assert out[0].estimated_prompt_tokens == 7600
+
+
 def test_turn_id_cleared_after_turn_completed() -> None:
     adapter = EventAdapter(thread_id="thread_test")
     adapter.on_agent_event(TurnStarted(user_input="hello"))
@@ -417,5 +442,14 @@ def test_non_start_events_require_active_turn() -> None:
                 context_window_tokens=10000,
                 remaining_ratio=0.1,
                 threshold_ratio=0.2,
+            )
+        )
+
+    with pytest.raises(RuntimeError, match="without active turn"):
+        adapter.on_agent_event(
+            ContextPressure(
+                remaining_ratio=0.24,
+                context_window_tokens=10000,
+                estimated_prompt_tokens=7600,
             )
         )

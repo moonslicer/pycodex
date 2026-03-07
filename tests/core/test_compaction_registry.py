@@ -104,7 +104,9 @@ def test_create_compaction_orchestrator_supports_var_keyword_factory(
 ) -> None:
     """Factory with (options, **kwargs) must not be called with two positional args."""
 
-    def _kwargs_factory(options: dict[str, object], **kwargs: object) -> LocalSummaryV1Implementation:
+    def _kwargs_factory(
+        options: dict[str, object], **kwargs: object
+    ) -> LocalSummaryV1Implementation:
         return LocalSummaryV1Implementation(max_lines=int(options.get("max_lines", 8)))
 
     monkeypatch.setitem(IMPLEMENTATION_REGISTRY, "kwargs_factory_test", _kwargs_factory)

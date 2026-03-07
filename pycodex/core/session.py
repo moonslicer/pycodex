@@ -20,6 +20,7 @@ _log = logging.getLogger(__name__)
 
 MAX_TOOL_RESULT_CHARS = 200_000
 _MISSING_TOOL_OUTPUT_PLACEHOLDER = "aborted"
+_SUMMARY_BLOCK_MARKER = "[compaction.summary.v1]"
 
 
 class UserMessageItem(TypedDict):
@@ -94,6 +95,7 @@ class Session:
     _total_input_tokens: int = 0
     _total_output_tokens: int = 0
     _turn_count: int = 0
+    _compaction_count: int = 0
     _last_user_message: str | None = None
     _rollout_recorder: RolloutRecorder | None = None
     _rollout_path: Path | None = None
@@ -167,6 +169,7 @@ class Session:
         self._total_input_tokens = max(0, int(cumulative_usage.get("input_tokens", 0)))
         self._total_output_tokens = max(0, int(cumulative_usage.get("output_tokens", 0)))
         self._turn_count = max(0, turn_count)
+        self._compaction_count = _count_compaction_summaries(self._history)
 
     def replace_range_with_system_summary(
         self,
@@ -186,6 +189,7 @@ class Session:
             {"role": "system", "content": summary_text},
             *self._history[effective_end:],
         ]
+        self._compaction_count += 1
         return True
 
     def replace_prefix_with_system_summary(self, *, replace_count: int, summary_text: str) -> bool:
@@ -228,6 +232,10 @@ class Session:
     def completed_turn_count(self) -> int:
         """Return number of completed turns recorded in this session."""
         return self._turn_count
+
+    def compaction_count(self) -> int:
+        """Return number of compaction replacements applied in this session."""
+        return self._compaction_count
 
     def last_user_message(self) -> str | None:
         """Return the most recent user message text, if any."""
@@ -362,6 +370,17 @@ def _normalize_prompt_history(history: list[PromptItem]) -> list[PromptItem]:
         )
 
     return history
+
+
+def _count_compaction_summaries(history: list[PromptItem]) -> int:
+    count = 0
+    for item in history:
+        if item.get("role") != "system":
+            continue
+        content = item.get("content")
+        if isinstance(content, str) and _SUMMARY_BLOCK_MARKER in content:
+            count += 1
+    return count
 
 
 def _normalize_usage_counts(usage: dict[str, int] | None) -> TokenUsageCounts | None:

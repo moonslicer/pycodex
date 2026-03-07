@@ -31,7 +31,9 @@ export type TurnState = {
   compaction: {
     status: "pending" | "triggered" | "idle";
     detail: ContextCompactedEvent | null;
+    summary: string | null;
   };
+  pressureWarning: boolean;
 };
 
 export type TurnsViewState = {
@@ -108,6 +110,11 @@ function toFinalLines(finalText: string): string[] {
 function toHydratedTurnState(
   turn: Extract<ProtocolEvent, { type: "session.hydrated" }>["turns"][number],
 ): TurnState {
+  const compactionSummary = typeof turn.compaction_summary === "string" &&
+      turn.compaction_summary.length > 0
+    ? turn.compaction_summary
+    : null;
+
   return {
     turn_id: turn.turn_id,
     userText: turn.user_text,
@@ -119,9 +126,11 @@ function toHydratedTurnState(
     error: null,
     usage: null,
     compaction: {
-      status: "idle",
+      status: compactionSummary === null ? "idle" : "triggered",
       detail: null,
+      summary: compactionSummary,
     },
+    pressureWarning: false,
   };
 }
 
@@ -274,7 +283,9 @@ export function reduceTurns(
             compaction: {
               status: "pending",
               detail: null,
+              summary: null,
             },
+            pressureWarning: false,
           },
         ],
       };
@@ -285,7 +296,23 @@ export function reduceTurns(
         compaction: {
           status: "triggered",
           detail: event,
+          summary: null,
         },
+      }));
+
+      if (nextTurns === state.turns) {
+        return state;
+      }
+
+      return {
+        ...state,
+        turns: nextTurns,
+      };
+    }
+    case "context.pressure": {
+      const nextTurns = updateTurn(state.turns, event.turn_id, (turn) => ({
+        ...turn,
+        pressureWarning: true,
       }));
 
       if (nextTurns === state.turns) {
@@ -316,8 +343,9 @@ export function reduceTurns(
         usage: event.usage,
         compaction:
           turn.compaction.status === "pending"
-            ? { status: "idle", detail: null }
+            ? { status: "idle", detail: null, summary: null }
             : turn.compaction,
+        pressureWarning: false,
       }));
 
       if (nextTurns === state.turns) {
@@ -347,8 +375,9 @@ export function reduceTurns(
           error: event.error,
           compaction:
             turn.compaction.status === "pending"
-              ? { status: "idle", detail: null }
+              ? { status: "idle", detail: null, summary: null }
               : turn.compaction,
+          pressureWarning: false,
         };
       });
 

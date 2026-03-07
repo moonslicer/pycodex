@@ -57,6 +57,17 @@ class ContextCompacted(_FrozenModel):
     threshold_ratio: float
 
 
+class ContextPressure(_FrozenModel):
+    """Event emitted when context is near compaction threshold."""
+
+    type: Literal["context.pressure"] = "context.pressure"
+    thread_id: str
+    turn_id: str
+    remaining_ratio: float
+    context_window_tokens: StrictInt
+    estimated_prompt_tokens: StrictInt
+
+
 class TurnCompleted(_FrozenModel):
     """Event emitted when a turn completes successfully."""
 
@@ -148,6 +159,8 @@ class SessionStatus(_FrozenModel):
     turn_count: StrictInt
     input_tokens: StrictInt
     output_tokens: StrictInt
+    context_window_tokens: StrictInt
+    compaction_count: StrictInt
 
 
 class HydratedTurn(_FrozenModel):
@@ -156,6 +169,7 @@ class HydratedTurn(_FrozenModel):
     turn_id: str
     user_text: str
     assistant_text: str
+    compaction_summary: str | None = None
 
 
 class SessionHydrated(_FrozenModel):
@@ -193,6 +207,7 @@ ProtocolEvent: TypeAlias = Annotated[
     ThreadStarted
     | TurnStarted
     | ContextCompacted
+    | ContextPressure
     | TurnCompleted
     | TurnFailed
     | ItemStarted

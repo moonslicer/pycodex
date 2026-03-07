@@ -375,14 +375,12 @@ def _build_implementation(
     )
     try:
         positional_count = sum(
-            1
-            for p in inspect.signature(factory).parameters.values()
-            if p.kind in _POSITIONAL_KINDS
+            1 for p in inspect.signature(factory).parameters.values() if p.kind in _POSITIONAL_KINDS
         )
     except (ValueError, TypeError):
         positional_count = 2
     if positional_count >= 2:
-        return factory(options, model_client)  # type: ignore[call-arg]
+        return factory(options, model_client)
     return factory(options)  # type: ignore[call-arg]
 
 

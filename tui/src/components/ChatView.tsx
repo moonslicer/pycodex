@@ -179,6 +179,38 @@ export function summarizeCompactionDebugLinesForTurn(
   ];
 }
 
+export function summarizeCompactionNoticeForTurn(
+  turn: Pick<TurnState, "compaction">,
+): { text: string; tone: "info" | "muted" } | null {
+  if (turn.compaction.status !== "triggered") {
+    return null;
+  }
+
+  const detail = turn.compaction.detail;
+  if (detail !== null) {
+    const contextFillRatio = detail.context_window_tokens <= 0
+      ? 0
+      : detail.estimated_prompt_tokens / detail.context_window_tokens;
+    return {
+      text:
+        `~ Context compacted: ${String(detail.replaced_items)} message(s) summarized (context ${toPercentage(contextFillRatio)} used)`,
+      tone: "info",
+    };
+  }
+
+  if (turn.compaction.summary !== null) {
+    return {
+      text: "~ [Resumed: prior context was compacted]",
+      tone: "muted",
+    };
+  }
+
+  return {
+    text: "~ Context compacted",
+    tone: "info",
+  };
+}
+
 export function summarizeApprovalDebugLinesForTurn(
   turn: TurnState,
   decisionLog: readonly ApprovalDecisionLog[],
@@ -238,6 +270,7 @@ function TurnRow({
   const compactionDebugLines = showToolCallSummary
     ? summarizeCompactionDebugLinesForTurn(turn)
     : [];
+  const compactionNotice = summarizeCompactionNoticeForTurn(turn);
 
   return (
     <Box flexDirection="column" marginBottom={1}>
@@ -288,6 +321,11 @@ function TurnRow({
           {line}
         </Text>
       ))}
+      {compactionNotice !== null
+        ? compactionNotice.tone === "info"
+          ? <Text color="cyan">{compactionNotice.text}</Text>
+          : <Text dimColor>{compactionNotice.text}</Text>
+        : null}
 
       {turn.status === "active" ? (
         <Spinner label="Assistant is thinking" />

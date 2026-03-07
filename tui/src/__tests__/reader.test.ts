@@ -78,6 +78,16 @@ describe("StdioReader", () => {
     );
     stdout.write(
       `${JSON.stringify({
+        type: "context.pressure",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+        remaining_ratio: 0.24,
+        context_window_tokens: 10000,
+        estimated_prompt_tokens: 7600,
+      })}\n`,
+    );
+    stdout.write(
+      `${JSON.stringify({
         type: "approval.request",
         thread_id: "thread_1",
         turn_id: "turn_1",
@@ -94,6 +104,7 @@ describe("StdioReader", () => {
       "item.started",
       "item.updated",
       "context.compacted",
+      "context.pressure",
       "approval.request",
     ]);
   });
@@ -139,6 +150,8 @@ describe("StdioReader", () => {
         turn_count: 1,
         input_tokens: 12,
         output_tokens: 7,
+        context_window_tokens: 128000,
+        compaction_count: 0,
       })}\n`,
     );
     stdout.write(

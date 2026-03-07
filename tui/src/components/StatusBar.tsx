@@ -1,6 +1,10 @@
-import { Text } from "ink";
+import { Box, Text } from "ink";
 
-import type { ContextCompactedEvent, TokenUsage } from "../protocol/types.js";
+import type {
+  ContextCompactedEvent,
+  SessionStatusEvent,
+  TokenUsage,
+} from "../protocol/types.js";
 
 type StatusBarProps = {
   cumulativeUsage: TokenUsage | null;
@@ -8,6 +12,8 @@ type StatusBarProps = {
   compactionStatus: "pending" | "triggered" | "idle";
   isBusy: boolean;
   latestUsage: TokenUsage | null;
+  pressureWarningActive: boolean;
+  sessionStatus: SessionStatusEvent | null;
   threadId: string | null;
   turnCount: number;
 };
@@ -30,6 +36,47 @@ export function formatUsageSummary(
     return `usage total(in/out): ${formatUsageValue(cumulativeUsage)}`;
   }
   return "usage: n/a";
+}
+
+function clampRatio(value: number): number {
+  if (value < 0) {
+    return 0;
+  }
+  if (value > 1) {
+    return 1;
+  }
+  return value;
+}
+
+function formatContextWindow(value: number): string {
+  if (value >= 1000) {
+    return `${String(Math.round(value / 1000))}k`;
+  }
+  return String(value);
+}
+
+function renderAsciiBar(ratio: number): string {
+  const slots = 10;
+  const clamped = clampRatio(ratio);
+  const filled = Math.round(clamped * slots);
+  const empty = slots - filled;
+  return `[${"#".repeat(filled)}${"-".repeat(empty)}]`;
+}
+
+export function formatContextMeter(status: SessionStatusEvent | null): string | null {
+  if (status === null || status.context_window_tokens <= 0) {
+    return null;
+  }
+
+  const fillRatio = status.input_tokens / status.context_window_tokens;
+  return `context: ${renderAsciiBar(fillRatio)} ${toPercentage(clampRatio(fillRatio))} (${formatContextWindow(status.context_window_tokens)})`;
+}
+
+export function formatCompactionCount(count: number): string | null {
+  if (count <= 0) {
+    return null;
+  }
+  return `compacted: ${String(count)}x`;
 }
 
 function toPercentage(value: number): string {
@@ -61,6 +108,8 @@ export function StatusBar({
   compactionStatus,
   isBusy,
   latestUsage,
+  pressureWarningActive,
+  sessionStatus,
   threadId,
   turnCount,
 }: StatusBarProps) {
@@ -69,6 +118,24 @@ export function StatusBar({
   const turnCountLabel = String(turnCount);
   const usageLabel = formatUsageSummary(latestUsage, cumulativeUsage);
   const compactionLabel = formatCompactionSummary(compactionStatus, compactionDetail);
+  const contextLabel = formatContextMeter(sessionStatus);
+  const compactionCountLabel = formatCompactionCount(sessionStatus?.compaction_count ?? 0);
+  const compactionCountSuffix =
+    compactionCountLabel === null ? "" : ` | ${compactionCountLabel}`;
 
-  return <Text dimColor>{`thread: ${threadLabel} | turns: ${turnCountLabel} | status: ${statusLabel} | ${usageLabel} | ${compactionLabel}`}</Text>;
+  if (contextLabel === null) {
+    return <Text dimColor>{`thread: ${threadLabel} | turns: ${turnCountLabel} | status: ${statusLabel} | ${usageLabel} | ${compactionLabel}${compactionCountSuffix}`}</Text>;
+  }
+
+  return (
+    <Box>
+      <Text dimColor>{`thread: ${threadLabel} | turns: ${turnCountLabel} | status: ${statusLabel} | `}</Text>
+      {pressureWarningActive ? (
+        <Text color="yellow">{contextLabel}</Text>
+      ) : (
+        <Text dimColor>{contextLabel}</Text>
+      )}
+      <Text dimColor>{` | ${compactionLabel}${compactionCountSuffix}`}</Text>
+    </Box>
+  );
 }

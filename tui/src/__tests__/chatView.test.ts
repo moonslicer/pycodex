@@ -2,6 +2,7 @@ import {
   formatAssistantMessageLines,
   formatUserMessageLines,
   renderSectionsForTurn,
+  summarizeCompactionNoticeForTurn,
   summarizeCompactionDebugLinesForTurn,
   summarizeApprovalDebugLinesForTurn,
   summarizeToolCallsForTurn,
@@ -23,7 +24,9 @@ function baseTurn(overrides: Partial<TurnState> = {}): TurnState {
     compaction: {
       status: "idle",
       detail: null,
+      summary: null,
     },
+    pressureWarning: false,
     ...overrides,
   };
 }
@@ -240,6 +243,7 @@ describe("summarizeCompactionDebugLinesForTurn", () => {
           compaction: {
             status: "pending",
             detail: null,
+            summary: null,
           },
         }),
       ),
@@ -264,6 +268,7 @@ describe("summarizeCompactionDebugLinesForTurn", () => {
               remaining_ratio: 0.09,
               threshold_ratio: 0.2,
             },
+            summary: null,
           },
         }),
       ),
@@ -271,5 +276,52 @@ describe("summarizeCompactionDebugLinesForTurn", () => {
       "Compaction: triggered (threshold_v1/local_summary_v1)",
       "Compaction: replaced 6 item(s); context 91.0% / threshold 80.0%",
     ]);
+  });
+});
+
+describe("summarizeCompactionNoticeForTurn", () => {
+  test("shows inline info notice when compaction detail exists", () => {
+    expect(
+      summarizeCompactionNoticeForTurn(
+        baseTurn({
+          compaction: {
+            status: "triggered",
+            detail: {
+              type: "context.compacted",
+              thread_id: "thread_1",
+              turn_id: "turn_1",
+              strategy: "threshold_v1",
+              implementation: "local_summary_v1",
+              replaced_items: 6,
+              estimated_prompt_tokens: 9100,
+              context_window_tokens: 10000,
+              remaining_ratio: 0.09,
+              threshold_ratio: 0.2,
+            },
+            summary: null,
+          },
+        }),
+      ),
+    ).toEqual({
+      text: "~ Context compacted: 6 message(s) summarized (context 91.0% used)",
+      tone: "info",
+    });
+  });
+
+  test("shows resumed muted notice when hydrated compaction summary exists", () => {
+    expect(
+      summarizeCompactionNoticeForTurn(
+        baseTurn({
+          compaction: {
+            status: "triggered",
+            detail: null,
+            summary: "[compaction.summary.v1]\nConversation summary:\n- old",
+          },
+        }),
+      ),
+    ).toEqual({
+      text: "~ [Resumed: prior context was compacted]",
+      tone: "muted",
+    });
   });
 });

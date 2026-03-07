@@ -32,6 +32,15 @@ export type ContextCompactedEvent = {
   threshold_ratio: number;
 };
 
+export type ContextPressureEvent = {
+  type: "context.pressure";
+  thread_id: string;
+  turn_id: string;
+  remaining_ratio: number;
+  context_window_tokens: number;
+  estimated_prompt_tokens: number;
+};
+
 export type TurnCompletedEvent = {
   type: "turn.completed";
   thread_id: string;
@@ -105,12 +114,15 @@ export type SessionStatusEvent = {
   turn_count: number;
   input_tokens: number;
   output_tokens: number;
+  context_window_tokens: number;
+  compaction_count: number;
 };
 
 export type HydratedTurnItem = {
   turn_id: string;
   user_text: string;
   assistant_text: string;
+  compaction_summary?: string | null;
 };
 
 export type SessionHydratedEvent = {
@@ -140,6 +152,7 @@ export type ProtocolEvent =
   | ThreadStartedEvent
   | TurnStartedEvent
   | ContextCompactedEvent
+  | ContextPressureEvent
   | TurnCompletedEvent
   | TurnFailedEvent
   | ItemStartedEvent

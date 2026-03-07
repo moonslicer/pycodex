@@ -12,6 +12,7 @@ import { sliceUnprocessedEvents } from "./hooks/eventCursor.js";
 import { useSystemNotices } from "./hooks/useSystemNotices.js";
 import type {
   ProtocolEvent,
+  SessionStatusEvent,
   SessionSummaryItem,
   TokenUsage,
 } from "./protocol/types.js";
@@ -141,6 +142,26 @@ export function summarizeCompactionForTurns(
   };
 }
 
+export function latestSessionStatusForEvents(
+  events: readonly ProtocolEvent[],
+): SessionStatusEvent | null {
+  let latest: SessionStatusEvent | null = null;
+  for (const event of events) {
+    if (event.type === "session.status") {
+      latest = event;
+    }
+  }
+  return latest;
+}
+
+export function isPressureWarningActiveForTurns(turns: readonly TurnState[]): boolean {
+  const latestTurn = turns[turns.length - 1];
+  if (latestTurn === undefined) {
+    return false;
+  }
+  return latestTurn.status === "active" && latestTurn.pressureWarning;
+}
+
 export function App({
   approvalPolicy = "on-request",
   debug = false,
@@ -193,6 +214,8 @@ export function App({
     isSessionPickerOpen;
   const usageSummary = summarizeUsageForTurns(turns);
   const compactionSummary = summarizeCompactionForTurns(turns);
+  const sessionStatus = latestSessionStatusForEvents(events);
+  const pressureWarningActive = isPressureWarningActiveForTurns(turns);
 
   const handleSubmit = useCallback(
     (text: string): void => {
@@ -262,6 +285,8 @@ export function App({
         compactionStatus={compactionSummary.status}
         isBusy={isBusy}
         latestUsage={usageSummary.latestUsage}
+        pressureWarningActive={pressureWarningActive}
+        sessionStatus={sessionStatus}
         threadId={threadId}
         turnCount={turns.length}
       />

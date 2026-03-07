@@ -174,6 +174,13 @@ def test_user_input_command_starts_turn(
 def test_slash_status_emits_session_status(tmp_path: Path) -> None:
     events: list[Any] = []
     bridge = _new_bridge(tmp_path, events)
+    bridge.session.append_user_message("old")
+    bridge.session.append_assistant_message("reply")
+    assert bridge.session.replace_range_with_system_summary(
+        replace_start=0,
+        replace_end=2,
+        summary_text="[compaction.summary.v1]\nConversation summary:\n- old",
+    )
     bridge.session.mark_turn_completed()
     bridge.session.record_turn_usage({"input_tokens": 12, "output_tokens": 7})
 
@@ -185,6 +192,8 @@ def test_slash_status_emits_session_status(tmp_path: Path) -> None:
     assert status_event.turn_count == 1
     assert status_event.input_tokens == 12
     assert status_event.output_tokens == 7
+    assert status_event.context_window_tokens == 128_000
+    assert status_event.compaction_count == 1
 
 
 def test_slash_status_allowed_during_active_turn(tmp_path: Path) -> None:
@@ -202,6 +211,9 @@ def test_slash_status_allowed_during_active_turn(tmp_path: Path) -> None:
     asyncio.run(scenario())
 
     assert _event_types(events) == ["thread.started", "session.status"]
+    status_event = events[-1]
+    assert status_event.context_window_tokens == 128_000
+    assert status_event.compaction_count == 0
 
 
 def test_slash_resume_emits_filtered_session_list(
@@ -597,8 +609,69 @@ def test_session_resume_method_replays_and_emits_hydrated_history(
     assert len(events[-1].turns) == 1
     assert events[-1].turns[0].user_text == "hello"
     assert events[-1].turns[0].assistant_text == "hi there"
+    assert events[-1].turns[0].compaction_summary is None
     assert bridge.session.thread_id == "replayed-thread"
     assert bridge.session.completed_turn_count() == 3
+
+
+def test_session_resume_method_hydrates_compaction_summary_on_next_turn(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    events: list[Any] = []
+    bridge = _new_bridge(tmp_path, events)
+    replay_path = tmp_path / "rollout-20260101-000000000000-replayed-thread.jsonl"
+    replay_state = ReplayState(
+        thread_id="replayed-thread",
+        history=[
+            {
+                "role": "system",
+                "content": "[compaction.summary.v1]\nConversation summary:\n- earlier",
+            },
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi there"},
+        ],
+        cumulative_usage={"input_tokens": 5, "output_tokens": 8},
+        turn_count=3,
+        status="closed",
+        warnings=[],
+        session_meta=None,
+        session_closed=None,
+    )
+
+    async def fake_resolve_resume_rollout_path(
+        *,
+        config: Config,
+        resume: str,
+        sessions_root: Path | None = None,
+    ) -> Path:
+        _ = config, resume, sessions_root
+        return replay_path
+
+    monkeypatch.setattr(
+        tui_bridge_module,
+        "resolve_resume_rollout_path",
+        fake_resolve_resume_rollout_path,
+    )
+    monkeypatch.setattr(tui_bridge_module, "replay_rollout", lambda path: replay_state)
+
+    asyncio.run(
+        bridge._handle_line(
+            json.dumps(
+                {
+                    "jsonrpc": "2.0",
+                    "method": "session.resume",
+                    "params": {"thread_id": "replayed-thread"},
+                }
+            )
+        )
+    )
+
+    hydrated_event = events[-1]
+    assert hydrated_event.type == "session.hydrated"
+    assert len(hydrated_event.turns) == 1
+    assert hydrated_event.turns[0].compaction_summary is not None
+    assert "[compaction.summary.v1]" in hydrated_event.turns[0].compaction_summary
 
 
 def test_session_resume_method_activate_session_error_emits_session_error(

@@ -29,7 +29,9 @@ describe("reduceTurns", () => {
           compaction: {
             status: "idle",
             detail: null,
+            summary: null,
           },
+          pressureWarning: false,
         },
       ],
     };
@@ -59,7 +61,9 @@ describe("reduceTurns", () => {
           compaction: {
             status: "idle",
             detail: null,
+            summary: null,
           },
+          pressureWarning: false,
         },
       ],
     };
@@ -112,6 +116,39 @@ describe("reduceTurns", () => {
     expect(next.turns[0]?.userText).toBe("hello");
     expect(next.turns[0]?.assistantLines).toEqual(["hi", "there"]);
     expect(next.turns[0]?.status).toBe("completed");
+    expect(next.turns[0]?.compaction).toEqual({
+      status: "idle",
+      detail: null,
+      summary: null,
+    });
+    expect(next.turns[0]?.pressureWarning).toBe(false);
+  });
+
+  test("session.hydrated compaction summary marks turn as compacted", () => {
+    const next = reduceTurnsSequence(INITIAL_TURNS_STATE, [
+      {
+        type: "thread.started",
+        thread_id: "thread_1",
+      },
+      {
+        type: "session.hydrated",
+        thread_id: "thread_1",
+        turns: [
+          {
+            turn_id: "hydrated_1",
+            user_text: "hello",
+            assistant_text: "hi",
+            compaction_summary: "[compaction.summary.v1]\nConversation summary:\n- old",
+          },
+        ],
+      },
+    ]);
+
+    expect(next.turns[0]?.compaction).toEqual({
+      status: "triggered",
+      detail: null,
+      summary: "[compaction.summary.v1]\nConversation summary:\n- old",
+    });
   });
 
   test("session.hydrated for a different thread is ignored", () => {
@@ -142,7 +179,9 @@ describe("reduceTurns", () => {
     expect(next.turns[0]?.compaction).toEqual({
       status: "pending",
       detail: null,
+      summary: null,
     });
+    expect(next.turns[0]?.pressureWarning).toBe(false);
   });
 
   test("context.compacted marks turn compaction state as triggered", () => {
@@ -168,6 +207,27 @@ describe("reduceTurns", () => {
 
     expect(next.turns[0]?.compaction.status).toBe("triggered");
     expect(next.turns[0]?.compaction.detail?.replaced_items).toBe(5);
+    expect(next.turns[0]?.compaction.summary).toBeNull();
+  });
+
+  test("context.pressure marks turn pressure warning as active", () => {
+    const next = reduceTurnsSequence(INITIAL_TURNS_STATE, [
+      {
+        type: "turn.started",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+      },
+      {
+        type: "context.pressure",
+        thread_id: "thread_1",
+        turn_id: "turn_1",
+        remaining_ratio: 0.24,
+        context_window_tokens: 10_000,
+        estimated_prompt_tokens: 7600,
+      },
+    ]);
+
+    expect(next.turns[0]?.pressureWarning).toBe(true);
   });
 
   test("turn.completed records final text and usage", () => {
@@ -197,7 +257,9 @@ describe("reduceTurns", () => {
     expect(completed.turns[0]?.compaction).toEqual({
       status: "idle",
       detail: null,
+      summary: null,
     });
+    expect(completed.turns[0]?.pressureWarning).toBe(false);
   });
 
   test("item.updated commits newline segments and keeps trailing partial", () => {

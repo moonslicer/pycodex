@@ -6,6 +6,7 @@ import pytest
 from pycodex.protocol.events import (
     ApprovalRequested,
     ContextCompacted,
+    ContextPressure,
     HydratedTurn,
     ItemCompleted,
     ItemStarted,
@@ -13,6 +14,7 @@ from pycodex.protocol.events import (
     ProtocolEvent,
     SessionHydrated,
     SessionListed,
+    SessionStatus,
     SessionSummary,
     ThreadStarted,
     TokenUsage,
@@ -42,6 +44,16 @@ from pydantic import TypeAdapter, ValidationError
                 threshold_ratio=0.2,
             ),
             ContextCompacted,
+        ),
+        (
+            ContextPressure(
+                thread_id="thread_1",
+                turn_id="turn_1",
+                remaining_ratio=0.24,
+                context_window_tokens=10_000,
+                estimated_prompt_tokens=7600,
+            ),
+            ContextPressure,
         ),
         (
             TurnCompleted(
@@ -121,6 +133,17 @@ from pydantic import TypeAdapter, ValidationError
             SessionListed,
         ),
         (
+            SessionStatus(
+                thread_id="thread_1",
+                turn_count=2,
+                input_tokens=10,
+                output_tokens=5,
+                context_window_tokens=128_000,
+                compaction_count=1,
+            ),
+            SessionStatus,
+        ),
+        (
             SessionHydrated(
                 thread_id="thread_1",
                 turns=[
@@ -128,6 +151,7 @@ from pydantic import TypeAdapter, ValidationError
                         turn_id="hydrated_1",
                         user_text="hello",
                         assistant_text="hi",
+                        compaction_summary=None,
                     )
                 ],
             ),
@@ -163,6 +187,17 @@ def test_event_model_round_trip_json(event: Any, event_cls: type[Any]) -> None:
                 "threshold_ratio": 0.2,
             },
             ContextCompacted,
+        ),
+        (
+            {
+                "type": "context.pressure",
+                "thread_id": "thread_1",
+                "turn_id": "turn_1",
+                "remaining_ratio": 0.24,
+                "context_window_tokens": 10_000,
+                "estimated_prompt_tokens": 7600,
+            },
+            ContextPressure,
         ),
         (
             {
@@ -248,6 +283,18 @@ def test_event_model_round_trip_json(event: Any, event_cls: type[Any]) -> None:
         ),
         (
             {
+                "type": "session.status",
+                "thread_id": "thread_1",
+                "turn_count": 2,
+                "input_tokens": 10,
+                "output_tokens": 5,
+                "context_window_tokens": 128_000,
+                "compaction_count": 1,
+            },
+            SessionStatus,
+        ),
+        (
+            {
                 "type": "session.hydrated",
                 "thread_id": "thread_1",
                 "turns": [
@@ -255,6 +302,7 @@ def test_event_model_round_trip_json(event: Any, event_cls: type[Any]) -> None:
                         "turn_id": "hydrated_1",
                         "user_text": "hello",
                         "assistant_text": "hi",
+                        "compaction_summary": None,
                     }
                 ],
             },

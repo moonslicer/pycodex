@@ -17,7 +17,7 @@ type NoticeUpdateResult = {
 export function toSystemNoticeText(event: ProtocolEvent): string | null {
   switch (event.type) {
     case "session.status":
-      return `Session ${event.thread_id}: turns=${String(event.turn_count)} tokens(in/out)=${String(event.input_tokens)}/${String(event.output_tokens)}`;
+      return `Session ${event.thread_id}: turns=${String(event.turn_count)} tokens(in/out)=${String(event.input_tokens)}/${String(event.output_tokens)} context_window=${String(event.context_window_tokens)} compacted=${String(event.compaction_count)}`;
     case "slash.unknown":
       return `Unknown command: /${event.command}`;
     case "slash.blocked":

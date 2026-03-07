@@ -37,6 +37,7 @@ from pycodex.core.session import PromptItem, Session, UsageSnapshot
 from pycodex.tools.orchestrator import ToolAborted
 
 _log = logging.getLogger(__name__)
+_CHARS_PER_TOKEN_ESTIMATE = 4
 
 
 @dataclass(slots=True, frozen=True)
@@ -100,6 +101,16 @@ class ContextCompacted:
     type: Literal["context_compacted"] = "context_compacted"
 
 
+@dataclass(slots=True, frozen=True)
+class ContextPressure:
+    """Event emitted when context is approaching compaction threshold."""
+
+    remaining_ratio: float
+    context_window_tokens: int
+    estimated_prompt_tokens: int
+    type: Literal["context_pressure"] = "context_pressure"
+
+
 AgentEvent = (
     TurnStarted
     | ToolCallDispatched
@@ -107,6 +118,7 @@ AgentEvent = (
     | TurnCompleted
     | TextDeltaReceived
     | ContextCompacted
+    | ContextPressure
 )
 EventCallback = Callable[[AgentEvent], None | Awaitable[None]]
 
@@ -175,10 +187,12 @@ class Agent:
         await self._persist_latest_history_item()
         await self._emit(TurnStarted(user_input=user_input))
         pending_tool_calls: dict[str, str] = {}
+        pressure_emitted = False
+        orchestrator = self._resolve_compaction_orchestrator()
 
         try:
             while True:
-                compaction = await self._compact_history_if_needed()
+                compaction = await self._compact_history_if_needed(orchestrator=orchestrator)
                 if compaction is not None:
                     await self._persist_compaction(compaction)
                     await self._emit(
@@ -192,6 +206,13 @@ class Agent:
                             threshold_ratio=compaction.threshold_ratio,
                         )
                     )
+                elif not pressure_emitted:
+                    pressure_warning = self._build_context_pressure_warning(
+                        orchestrator=orchestrator
+                    )
+                    if pressure_warning is not None:
+                        pressure_emitted = True
+                        await self._emit(pressure_warning)
                 tool_calls, text, usage = await self._sample_model_once()
                 if not tool_calls:
                     if text:
@@ -346,11 +367,45 @@ class Agent:
             return ""
         return self.session.config.profile.instructions
 
-    async def _compact_history_if_needed(self) -> CompactionApplied | None:
-        orchestrator = self._resolve_compaction_orchestrator()
+    async def _compact_history_if_needed(
+        self,
+        *,
+        orchestrator: SupportsCompactionOrchestrator | None = None,
+    ) -> CompactionApplied | None:
+        if orchestrator is None:
+            orchestrator = self._resolve_compaction_orchestrator()
         if orchestrator is None:
             return None
         return await orchestrator.compact(self.session)
+
+    def _build_context_pressure_warning(
+        self,
+        *,
+        orchestrator: SupportsCompactionOrchestrator | None,
+    ) -> ContextPressure | None:
+        if orchestrator is None:
+            return None
+
+        threshold_ratio = _compaction_threshold_ratio(orchestrator)
+        if threshold_ratio is None:
+            return None
+
+        context_window_tokens = _compaction_context_window(orchestrator)
+        if context_window_tokens <= 0:
+            return None
+
+        estimated_prompt_tokens = _estimate_prompt_tokens_for_session(self.session)
+        remaining_tokens = max(context_window_tokens - estimated_prompt_tokens, 0)
+        remaining_ratio = remaining_tokens / context_window_tokens
+        warning_upper_bound = min(1.0, threshold_ratio * 1.5)
+        if remaining_ratio <= threshold_ratio or remaining_ratio > warning_upper_bound:
+            return None
+
+        return ContextPressure(
+            remaining_ratio=remaining_ratio,
+            context_window_tokens=context_window_tokens,
+            estimated_prompt_tokens=estimated_prompt_tokens,
+        )
 
     def _resolve_compaction_orchestrator(self) -> SupportsCompactionOrchestrator | None:
         if self.compaction_orchestrator is not None:
@@ -487,6 +542,44 @@ def _compaction_component_options(
     if component is None:
         return {}
     return dict(component)
+
+
+def _estimate_prompt_tokens_for_session(session: Session) -> int:
+    cumulative_usage = session.cumulative_usage()
+    api_input_tokens = int(cumulative_usage.get("input_tokens", 0))
+    if api_input_tokens > 0:
+        return api_input_tokens
+
+    char_total = 0
+    for item in session.to_prompt():
+        for value in item.values():
+            if isinstance(value, str):
+                char_total += len(value)
+    return max(1, char_total // _CHARS_PER_TOKEN_ESTIMATE)
+
+
+def _compaction_threshold_ratio(orchestrator: SupportsCompactionOrchestrator) -> float | None:
+    strategy = getattr(orchestrator, "strategy", None)
+    if strategy is None:
+        return None
+    raw_threshold = getattr(strategy, "threshold_ratio", None)
+    if not isinstance(raw_threshold, (int, float)) or isinstance(raw_threshold, bool):
+        return None
+    threshold_ratio = float(raw_threshold)
+    if threshold_ratio <= 0:
+        return None
+    return threshold_ratio
+
+
+def _compaction_context_window(orchestrator: SupportsCompactionOrchestrator) -> int:
+    raw_context_window = getattr(orchestrator, "context_window_tokens", 0)
+    if isinstance(raw_context_window, bool):
+        return 0
+    if isinstance(raw_context_window, int):
+        return max(raw_context_window, 0)
+    if isinstance(raw_context_window, float):
+        return max(int(raw_context_window), 0)
+    return 0
 
 
 async def run_turn(

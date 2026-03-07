@@ -226,6 +226,7 @@ def test_replace_range_with_system_summary_replaces_middle_slice() -> None:
         {"role": "system", "content": "[compaction.summary.v1]\nConversation summary:\n- middle"},
         {"role": "assistant", "content": "a2"},
     ]
+    assert session.compaction_count() == 1
 
 
 def test_replace_range_with_system_summary_rejects_invalid_bounds() -> None:
@@ -248,3 +249,22 @@ def test_replace_range_with_system_summary_rejects_invalid_bounds() -> None:
         )
         is False
     )
+
+
+def test_restore_from_rollout_recomputes_compaction_count_from_summary_blocks() -> None:
+    session = Session()
+    session.restore_from_rollout(
+        history=[
+            {"role": "system", "content": "[compaction.summary.v1]\nConversation summary:\n- old"},
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "done"},
+            {
+                "role": "system",
+                "content": "[compaction.summary.v1]\nConversation summary:\n- newer",
+            },
+        ],
+        cumulative_usage={"input_tokens": 9, "output_tokens": 3},
+        turn_count=2,
+    )
+
+    assert session.compaction_count() == 2

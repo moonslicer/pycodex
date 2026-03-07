@@ -44,10 +44,14 @@ function isHydratedTurn(value: unknown): boolean {
   if (!isRecord(value)) {
     return false;
   }
+  const compactionSummary = value["compaction_summary"];
   return (
     isString(value["turn_id"]) &&
     isString(value["user_text"]) &&
-    isString(value["assistant_text"])
+    isString(value["assistant_text"]) &&
+    (compactionSummary === undefined ||
+      compactionSummary === null ||
+      isString(compactionSummary))
   );
 }
 
@@ -77,6 +81,14 @@ function isProtocolEvent(value: unknown): value is ProtocolEvent {
         isNumber(value["context_window_tokens"]) &&
         isNumber(value["remaining_ratio"]) &&
         isNumber(value["threshold_ratio"])
+      );
+    case "context.pressure":
+      return (
+        isString(threadId) &&
+        isString(turnId) &&
+        isNumber(value["remaining_ratio"]) &&
+        isNumber(value["context_window_tokens"]) &&
+        isNumber(value["estimated_prompt_tokens"])
       );
     case "turn.completed":
       return (
@@ -147,7 +159,9 @@ function isProtocolEvent(value: unknown): value is ProtocolEvent {
         isString(threadId) &&
         isNumber(value["turn_count"]) &&
         isNumber(value["input_tokens"]) &&
-        isNumber(value["output_tokens"])
+        isNumber(value["output_tokens"]) &&
+        isNumber(value["context_window_tokens"]) &&
+        isNumber(value["compaction_count"])
       );
     case "session.hydrated":
       return (

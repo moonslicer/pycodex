@@ -14,9 +14,11 @@ describe("toSystemNoticeText", () => {
         turn_count: 2,
         input_tokens: 15,
         output_tokens: 9,
+        context_window_tokens: 128000,
+        compaction_count: 1,
       },
       expected:
-        "Session thread_1: turns=2 tokens(in/out)=15/9",
+        "Session thread_1: turns=2 tokens(in/out)=15/9 context_window=128000 compacted=1",
     },
     {
       event: {
@@ -64,6 +66,8 @@ describe("updateSystemNotices", () => {
         turn_count: 1,
         input_tokens: 10,
         output_tokens: 5,
+        context_window_tokens: 128000,
+        compaction_count: 0,
       },
       {
         type: "slash.unknown",
@@ -76,7 +80,8 @@ describe("updateSystemNotices", () => {
     expect(next.notices).toEqual<SystemNotice[]>([
       {
         id: "notice_1",
-        text: "Session thread_1: turns=1 tokens(in/out)=10/5",
+        text:
+          "Session thread_1: turns=1 tokens(in/out)=10/5 context_window=128000 compacted=0",
       },
       {
         id: "notice_2",
@@ -109,6 +114,8 @@ describe("updateSystemNotices", () => {
       turn_count: 1,
       input_tokens: 10,
       output_tokens: 5,
+      context_window_tokens: 128000,
+      compaction_count: 0,
     };
     const second: ProtocolEvent = {
       type: "slash.unknown",
@@ -124,7 +131,8 @@ describe("updateSystemNotices", () => {
     const existingNotices: SystemNotice[] = [
       {
         id: "notice_1",
-        text: "Session thread_1: turns=1 tokens(in/out)=10/5",
+        text:
+          "Session thread_1: turns=1 tokens(in/out)=10/5 context_window=128000 compacted=0",
       },
       {
         id: "notice_2",

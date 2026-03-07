@@ -10,6 +10,7 @@ from pycodex.core.agent import (
     Agent,
     AgentEvent,
     ContextCompacted,
+    ContextPressure,
     TextDeltaReceived,
     ToolCallDispatched,
     ToolResultReceived,
@@ -103,9 +104,10 @@ class _BlockingToolRouter:
 class _RecordingCompactionOrchestrator:
     calls: int = 0
 
-    async def compact(self, session: Session) -> None:
+    async def compact(self, session: Session) -> CompactionApplied | None:
         _ = session
         self.calls += 1
+        return None
 
 
 @dataclass(slots=True)
@@ -129,6 +131,23 @@ class _ApplyingCompactionOrchestrator:
             threshold_ratio=0.2,
             summary_text="[compaction.summary.v1]\nConversation summary:\n- user: old",
         )
+
+
+@dataclass(slots=True, frozen=True)
+class _ThresholdStrategy:
+    threshold_ratio: float = 0.2
+
+
+@dataclass(slots=True)
+class _PressureOnlyCompactionOrchestrator:
+    strategy: _ThresholdStrategy = field(default_factory=_ThresholdStrategy)
+    context_window_tokens: int = 100
+    calls: int = 0
+
+    async def compact(self, session: Session) -> CompactionApplied | None:
+        _ = session
+        self.calls += 1
+        return None
 
 
 def test_run_turn_returns_text_when_no_tool_calls(tmp_path: Path) -> None:
@@ -226,6 +245,43 @@ def test_run_turn_emits_context_compacted_event(tmp_path: Path) -> None:
     assert emitted[1].strategy == "threshold_v1"
     assert emitted[1].implementation == "local_summary_v1"
     assert emitted[1].replaced_items == 3
+
+
+def test_run_turn_emits_context_pressure_warning_before_compaction(tmp_path: Path) -> None:
+    session = Session()
+    session.record_turn_usage({"input_tokens": 75, "output_tokens": 0})
+    model_client = _FakeModelClient(
+        turns=[[OutputTextDelta(delta="hello"), Completed(response_id="resp_1")]]
+    )
+    router = _FakeToolRouter(specs=[], results=[])
+    compaction = _PressureOnlyCompactionOrchestrator()
+    emitted: list[AgentEvent] = []
+
+    async def on_event(event: AgentEvent) -> None:
+        emitted.append(event)
+
+    result = asyncio.run(
+        Agent(
+            session=session,
+            model_client=model_client,
+            tool_router=router,
+            cwd=tmp_path,
+            on_event=on_event,
+            compaction_orchestrator=compaction,
+        ).run_turn("say hi")
+    )
+
+    assert result == "hello"
+    assert [event.type for event in emitted] == [
+        "turn_started",
+        "context_pressure",
+        "text_delta_received",
+        "turn_completed",
+    ]
+    assert isinstance(emitted[1], ContextPressure)
+    assert emitted[1].context_window_tokens == 100
+    assert emitted[1].estimated_prompt_tokens == 75
+    assert emitted[1].remaining_ratio == pytest.approx(0.25)
 
 
 def test_run_turn_builds_compaction_orchestrator_from_config(tmp_path: Path) -> None:

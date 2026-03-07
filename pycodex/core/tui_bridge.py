@@ -41,6 +41,7 @@ from pycodex.protocol.events import (
 
 _MAX_PENDING_APPROVALS = 100
 _MAX_SHELL_COMMAND_PREVIEW_CHARS = 240
+_SUMMARY_BLOCK_MARKER = "[compaction.summary.v1]"
 logger = logging.getLogger(__name__)
 
 _SENSITIVE_ENV_KEY_PATTERN = re.compile(
@@ -172,12 +173,19 @@ class TuiBridge:
 
     async def _slash_status(self) -> None:
         usage = self.session.cumulative_usage()
+        context_window_tokens = (
+            self.session.config.compaction_context_window_tokens
+            if self.session.config is not None
+            else 0
+        )
         self._emit_protocol_event(
             SessionStatus(
                 thread_id=self.session.thread_id,
                 turn_count=self.session.completed_turn_count(),
                 input_tokens=usage["input_tokens"],
                 output_tokens=usage["output_tokens"],
+                context_window_tokens=context_window_tokens,
+                compaction_count=self.session.compaction_count(),
             )
         )
 
@@ -425,9 +433,11 @@ def _build_hydrated_turns(history: list[PromptItem]) -> list[HydratedTurn]:
     turns: list[HydratedTurn] = []
     current_user: str | None = None
     assistant_messages: list[str] = []
+    current_compaction_summary: str | None = None
+    pending_compaction_summary: str | None = None
 
     def append_current_turn() -> None:
-        nonlocal current_user, assistant_messages
+        nonlocal current_compaction_summary, current_user, assistant_messages
         if current_user is None:
             return
         turns.append(
@@ -435,18 +445,25 @@ def _build_hydrated_turns(history: list[PromptItem]) -> list[HydratedTurn]:
                 turn_id=f"hydrated_{len(turns) + 1}",
                 user_text=current_user,
                 assistant_text="\n\n".join(assistant_messages),
+                compaction_summary=current_compaction_summary,
             )
         )
         current_user = None
         assistant_messages = []
+        current_compaction_summary = None
 
     for item in history:
         role = item.get("role")
         content = item.get("content")
         text = content if isinstance(content, str) else ""
+        if role == "system" and _SUMMARY_BLOCK_MARKER in text:
+            pending_compaction_summary = text
+            continue
         if role == "user":
             append_current_turn()
             current_user = text
+            current_compaction_summary = pending_compaction_summary
+            pending_compaction_summary = None
             continue
         if role == "assistant" and current_user is not None:
             assistant_messages.append(text)
