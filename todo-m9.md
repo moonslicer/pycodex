@@ -163,7 +163,7 @@ cd tui && npm test
   - Verify:
     - `cd tui && npm run typecheck`
 
-- [ ] T15: `app.tsx` wiring (`tui/src/app.tsx`)
+- [x] T15: `app.tsx` wiring (`tui/src/app.tsx`)
   - On `session.listed`: normalize rows via `toSessionSummaryItems(payload)` (drops malformed rows), open `SessionPickerModal` with valid rows.
   - On `session.status` / `slash.*` / `session.error`: feed to `useSystemNotices`.
   - `SessionPickerModal.onSelect(threadId)` -> `writer.sendSessionResume(threadId)`, close modal.
@@ -260,7 +260,7 @@ T15 + T16 + T17                 ──> T18 (final gates)
 - [x] T12 complete
 - [x] T13 complete
 - [x] T14 complete
-- [ ] T15 complete
+- [x] T15 complete
 - [ ] T16 complete
 - [ ] T17 complete
 - [ ] T18 complete

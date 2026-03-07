@@ -10,7 +10,11 @@
  * is wired up.
  */
 import type { ProtocolEvent } from "../protocol/types.js";
-import { isInputDisabled, summarizeCompactionForTurns } from "../app.js";
+import {
+  isInputDisabled,
+  summarizeCompactionForTurns,
+  toSessionSummaryItems,
+} from "../app.js";
 import {
   INITIAL_TURNS_STATE,
   reduceTurns,
@@ -203,5 +207,66 @@ describe("App state integration smoke", () => {
 
     expect(summary.status).toBe("idle");
     expect(summary.detail).toBeNull();
+  });
+});
+
+describe("toSessionSummaryItems", () => {
+  test("keeps valid rows and drops malformed rows", () => {
+    const normalized = toSessionSummaryItems([
+      {
+        thread_id: "thread_1",
+        status: "closed",
+        turn_count: 2,
+        token_total: 20,
+        last_user_message: "hello",
+        date: "2026-03-06",
+      },
+      {
+        thread_id: 12,
+        status: "closed",
+      },
+      {
+        thread_id: "thread_2",
+        status: "incomplete",
+        turn_count: 0,
+        token_total: 0,
+        last_user_message: null,
+        date: "2026-03-07",
+      },
+    ]);
+
+    expect(normalized).toEqual([
+      {
+        thread_id: "thread_1",
+        status: "closed",
+        turn_count: 2,
+        token_total: 20,
+        last_user_message: "hello",
+        date: "2026-03-06",
+      },
+      {
+        thread_id: "thread_2",
+        status: "incomplete",
+        turn_count: 0,
+        token_total: 0,
+        last_user_message: null,
+        date: "2026-03-07",
+      },
+    ]);
+  });
+
+  test("returns empty array when all rows are malformed", () => {
+    const normalized = toSessionSummaryItems([
+      { bad: true },
+      null,
+      42,
+      {
+        thread_id: "thread_1",
+        status: "closed",
+        turn_count: "nope",
+      },
+    ]);
+
+    expect(normalized).toEqual([]);
   });
 });
