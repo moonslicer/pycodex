@@ -2,12 +2,13 @@
 
 from __future__ import annotations
 
+import inspect
 import json
 import math
 import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol, TypeAlias, cast
+from typing import Protocol, TypeAlias
 
 from pycodex.core.session import PromptItem, Session
 
@@ -24,7 +25,7 @@ _SUMMARY_TOOL_ARGS_MAX_CHARS = 500
 
 _SUMMARY_TAG_PATTERN = re.compile(r"<summary>(.*?)</summary>", re.DOTALL | re.IGNORECASE)
 _DATA_URL_IMAGE_PATTERN = re.compile(r"data:image/[^;]+;base64,[A-Za-z0-9+/=]{20,}")
-_LONG_BASE64_PATTERN = re.compile(r"\b[A-Za-z0-9+/]{200,}={0,2}\b")
+_LONG_BASE64_PATTERN = re.compile(r"(?<!\w)[A-Za-z0-9+/]{200,}={0,2}(?!\w)")
 
 
 @dataclass(frozen=True, slots=True)
@@ -274,14 +275,10 @@ class CompactionOrchestrator:
 
 
 StrategyFactory: TypeAlias = Callable[[dict[str, object]], CompactionStrategy]
-LegacyImplementationFactory: TypeAlias = Callable[[dict[str, object]], CompactionImplementation]
-ModelAwareImplementationFactory: TypeAlias = Callable[
+ImplementationFactory: TypeAlias = Callable[
     [dict[str, object], SupportsModelComplete | None],
     CompactionImplementation,
 ]
-ImplementationFactory: TypeAlias = (
-    LegacyImplementationFactory | ModelAwareImplementationFactory
-)
 
 
 def create_compaction_orchestrator(
@@ -372,39 +369,68 @@ def _build_implementation(
     options: dict[str, object],
     model_client: SupportsModelComplete | None,
 ) -> CompactionImplementation:
+    _POSITIONAL_KINDS = (
+        inspect.Parameter.POSITIONAL_ONLY,
+        inspect.Parameter.POSITIONAL_OR_KEYWORD,
+    )
     try:
-        model_aware_factory = cast(ModelAwareImplementationFactory, factory)
-        return model_aware_factory(options, model_client)
-    except TypeError as model_aware_error:
-        # Backward compatibility for one-arg implementation factories.
-        try:
-            legacy_factory = cast(LegacyImplementationFactory, factory)
-            return legacy_factory(options)
-        except TypeError:
-            raise model_aware_error from None
+        positional_count = sum(
+            1
+            for p in inspect.signature(factory).parameters.values()
+            if p.kind in _POSITIONAL_KINDS
+        )
+    except (ValueError, TypeError):
+        positional_count = 2
+    if positional_count >= 2:
+        return factory(options, model_client)  # type: ignore[call-arg]
+    return factory(options)  # type: ignore[call-arg]
 
 
 def _build_model_summary_prompt(*, transcript: str, custom_instructions: str) -> str:
-    sections = [
-        "Your task is to create a detailed summary of the conversation so far.",
-        "This summary will replace compacted history for a future model instance.",
-        "",
-        "Your summary MUST include these sections:",
-        "1. Primary Request and Intent",
-        "2. Key Technical Concepts",
-        "3. Files and Code Sections",
-        "4. Tool Calls and Outcomes",
-        "5. Errors and Fixes",
-        "6. All User Messages",
-        "7. Pending Tasks",
-        "8. Current Work",
-        "9. Next Step",
-        "",
-        "Wrap reasoning in <analysis> tags first, then output ONLY",
-        "the summary inside <summary>...</summary> tags.",
-        "Do not use any tools.",
-    ]
-    prompt = "\n".join(sections)
+    prompt = (
+        "Your task is to create a detailed summary of the conversation so far. This summary\n"
+        "will replace the compacted history — another model instance will resume the session\n"
+        "using only this summary plus recent context.\n"
+        "\n"
+        "Be thorough with technical details, code patterns, and decisions that are essential\n"
+        "for continuing the work without losing context. IMPORTANT: Do NOT use any tools.\n"
+        "\n"
+        "Your summary MUST include these sections:\n"
+        "\n"
+        "1. Primary Request and Intent\n"
+        "   Capture all of the user's explicit requests and goals in detail.\n"
+        "\n"
+        "2. Key Technical Concepts\n"
+        "   List important technologies, frameworks, and architectural decisions discussed.\n"
+        "\n"
+        "3. Files and Code Sections\n"
+        "   For each file read, edited, or created: what changed and why. Include code\n"
+        "   snippets for non-obvious changes.\n"
+        "\n"
+        "4. Tool Calls and Outcomes\n"
+        "   Summarize significant shell commands run, their purpose, and their output\n"
+        "   (truncate long outputs to the key result).\n"
+        "\n"
+        "5. Errors and Fixes\n"
+        "   List errors encountered and how they were resolved. Include any user corrections.\n"
+        "\n"
+        "6. All User Messages\n"
+        "   List every user message verbatim (not tool results). Critical for preserving intent.\n"
+        "\n"
+        "7. Pending Tasks\n"
+        "   Any tasks explicitly requested but not yet completed.\n"
+        "\n"
+        "8. Current Work\n"
+        "   Precisely what was being done immediately before this summary. Include filenames\n"
+        "   and code snippets.\n"
+        "\n"
+        "9. Next Step\n"
+        "   The single next action to take, directly quoting the most recent user instruction.\n"
+        "   Only include if clearly defined — do not invent next steps.\n"
+        "\n"
+        "Wrap your reasoning in <analysis> tags first. Then output ONLY the summary inside\n"
+        "<summary>...</summary> tags."
+    )
 
     trimmed_custom = custom_instructions.strip()
     if trimmed_custom:
@@ -461,7 +487,7 @@ def _format_transcript_for_summary(items: list[PromptItem]) -> str:
 
 def _render_tool_arguments(arguments: object) -> str:
     if isinstance(arguments, dict):
-        return json.dumps(arguments, ensure_ascii=True, sort_keys=True)
+        return json.dumps(arguments, ensure_ascii=True)
     return str(arguments)
 
 

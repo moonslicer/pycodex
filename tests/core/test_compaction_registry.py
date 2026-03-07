@@ -97,3 +97,41 @@ def test_create_compaction_orchestrator_supports_legacy_implementation_factory(
 
     assert orchestrator.implementation.name == DEFAULT_COMPACTION_IMPLEMENTATION
     assert orchestrator.implementation.max_lines == 5
+
+
+def test_create_compaction_orchestrator_supports_var_keyword_factory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Factory with (options, **kwargs) must not be called with two positional args."""
+
+    def _kwargs_factory(options: dict[str, object], **kwargs: object) -> LocalSummaryV1Implementation:
+        return LocalSummaryV1Implementation(max_lines=int(options.get("max_lines", 8)))
+
+    monkeypatch.setitem(IMPLEMENTATION_REGISTRY, "kwargs_factory_test", _kwargs_factory)
+
+    orchestrator = create_compaction_orchestrator(
+        implementation_name="kwargs_factory_test",
+        implementation_options={"max_lines": 3},
+    )
+
+    assert orchestrator.implementation.max_lines == 3
+
+
+def test_create_compaction_orchestrator_supports_keyword_only_factory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    """Factory with (options, *, model_client=None) must not be called with two positional args."""
+
+    def _kwonly_factory(
+        options: dict[str, object], *, model_client: object = None
+    ) -> LocalSummaryV1Implementation:
+        return LocalSummaryV1Implementation(max_lines=int(options.get("max_lines", 8)))
+
+    monkeypatch.setitem(IMPLEMENTATION_REGISTRY, "kwonly_factory_test", _kwonly_factory)
+
+    orchestrator = create_compaction_orchestrator(
+        implementation_name="kwonly_factory_test",
+        implementation_options={"max_lines": 4},
+    )
+
+    assert orchestrator.implementation.max_lines == 4

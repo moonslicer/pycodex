@@ -108,7 +108,7 @@ def test_threshold_strategy_skips_when_new_content_since_last_summary_is_too_sma
     session.append_user_message("u")
     session.append_assistant_message("a")
 
-    strategy = ThresholdV1Strategy(threshold_ratio=0.9, keep_recent_items=2, min_replace_items=1)
+    strategy = ThresholdV1Strategy(threshold_ratio=0.3, keep_recent_items=2, min_replace_items=1)
     context = CompactionContext(
         history=session.to_prompt(),
         prompt_tokens_estimate=950,
@@ -232,7 +232,7 @@ def test_compaction_orchestrator_skips_summary_only_prefix() -> None:
     session.append_assistant_message("reply")
     history_before = session.to_prompt()
     orchestrator = CompactionOrchestrator(
-        strategy=ThresholdV1Strategy(threshold_ratio=0.9, keep_recent_items=2, min_replace_items=1),
+        strategy=ThresholdV1Strategy(threshold_ratio=0.3, keep_recent_items=2, min_replace_items=1),
         implementation=LocalSummaryV1Implementation(),
         context_window_tokens=3,
     )
