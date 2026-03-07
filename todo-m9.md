@@ -123,7 +123,7 @@ cd tui && npm test
   - Verify:
     - `cd tui && npm test -- --testPathPattern useTurns`
 
-- [ ] T10: `useSystemNotices` hook (`tui/src/hooks/useSystemNotices.ts`, new)
+- [x] T10: `useSystemNotices` hook (`tui/src/hooks/useSystemNotices.ts`, new)
   - Export `SystemNotice = { id: string; text: string }`.
   - `useSystemNotices(events)`: convert `session.status`, `slash.unknown`, `slash.blocked`, `session.error` events to formatted notice strings; ignore all other types; notices accumulate, cleared on full event reset.
   - Verify:
@@ -255,7 +255,7 @@ T15 + T16 + T17                 ──> T18 (final gates)
 - [ ] T7 complete
 - [ ] T8 complete
 - [x] T9 complete
-- [ ] T10 complete
+- [x] T10 complete
 - [ ] T11 complete
 - [ ] T12 complete
 - [ ] T13 complete
