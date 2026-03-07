@@ -139,7 +139,7 @@ cd tui && npm test
   - Verify:
     - `cd tui && npm test -- --testPathPattern useSlashCompletion`
 
-- [ ] T12: `SlashCommandPopup` component (`tui/src/components/SlashCommandPopup.tsx`, new)
+- [x] T12: `SlashCommandPopup` component (`tui/src/components/SlashCommandPopup.tsx`, new)
   - Props: `matches: readonly SlashCommandDef[]`, `selectedIndex: number`.
   - Renders one row per match; selected row highlighted (inverse); `/<command>  <description>` format.
   - Returns `null` when `matches` is empty. No keyboard handling.
@@ -257,7 +257,7 @@ T15 + T16 + T17                 ──> T18 (final gates)
 - [x] T9 complete
 - [x] T10 complete
 - [x] T11 complete
-- [ ] T12 complete
+- [x] T12 complete
 - [ ] T13 complete
 - [ ] T14 complete
 - [ ] T15 complete
