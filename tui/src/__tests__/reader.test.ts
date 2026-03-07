@@ -143,6 +143,19 @@ describe("StdioReader", () => {
     );
     stdout.write(
       `${JSON.stringify({
+        type: "session.hydrated",
+        thread_id: "thread_1",
+        turns: [
+          {
+            turn_id: "hydrated_1",
+            user_text: "hello",
+            assistant_text: "hi",
+          },
+        ],
+      })}\n`,
+    );
+    stdout.write(
+      `${JSON.stringify({
         type: "slash.unknown",
         command: "bogus",
       })}\n`,
@@ -168,6 +181,7 @@ describe("StdioReader", () => {
       "session.listed",
       "session.listed",
       "session.status",
+      "session.hydrated",
       "slash.unknown",
       "slash.blocked",
       "session.error",

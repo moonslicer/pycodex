@@ -87,7 +87,7 @@ def test_list_sessions_uncapped_returns_newest_first(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(session_store, "_resolve_sessions_root", lambda _config: tmp_path)
+    monkeypatch.setattr(session_store, "resolve_sessions_root", lambda _config: tmp_path)
     _write_rollout(
         tmp_path / "rollout-20260101-000000000000-thread-old.jsonl",
         [
@@ -136,7 +136,7 @@ def test_list_sessions_respects_limit(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(session_store, "_resolve_sessions_root", lambda _config: tmp_path)
+    monkeypatch.setattr(session_store, "resolve_sessions_root", lambda _config: tmp_path)
     _write_rollout(
         tmp_path / "rollout-20260102-000000000000-thread-a.jsonl",
         [
@@ -187,7 +187,7 @@ def test_list_sessions_uses_file_metadata_for_incomplete_sessions(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(session_store, "_resolve_sessions_root", lambda _config: tmp_path)
+    monkeypatch.setattr(session_store, "resolve_sessions_root", lambda _config: tmp_path)
     path = tmp_path / "rollout-20260102-000000000000-thread-incomplete.jsonl"
     _write_rollout(
         path,
@@ -211,7 +211,7 @@ def test_list_sessions_falls_back_to_stat_time_when_closed_at_is_missing(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(session_store, "_resolve_sessions_root", lambda _config: tmp_path)
+    monkeypatch.setattr(session_store, "resolve_sessions_root", lambda _config: tmp_path)
     path = tmp_path / "rollout-20260102-000000000000-thread-closed.jsonl"
     path.write_text("{}", encoding="utf-8")
     os.utime(path, (1735689600, 1735689600))  # 2025-01-01T00:00:00Z
@@ -235,7 +235,7 @@ def test_list_sessions_uses_fast_path_for_closed_sessions(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(session_store, "_resolve_sessions_root", lambda _config: tmp_path)
+    monkeypatch.setattr(session_store, "resolve_sessions_root", lambda _config: tmp_path)
     closed_path = tmp_path / "rollout-20260102-000000000000-thread-closed.jsonl"
     incomplete_path = tmp_path / "rollout-20260101-000000000000-thread-incomplete.jsonl"
     _write_rollout(
@@ -331,7 +331,7 @@ def test_resolve_resume_rollout_path_resolves_by_thread_id(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(session_store, "_resolve_sessions_root", lambda _config: tmp_path)
+    monkeypatch.setattr(session_store, "resolve_sessions_root", lambda _config: tmp_path)
     older = tmp_path / "rollout-20260101-000000000000-thread-id.jsonl"
     newer = tmp_path / "rollout-20260102-000000000000-thread-id.jsonl"
     _write_rollout(older, [_session_meta("thread-id")])
@@ -348,7 +348,7 @@ def test_resolve_resume_rollout_path_resolves_explicit_path(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(session_store, "_resolve_sessions_root", lambda _config: tmp_path)
+    monkeypatch.setattr(session_store, "resolve_sessions_root", lambda _config: tmp_path)
     path = tmp_path / "rollout-20260101-000000000000-explicit.jsonl"
     _write_rollout(path, [_session_meta("explicit")])
 
@@ -363,7 +363,7 @@ def test_resolve_resume_rollout_path_raises_when_not_found(
     tmp_path: Path,
     monkeypatch: pytest.MonkeyPatch,
 ) -> None:
-    monkeypatch.setattr(session_store, "_resolve_sessions_root", lambda _config: tmp_path)
+    monkeypatch.setattr(session_store, "resolve_sessions_root", lambda _config: tmp_path)
 
     with pytest.raises(RolloutReplayError, match="Unable to resolve rollout"):
         asyncio.run(

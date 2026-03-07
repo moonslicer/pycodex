@@ -107,6 +107,18 @@ export type SessionStatusEvent = {
   output_tokens: number;
 };
 
+export type HydratedTurnItem = {
+  turn_id: string;
+  user_text: string;
+  assistant_text: string;
+};
+
+export type SessionHydratedEvent = {
+  type: "session.hydrated";
+  thread_id: string;
+  turns: HydratedTurnItem[];
+};
+
 export type SlashUnknownEvent = {
   type: "slash.unknown";
   command: string;
@@ -136,6 +148,7 @@ export type ProtocolEvent =
   | ApprovalRequestedEvent
   | SessionListedEvent
   | SessionStatusEvent
+  | SessionHydratedEvent
   | SlashUnknownEvent
   | SlashBlockedEvent
   | SessionErrorEvent;

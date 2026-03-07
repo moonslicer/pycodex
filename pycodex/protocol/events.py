@@ -150,6 +150,22 @@ class SessionStatus(_FrozenModel):
     output_tokens: StrictInt
 
 
+class HydratedTurn(_FrozenModel):
+    """Turn payload used to hydrate historical turns in resumed sessions."""
+
+    turn_id: str
+    user_text: str
+    assistant_text: str
+
+
+class SessionHydrated(_FrozenModel):
+    """Event emitted after session.resume to hydrate historical turns."""
+
+    type: Literal["session.hydrated"] = "session.hydrated"
+    thread_id: str
+    turns: list[HydratedTurn]
+
+
 class SlashUnknown(_FrozenModel):
     """Event emitted when a slash command is not recognized."""
 
@@ -185,6 +201,7 @@ ProtocolEvent: TypeAlias = Annotated[
     | ApprovalRequested
     | SessionListed
     | SessionStatus
+    | SessionHydrated
     | SlashUnknown
     | SlashBlocked
     | SessionError,

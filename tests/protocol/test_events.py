@@ -6,10 +6,12 @@ import pytest
 from pycodex.protocol.events import (
     ApprovalRequested,
     ContextCompacted,
+    HydratedTurn,
     ItemCompleted,
     ItemStarted,
     ItemUpdated,
     ProtocolEvent,
+    SessionHydrated,
     SessionListed,
     SessionSummary,
     ThreadStarted,
@@ -117,6 +119,19 @@ from pydantic import TypeAdapter, ValidationError
                 ]
             ),
             SessionListed,
+        ),
+        (
+            SessionHydrated(
+                thread_id="thread_1",
+                turns=[
+                    HydratedTurn(
+                        turn_id="hydrated_1",
+                        user_text="hello",
+                        assistant_text="hi",
+                    )
+                ],
+            ),
+            SessionHydrated,
         ),
     ],
 )
@@ -230,6 +245,20 @@ def test_event_model_round_trip_json(event: Any, event_cls: type[Any]) -> None:
                 ],
             },
             SessionListed,
+        ),
+        (
+            {
+                "type": "session.hydrated",
+                "thread_id": "thread_1",
+                "turns": [
+                    {
+                        "turn_id": "hydrated_1",
+                        "user_text": "hello",
+                        "assistant_text": "hi",
+                    }
+                ],
+            },
+            SessionHydrated,
         ),
     ],
 )

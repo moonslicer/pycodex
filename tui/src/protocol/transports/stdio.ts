@@ -40,6 +40,17 @@ function isUsageSnapshot(value: unknown): value is UsageSnapshot {
   return isTokenUsage(value["turn"]) && isTokenUsage(value["cumulative"]);
 }
 
+function isHydratedTurn(value: unknown): boolean {
+  if (!isRecord(value)) {
+    return false;
+  }
+  return (
+    isString(value["turn_id"]) &&
+    isString(value["user_text"]) &&
+    isString(value["assistant_text"])
+  );
+}
+
 function isProtocolEvent(value: unknown): value is ProtocolEvent {
   if (!isRecord(value) || !isString(value["type"])) {
     return false;
@@ -137,6 +148,12 @@ function isProtocolEvent(value: unknown): value is ProtocolEvent {
         isNumber(value["turn_count"]) &&
         isNumber(value["input_tokens"]) &&
         isNumber(value["output_tokens"])
+      );
+    case "session.hydrated":
+      return (
+        isString(threadId) &&
+        Array.isArray(value["turns"]) &&
+        value["turns"].every(isHydratedTurn)
       );
     case "slash.unknown":
       return isString(value["command"]);

@@ -48,7 +48,7 @@ cd tui && npm test
 
 ### PR 1 — Extraction and Bug Fix
 
-- [ ] T1: Extract `session_store.py` module (`pycodex/core/session_store.py`, `pycodex/__main__.py`)
+- [x] T1: Extract `session_store.py` module (`pycodex/core/session_store.py`, `pycodex/__main__.py`)
   - Move out of `__main__.py` without logic changes: `_resolve_resume_rollout_path` -> `resolve_resume_rollout_path`, `_read_session_closed` -> `read_session_closed`, `_list_sessions` -> `list_sessions`, `_last_user_message_from_history` -> `last_user_message_from_history`, `_rollout_date_token` -> `rollout_date_token`.
   - Add `SessionSummaryRecord` dataclass (`thread_id`, `status`, `turn_count`, `token_total`, `last_user_message`, `date`).
   - `list_sessions` is uncapped (`limit: int | None = None`); CLI callers pass `limit=None`; bridge caller passes `limit=500` at its call site.
@@ -57,14 +57,14 @@ cd tui && npm test
   - Verify:
     - `.venv/bin/pytest tests/test_main.py -k "session" -q`
 
-- [ ] T2: Fix `EventAdapter` thread ID in `TuiBridge.__post_init__` (`pycodex/core/tui_bridge.py`)
+- [x] T2: Fix `EventAdapter` thread ID in `TuiBridge.__post_init__` (`pycodex/core/tui_bridge.py`)
   - Change `_adapter` from `field(default_factory=EventAdapter, init=False)` to `field(init=False)` with no factory.
   - Initialize in `__post_init__`: `self._adapter = EventAdapter(thread_id=self.session.thread_id)`.
   - Ensures `thread.started` carries the resumed session's `thread_id`, not a random UUID.
   - Verify:
     - `.venv/bin/pytest tests/core/test_tui_bridge.py -k "thread_id" -q`
 
-- [ ] T3: Tests for PR 1 (`tests/core/test_session_store.py`, `tests/core/test_tui_bridge.py`, `tests/test_main.py`, `tests/core/test_session.py`)
+- [x] T3: Tests for PR 1 (`tests/core/test_session_store.py`, `tests/core/test_tui_bridge.py`, `tests/test_main.py`, `tests/core/test_session.py`)
   - `test_session_store.py` (new): `list_sessions` uncapped / capped / newest-first / closed fast-path / incomplete fallback; `read_session_closed` valid / empty / truncated / non-closed; `resolve_resume_rollout_path` by thread ID / explicit path / not-found raises.
   - `test_tui_bridge.py` additions: `thread.started` on init carries `session.thread_id`; resumed session bridge emits `thread.started` with replayed `thread_id`.
   - `tests/test_main.py` regression: `session list`, `session read`, `session archive`, `session unarchive` still work after extraction.
@@ -78,13 +78,13 @@ cd tui && npm test
 
 ### PR 2 — Slash Commands + Session Picker (Atomic Python + TUI)
 
-- [ ] T4: New Python protocol events (`pycodex/protocol/events.py`)
+- [x] T4: New Python protocol events (`pycodex/protocol/events.py`)
   - Add six `_FrozenModel` classes: `SessionSummary`, `SessionListed` (`session.listed`), `SessionStatus` (`session.status`), `SlashUnknown` (`slash.unknown`), `SlashBlocked` (`slash.blocked`), `SessionError` (`session.error`).
   - Extend `ProtocolEvent` union with all six.
   - Verify:
     - `.venv/bin/mypy --strict pycodex/`
 
-- [ ] T5: Slash dispatch and handlers (`pycodex/core/tui_bridge.py`)
+- [x] T5: Slash dispatch and handlers (`pycodex/core/tui_bridge.py`)
   - In `_handle_user_input`: detect leading `/`, dispatch to `_handle_slash_command`, return early (skip agent turn).
   - `_handle_slash_command`: match `resume` / `status` / `new` / default (`SlashUnknown`).
   - `_slash_status`: always allowed; emit `SessionStatus` with current thread_id, turn count, token usage.
@@ -93,7 +93,7 @@ cd tui && npm test
   - Verify:
     - `.venv/bin/pytest tests/core/test_tui_bridge.py -k "slash" -q`
 
-- [ ] T6: `_activate_session` and JSON-RPC handlers (`pycodex/core/tui_bridge.py`)
+- [x] T6: `_activate_session` and JSON-RPC handlers (`pycodex/core/tui_bridge.py`)
   - `_activate_session(new_session)`: close current rollout, clear `_pending_approvals`, swap `self.session`, create fresh `EventAdapter(thread_id=new_session.thread_id)`, emit `thread.started`.
   - `_handle_session_resume(params)`: active-turn guard -> `SessionError`; validate `thread_id` param; same-thread guard; resolve rollout path; replay; restore session; configure recorder; call `_activate_session`. Entire body in try/except -> `SessionError(operation="resume")`.
   - `_handle_session_new()`: active-turn guard -> `SessionError`; create session; configure rollout; call `_activate_session`. Wrap in try/except -> `SessionError(operation="new")`.
@@ -101,7 +101,7 @@ cd tui && npm test
   - Verify:
     - `.venv/bin/pytest tests/core/test_tui_bridge.py -k "session_resume or session_new or activate" -q`
 
-- [ ] T7: TypeScript protocol types (`tui/src/protocol/types.ts`)
+- [x] T7: TypeScript protocol types (`tui/src/protocol/types.ts`)
   - Add event types: `SessionSummaryItem`, `SessionListedEvent`, `SessionStatusEvent`, `SlashUnknownEvent`, `SlashBlockedEvent`, `SessionErrorEvent`.
   - Add command types: `SessionResumeCommand`, `SessionNewCommand`.
   - Extend `ProtocolEvent` union with all six event types.
@@ -109,7 +109,7 @@ cd tui && npm test
   - Verify:
     - `cd tui && npm run typecheck`
 
-- [ ] T8: TypeScript transport + writer (`tui/src/protocol/transports/stdio.ts`, `tui/src/protocol/writer.ts`)
+- [x] T8: TypeScript transport + writer (`tui/src/protocol/transports/stdio.ts`, `tui/src/protocol/writer.ts`)
   - `stdio.ts` — add cases to `isProtocolEvent` for all six new event types (outer-shape validation only for `session.listed`).
   - `StdioWriter` — add `sendSessionResume(threadId: string): void` and `sendSessionNew(): void`.
   - `writer.ts` — add both methods to `ProtocolWriter` interface.
@@ -207,6 +207,18 @@ cd tui && npm test
     - `cd tui && npm run lint`
     - `cd tui && npm test`
 
+### Wave R2b — Session Hydration on Resume
+
+- [x] T23: Emit `session.hydrated` after `session.resume` (`pycodex/protocol/events.py`, `pycodex/core/tui_bridge.py`, `tui/src/hooks/useTurns.ts`, `tui/src/protocol/types.ts`, `tui/src/protocol/transports/stdio.ts`)
+  - Add `HydratedTurn` and `SessionHydrated` protocol event (Python + TypeScript).
+  - `_build_hydrated_turns(history)`: fold user/assistant history into `HydratedTurn` list; non-string content blocks become empty text.
+  - After `_activate_session` in `_handle_session_resume`, emit `SessionHydrated` with hydrated turns.
+  - `_current_session_has_local_activity()` guard: only close rollout on `_activate_session` when the current session has user messages or written rollout metadata (prevents ghost rollout files for pristine sessions).
+  - TUI: `reduceTurns` handles `session.hydrated` — populates completed turns for matching thread, ignores mismatched thread.
+  - Verify:
+    - `.venv/bin/pytest tests/core/test_tui_bridge.py tests/protocol/test_events.py -q`
+    - `cd tui && npm test -- --runInBand --findRelatedTests src/hooks/useTurns.ts src/protocol/types.ts src/protocol/transports/stdio.ts`
+
 ### Wave R3 — Resume Metadata + Presentation (Trimmed Scope)
 
 - [x] T19: Extend resume session summary contract (`pycodex/protocol/events.py`, `tui/src/protocol/types.ts`, `tui/src/protocol/transports/stdio.ts`, `tui/src/app.tsx`)
@@ -294,14 +306,14 @@ T20 + T21                       ──> T22 (wave R3 hard gates)
 16. `--tui-mode --resume <id>`: `thread.started` carries resumed session's `thread_id` (not random UUID). [PR 1 bug fix]
 
 ## Completion Checklist
-- [ ] T1 complete
-- [ ] T2 complete
-- [ ] T3 complete
-- [ ] T4 complete
-- [ ] T5 complete
-- [ ] T6 complete
-- [ ] T7 complete
-- [ ] T8 complete
+- [x] T1 complete
+- [x] T2 complete
+- [x] T3 complete
+- [x] T4 complete
+- [x] T5 complete
+- [x] T6 complete
+- [x] T7 complete
+- [x] T8 complete
 - [x] T9 complete
 - [x] T10 complete
 - [x] T11 complete
@@ -316,5 +328,6 @@ T20 + T21                       ──> T22 (wave R3 hard gates)
 - [x] T20 complete
 - [x] T21 complete
 - [x] T22 complete
+- [x] T23 complete
 - [x] All quality gates pass
 - [ ] Manual acceptance criteria verified

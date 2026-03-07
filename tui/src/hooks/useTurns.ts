@@ -105,6 +105,26 @@ function toFinalLines(finalText: string): string[] {
   return reduceLineBuffer(pushed, { type: "flush" }).committed;
 }
 
+function toHydratedTurnState(
+  turn: Extract<ProtocolEvent, { type: "session.hydrated" }>["turns"][number],
+): TurnState {
+  return {
+    turn_id: turn.turn_id,
+    userText: turn.user_text,
+    assistantLines:
+      turn.assistant_text.length > 0 ? toFinalLines(turn.assistant_text) : [],
+    partialLine: "",
+    toolCalls: {},
+    status: "completed",
+    error: null,
+    usage: null,
+    compaction: {
+      status: "idle",
+      detail: null,
+    },
+  };
+}
+
 function applyItemStartedEvent(
   state: TurnsViewState,
   event: Extract<ProtocolEvent, { type: "item.started" }>,
@@ -345,6 +365,14 @@ export function reduceTurns(
       return applyItemStartedEvent(state, event);
     case "item.completed":
       return applyItemCompletedEvent(state, event);
+    case "session.hydrated":
+      if (state.threadId !== null && state.threadId !== event.thread_id) {
+        return state;
+      }
+      return {
+        threadId: event.thread_id,
+        turns: event.turns.map(toHydratedTurnState),
+      };
     case "approval.request":
     case "session.listed":
     case "session.status":

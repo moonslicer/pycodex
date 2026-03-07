@@ -2,6 +2,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 from pathlib import Path
 from typing import Any
 
@@ -360,10 +361,10 @@ def test_activate_session_replaces_bridge_session_and_clears_pending_approvals(
 ) -> None:
     events: list[Any] = []
     bridge = _new_bridge(tmp_path, events)
+    bridge.session.append_user_message("hello")
     close_calls = 0
 
-    async def fake_close_rollout(self: Session) -> None:
-        _ = self
+    async def fake_close_rollout(_self: Session) -> None:
         nonlocal close_calls
         close_calls += 1
 
@@ -379,6 +380,32 @@ def test_activate_session_replaces_bridge_session_and_clears_pending_approvals(
     assert close_calls == 1
     assert bridge.session.thread_id == "new-thread-id"
     assert bridge._pending_approvals == {}
+    assert _event_types(events) == ["thread.started", "thread.started"]
+    assert events[-1].thread_id == "new-thread-id"
+
+
+def test_activate_session_skips_close_for_pristine_session(
+    monkeypatch: pytest.MonkeyPatch,
+    tmp_path: Path,
+) -> None:
+    events: list[Any] = []
+    bridge = _new_bridge(tmp_path, events)
+    close_calls = 0
+
+    async def fake_close_rollout(_self: Session) -> None:
+        nonlocal close_calls
+        close_calls += 1
+
+    monkeypatch.setattr(Session, "close_rollout", fake_close_rollout)
+    new_session = Session(
+        config=Config(model="test-model", api_key="test-key", cwd=tmp_path),
+        thread_id="new-thread-id",
+    )
+
+    asyncio.run(bridge._activate_session(new_session))
+
+    assert close_calls == 0
+    assert bridge.session.thread_id == "new-thread-id"
     assert _event_types(events) == ["thread.started", "thread.started"]
     assert events[-1].thread_id == "new-thread-id"
 
@@ -515,7 +542,7 @@ def test_session_resume_method_unknown_thread_id_emits_session_error(
     assert events[-1].operation == "resume"
 
 
-def test_session_resume_method_replays_and_emits_thread_started(
+def test_session_resume_method_replays_and_emits_hydrated_history(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
@@ -524,7 +551,10 @@ def test_session_resume_method_replays_and_emits_thread_started(
     replay_path = tmp_path / "rollout-20260101-000000000000-replayed-thread.jsonl"
     replay_state = ReplayState(
         thread_id="replayed-thread",
-        history=[{"role": "user", "content": "hello"}],
+        history=[
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi there"},
+        ],
         cumulative_usage={"input_tokens": 5, "output_tokens": 8},
         turn_count=3,
         status="closed",
@@ -561,8 +591,12 @@ def test_session_resume_method_replays_and_emits_thread_started(
         )
     )
 
-    assert _event_types(events) == ["thread.started", "thread.started"]
+    assert _event_types(events) == ["thread.started", "thread.started", "session.hydrated"]
+    assert events[-2].thread_id == "replayed-thread"
     assert events[-1].thread_id == "replayed-thread"
+    assert len(events[-1].turns) == 1
+    assert events[-1].turns[0].user_text == "hello"
+    assert events[-1].turns[0].assistant_text == "hi there"
     assert bridge.session.thread_id == "replayed-thread"
     assert bridge.session.completed_turn_count() == 3
 
@@ -1027,7 +1061,7 @@ def test_approval_response_ignores_unknown_request_id_and_invalid_decision(tmp_p
 
 
 def test_approval_response_logs_unknown_request_id(
-    tmp_path: Path, capsys: pytest.CaptureFixture[str]
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
 ) -> None:
     bridge = TuiBridge(
         session=_session(tmp_path),
@@ -1037,16 +1071,16 @@ def test_approval_response_logs_unknown_request_id(
         emit_event=lambda _: None,
     )
 
-    bridge._handle_approval_response({"request_id": "unknown", "decision": "approved"})
+    with caplog.at_level(logging.WARNING, logger="pycodex.core.tui_bridge"):
+        bridge._handle_approval_response({"request_id": "unknown", "decision": "approved"})
 
-    captured = capsys.readouterr()
-    assert "unknown request_id 'unknown'" in captured.err
+    assert "unknown request_id 'unknown'" in caplog.text
 
 
 def test_request_approval_denies_when_pending_queue_full(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
-    capsys: pytest.CaptureFixture[str],
+    caplog: pytest.LogCaptureFixture,
 ) -> None:
     bridge = TuiBridge(
         session=_session(tmp_path),
@@ -1063,10 +1097,10 @@ def test_request_approval_denies_when_pending_queue_full(
         assert decision == ReviewDecision.DENIED
         assert bridge._pending_approvals == {}
 
-    asyncio.run(scenario())
+    with caplog.at_level(logging.WARNING, logger="pycodex.core.tui_bridge"):
+        asyncio.run(scenario())
 
-    captured = capsys.readouterr()
-    assert "approval queue full" in captured.err
+    assert "approval queue full" in caplog.text
 
 
 def test_approval_request_requires_active_turn(tmp_path: Path) -> None:

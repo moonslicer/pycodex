@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import re
 import sys
 from collections.abc import Callable
@@ -17,14 +18,20 @@ from pycodex.approval.policy import ReviewDecision
 from pycodex.core.agent import AgentEvent, SupportsModelClient, SupportsToolRouter, run_turn
 from pycodex.core.config import Config
 from pycodex.core.event_adapter import EventAdapter
-from pycodex.core.rollout_recorder import RolloutRecorder, build_rollout_path, default_sessions_root
+from pycodex.core.rollout_recorder import RolloutRecorder, build_rollout_path
 from pycodex.core.rollout_replay import replay_rollout
-from pycodex.core.session import Session
-from pycodex.core.session_store import list_sessions, resolve_resume_rollout_path
+from pycodex.core.session import PromptItem, Session
+from pycodex.core.session_store import (
+    list_sessions,
+    resolve_resume_rollout_path,
+    resolve_sessions_root,
+)
 from pycodex.protocol.events import (
     ApprovalRequested,
+    HydratedTurn,
     ProtocolEvent,
     SessionError,
+    SessionHydrated,
     SessionListed,
     SessionStatus,
     SessionSummary,
@@ -34,6 +41,8 @@ from pycodex.protocol.events import (
 
 _MAX_PENDING_APPROVALS = 100
 _MAX_SHELL_COMMAND_PREVIEW_CHARS = 240
+logger = logging.getLogger(__name__)
+
 _SENSITIVE_ENV_KEY_PATTERN = re.compile(
     r"(?i)(?:token|secret|password|passwd|api[_-]?key|auth(?:orization)?|cookie)"
 )
@@ -237,9 +246,10 @@ class TuiBridge:
             rollout_path = await resolve_resume_rollout_path(
                 config=config,
                 resume=thread_id,
-                sessions_root=self._resolve_sessions_root(config),
+                sessions_root=resolve_sessions_root(config),
             )
             replay_state = replay_rollout(rollout_path)
+            hydrated_turns = _build_hydrated_turns(replay_state.history)
             resumed_session = Session(config=config, thread_id=replay_state.thread_id)
             resumed_session.restore_from_rollout(
                 history=replay_state.history,
@@ -251,6 +261,12 @@ class TuiBridge:
                 path=rollout_path,
             )
             await self._activate_session(resumed_session)
+            self._emit_protocol_event(
+                SessionHydrated(
+                    thread_id=resumed_session.thread_id,
+                    turns=hydrated_turns,
+                )
+            )
         except Exception as exc:
             self._emit_protocol_event(SessionError(operation="resume", message=_error_message(exc)))
 
@@ -302,9 +318,7 @@ class TuiBridge:
             return
         pending = self._pending_approvals.get(request_id)
         if pending is None:
-            sys.stderr.write(
-                f"[bridge] approval response for unknown request_id {request_id!r}; ignoring\n"
-            )
+            logger.warning("approval response for unknown request_id %r; ignoring", request_id)
             return
         if pending.decision is not None:
             return
@@ -316,8 +330,8 @@ class TuiBridge:
             raise RuntimeError("approval requested outside active turn")
 
         if len(self._pending_approvals) >= _MAX_PENDING_APPROVALS:
-            sys.stderr.write(
-                f"[bridge] approval queue full ({_MAX_PENDING_APPROVALS} pending); denying request\n"
+            logger.warning(
+                "approval queue full (%d pending); denying request", _MAX_PENDING_APPROVALS
             )
             return ReviewDecision.DENIED
 
@@ -359,11 +373,15 @@ class TuiBridge:
         return self._active_turn is not None and not self._active_turn.done()
 
     async def _activate_session(self, new_session: Session) -> None:
-        await self.session.close_rollout()
+        if self._current_session_has_local_activity():
+            await self.session.close_rollout()
         self._pending_approvals.clear()
         self.session = new_session
         self._adapter = EventAdapter(thread_id=new_session.thread_id)
         self._emit_protocol_event(self._adapter.start_thread())
+
+    def _current_session_has_local_activity(self) -> bool:
+        return self.session.last_user_message() is not None or self.session.rollout_meta_written()
 
     def _require_session_config(self) -> Config:
         config = self.session.config
@@ -383,30 +401,12 @@ class TuiBridge:
         *,
         config: Config,
     ) -> None:
-        sessions_root = self._resolve_sessions_root(config)
+        sessions_root = resolve_sessions_root(config)
         path = build_rollout_path(session.thread_id, root=sessions_root)
         session.configure_rollout_recorder(
             recorder=RolloutRecorder(path=path),
             path=path,
         )
-
-    def _resolve_sessions_root(self, config: Config) -> Path:
-        preferred = default_sessions_root()
-        if self._ensure_directory(preferred):
-            return preferred
-        fallback = config.cwd / ".pycodex" / "sessions"
-        self._ensure_directory(fallback)
-        sys.stderr.write(
-            f"[WARNING] Could not create sessions directory {preferred}; using fallback {fallback}\n"
-        )
-        return fallback
-
-    def _ensure_directory(self, path: Path) -> bool:
-        try:
-            path.mkdir(parents=True, exist_ok=True)
-        except OSError:
-            return False
-        return True
 
 
 def _parse_approval_decision(raw_decision: Any) -> ReviewDecision | None:
@@ -419,6 +419,40 @@ def _parse_approval_decision(raw_decision: Any) -> ReviewDecision | None:
     if raw_decision == ReviewDecision.ABORT.value:
         return ReviewDecision.ABORT
     return None
+
+
+def _build_hydrated_turns(history: list[PromptItem]) -> list[HydratedTurn]:
+    turns: list[HydratedTurn] = []
+    current_user: str | None = None
+    assistant_messages: list[str] = []
+
+    def append_current_turn() -> None:
+        nonlocal current_user, assistant_messages
+        if current_user is None:
+            return
+        turns.append(
+            HydratedTurn(
+                turn_id=f"hydrated_{len(turns) + 1}",
+                user_text=current_user,
+                assistant_text="\n\n".join(assistant_messages),
+            )
+        )
+        current_user = None
+        assistant_messages = []
+
+    for item in history:
+        role = item.get("role")
+        content = item.get("content")
+        text = content if isinstance(content, str) else ""
+        if role == "user":
+            append_current_turn()
+            current_user = text
+            continue
+        if role == "assistant" and current_user is not None:
+            assistant_messages.append(text)
+
+    append_current_turn()
+    return turns
 
 
 def _error_message(exc: Exception) -> str:
@@ -481,12 +515,11 @@ def _redact_sensitive_env_prefix_assignments(command: str) -> str:
             redacted_tokens.append(token)
             continue
 
-        key, _, value = token.partition("=")
+        key, _, _value = token.partition("=")
         if _SENSITIVE_ENV_KEY_PATTERN.search(key) is None:
             redacted_tokens.append(token)
             continue
 
-        _ = value
         redacted_tokens.append(f"{key}=***REDACTED***")
 
     return " ".join(redacted_tokens)

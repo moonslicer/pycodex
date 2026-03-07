@@ -4,8 +4,8 @@ from __future__ import annotations
 
 import asyncio
 import json
+import logging
 import os
-import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
 from datetime import UTC, datetime
@@ -20,6 +20,8 @@ from pycodex.core.rollout_replay import (
     replay_rollout,
 )
 from pycodex.core.rollout_schema import SessionClosed, validate_rollout_item
+
+logger = logging.getLogger(__name__)
 
 
 @dataclass(frozen=True, slots=True)
@@ -47,7 +49,7 @@ async def resolve_resume_rollout_path(
     if await asyncio.to_thread(path_candidate.exists):
         return path_candidate
 
-    resolved_sessions_root = sessions_root or _resolve_sessions_root(config)
+    resolved_sessions_root = sessions_root or resolve_sessions_root(config)
     latest = resolve_latest_rollout(resume, root=resolved_sessions_root)
     if latest is not None:
         return latest
@@ -108,7 +110,7 @@ def read_session_closed(path: Path) -> SessionClosed | None:
         if isinstance(item, SessionClosed):
             return item
         return None
-    except Exception:
+    except (OSError, json.JSONDecodeError, ValueError, UnicodeDecodeError):
         return None
 
 
@@ -121,7 +123,7 @@ def list_sessions(
     if limit is not None and limit <= 0:
         return []
 
-    resolved_sessions_root = sessions_root or _resolve_sessions_root(config)
+    resolved_sessions_root = sessions_root or resolve_sessions_root(config)
     rollout_paths = sorted(
         resolved_sessions_root.glob("rollout-*.jsonl"), key=lambda p: p.name, reverse=True
     )
@@ -221,13 +223,11 @@ def _ensure_directory(path: Path) -> bool:
     return True
 
 
-def _resolve_sessions_root(config: Config) -> Path:
+def resolve_sessions_root(config: Config) -> Path:
     preferred = default_sessions_root()
     if _ensure_directory(preferred):
         return preferred
     fallback = config.cwd / ".pycodex" / "sessions"
     _ensure_directory(fallback)
-    sys.stderr.write(
-        f"[WARNING] Could not create sessions directory {preferred}; using fallback {fallback}\n"
-    )
+    logger.warning("Could not create sessions directory %s; using fallback %s", preferred, fallback)
     return fallback
