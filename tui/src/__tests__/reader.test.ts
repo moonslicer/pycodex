@@ -98,6 +98,102 @@ describe("StdioReader", () => {
     ]);
   });
 
+  test("dispatches new session and slash event shapes", async () => {
+    const { child, stdout } = createChildProcess();
+    const reader = new StdioReader(child);
+    const seenTypes: string[] = [];
+
+    reader.onEvent((event) => {
+      seenTypes.push(event.type);
+    });
+    reader.start();
+
+    stdout.write(
+      `${JSON.stringify({
+        type: "session.listed",
+        sessions: [],
+      })}\n`,
+    );
+    stdout.write(
+      `${JSON.stringify({
+        type: "session.listed",
+        sessions: [
+          {
+            thread_id: "thread_1",
+            status: "closed",
+            turn_count: 1,
+            token_total: 2,
+            last_user_message: "hello",
+            date: "2026-03-06",
+          },
+          { broken: true },
+        ],
+      })}\n`,
+    );
+    stdout.write(
+      `${JSON.stringify({
+        type: "session.status",
+        thread_id: "thread_1",
+        turn_count: 1,
+        input_tokens: 12,
+        output_tokens: 7,
+      })}\n`,
+    );
+    stdout.write(
+      `${JSON.stringify({
+        type: "slash.unknown",
+        command: "bogus",
+      })}\n`,
+    );
+    stdout.write(
+      `${JSON.stringify({
+        type: "slash.blocked",
+        command: "resume",
+        reason: "active_turn",
+      })}\n`,
+    );
+    stdout.write(
+      `${JSON.stringify({
+        type: "session.error",
+        operation: "resume",
+        message: "not found",
+      })}\n`,
+    );
+
+    await waitForAsyncDispatch();
+
+    expect(seenTypes).toEqual([
+      "session.listed",
+      "session.listed",
+      "session.status",
+      "slash.unknown",
+      "slash.blocked",
+      "session.error",
+    ]);
+  });
+
+  test("rejects session.listed when sessions is not an array", async () => {
+    const { child, stdout } = createChildProcess();
+    const reader = new StdioReader(child);
+    const seenTypes: string[] = [];
+
+    reader.onEvent((event) => {
+      seenTypes.push(event.type);
+    });
+    reader.start();
+
+    stdout.write(
+      `${JSON.stringify({
+        type: "session.listed",
+        sessions: "not-an-array",
+      })}\n`,
+    );
+
+    await waitForAsyncDispatch();
+
+    expect(seenTypes).toEqual([]);
+  });
+
   test("accepts item.started with nullable optional fields", async () => {
     const { child, stdout } = createChildProcess();
     const reader = new StdioReader(child);

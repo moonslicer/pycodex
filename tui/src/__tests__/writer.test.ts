@@ -42,12 +42,14 @@ describe("StdioWriter", () => {
     writer.sendUserInput("hello");
     writer.sendApprovalResponse("req_1", "approved_for_session");
     writer.sendInterrupt();
+    writer.sendSessionResume("abc");
+    writer.sendSessionNew();
 
     await waitForAsyncDispatch();
 
     const payload = writtenChunks.join("");
     const lines = payload.trimEnd().split("\n");
-    expect(lines).toHaveLength(3);
+    expect(lines).toHaveLength(5);
     expect(payload.endsWith("\n")).toBe(true);
 
     expect(JSON.parse(lines[0] ?? "")).toEqual({
@@ -63,6 +65,16 @@ describe("StdioWriter", () => {
     expect(JSON.parse(lines[2] ?? "")).toEqual({
       jsonrpc: "2.0",
       method: "interrupt",
+      params: {},
+    });
+    expect(JSON.parse(lines[3] ?? "")).toEqual({
+      jsonrpc: "2.0",
+      method: "session.resume",
+      params: { thread_id: "abc" },
+    });
+    expect(JSON.parse(lines[4] ?? "")).toEqual({
+      jsonrpc: "2.0",
+      method: "session.new",
       params: {},
     });
   });

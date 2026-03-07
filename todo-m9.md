@@ -186,7 +186,7 @@ cd tui && npm test
   - Verify:
     - `.venv/bin/pytest tests/core/test_tui_bridge.py -v`
 
-- [ ] T17: TypeScript tests for PR 2
+- [x] T17: TypeScript tests for PR 2
   - `reader.test.ts`: parse all six new event shapes; `session.listed` with empty array valid; non-array sessions rejected; mixed valid/invalid rows passes transport boundary.
   - `app.test.tsx`: `toSessionSummaryItems` keeps valid rows and drops malformed; all-malformed rows opens picker with empty state (no crash).
   - `writer.test.ts`: `sendSessionResume("abc")` and `sendSessionNew()` write correct JSON-RPC lines.
@@ -262,7 +262,7 @@ T15 + T16 + T17                 ──> T18 (final gates)
 - [x] T14 complete
 - [x] T15 complete
 - [x] T16 complete
-- [ ] T17 complete
+- [x] T17 complete
 - [ ] T18 complete
 - [ ] All quality gates pass
 - [ ] Manual acceptance criteria verified
