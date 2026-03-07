@@ -129,7 +129,7 @@ cd tui && npm test
   - Verify:
     - `cd tui && npm test -- --testPathPattern useSystemNotices`
 
-- [ ] T11: `useSlashCompletion` hook (`tui/src/hooks/useSlashCompletion.ts`, new)
+- [x] T11: `useSlashCompletion` hook (`tui/src/hooks/useSlashCompletion.ts`, new)
   - Export `SLASH_COMMANDS` catalog with `resume`, `status`, `new` entries.
   - `isOpen`: true when `value.startsWith("/") && !value.includes(" ")`.
   - `matches`: filter by prefix on typed portion.
@@ -256,7 +256,7 @@ T15 + T16 + T17                 ──> T18 (final gates)
 - [ ] T8 complete
 - [x] T9 complete
 - [x] T10 complete
-- [ ] T11 complete
+- [x] T11 complete
 - [ ] T12 complete
 - [ ] T13 complete
 - [ ] T14 complete
