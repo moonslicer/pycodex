@@ -209,6 +209,32 @@ describe("App state integration smoke", () => {
     expect(summary.status).toBe("idle");
     expect(summary.detail).toBeNull();
   });
+
+  test("returns idle for last turn with hydrated compaction summary but no live detail", () => {
+    // Resumed session: last hydrated turn has compaction.summary but no live detail.
+    // The status bar should show "idle" — the per-turn view shows the compaction notice.
+    const state = reduceTurnsSequence(INITIAL_TURNS_STATE, [
+      { type: "thread.started", thread_id: "thread_1" },
+      {
+        type: "session.hydrated",
+        thread_id: "thread_1",
+        turns: [
+          {
+            turn_id: "hydrated_1",
+            user_text: "hello",
+            assistant_text: "hi",
+            compaction_summary:
+              "[compaction.summary.v1]\nConversation summary:\n- prior",
+          },
+        ],
+      },
+    ]);
+
+    const summary = summarizeCompactionForTurns(state.turns);
+
+    expect(summary.status).toBe("idle");
+    expect(summary.detail).toBeNull();
+  });
 });
 
 describe("toSessionSummaryItems", () => {

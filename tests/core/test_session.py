@@ -207,6 +207,12 @@ def test_restore_from_rollout_does_not_mark_initial_context_injected() -> None:
     assert not session.has_initial_context()
 
 
+def test_restore_from_rollout_marks_initial_context_injected_when_flag_set() -> None:
+    session = Session()
+    session.restore_from_rollout(history=[], cumulative_usage={}, turn_count=0, initial_context_injected=True)
+    assert session.has_initial_context()
+
+
 def test_replace_range_with_system_summary_replaces_middle_slice() -> None:
     session = Session()
     session.append_user_message("u1")

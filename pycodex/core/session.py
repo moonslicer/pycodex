@@ -163,6 +163,7 @@ class Session:
         history: list[PromptItem],
         cumulative_usage: dict[str, int],
         turn_count: int,
+        initial_context_injected: bool = False,
     ) -> None:
         """Restore session state from replayed rollout records."""
         self._history = [item.copy() for item in history]
@@ -170,6 +171,7 @@ class Session:
         self._total_output_tokens = max(0, int(cumulative_usage.get("output_tokens", 0)))
         self._turn_count = max(0, turn_count)
         self._compaction_count = _count_compaction_summaries(self._history)
+        self._initial_context_injected = initial_context_injected
 
     def replace_range_with_system_summary(
         self,

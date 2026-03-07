@@ -22,6 +22,7 @@ from pycodex.core.model_client import OutputItemDone, OutputTextDelta
 from pycodex.core.rollout_schema import (
     SCHEMA_VERSION,
     HistoryItem,
+    InitialContextApplied,
     SessionMeta,
 )
 from pycodex.core.rollout_schema import (
@@ -180,8 +181,10 @@ class Agent:
 
     async def run_turn(self, user_input: str) -> str:
         """Run one user turn until the model emits no tool calls."""
-        self._ensure_initial_context()
+        new_initial_items = self._ensure_initial_context()
         await self._persist_session_meta_if_needed()
+        if new_initial_items:
+            await self._persist_initial_context(new_initial_items)
         _log.debug("turn started: %r", user_input[:80])
         self.session.append_user_message(user_input)
         await self._persist_latest_history_item()
@@ -351,16 +354,15 @@ class Agent:
         if isawaitable(maybe_awaitable):
             await maybe_awaitable
 
-    def _ensure_initial_context(self) -> None:
-        if self.session.config is None:
-            return
-        if self.session.has_initial_context():
-            return
-
+    def _ensure_initial_context(self) -> list[PromptItem]:
+        """Inject initial context if not yet done; return newly injected items."""
+        if self.session.config is None or self.session.has_initial_context():
+            return []
         initial_items = build_initial_context(self.session.config)
         if initial_items:
             self.session.prepend_items(initial_items)
         self.session.mark_initial_context_injected()
+        return list(initial_items)
 
     def _profile_instructions(self) -> str:
         if self.session.config is None:
@@ -431,6 +433,27 @@ class Agent:
             model_client=cast(SupportsModelComplete | None, self.model_client),
         )
         return self.compaction_orchestrator
+
+    async def _persist_initial_context(self, items: list[PromptItem]) -> None:
+        await self.session.record_rollout_items(
+            [
+                HistoryItem(
+                    schema_version=SCHEMA_VERSION,
+                    thread_id=self.session.thread_id,
+                    item=cast(dict[str, Any], item),
+                )
+                for item in items
+            ]
+        )
+        await self.session.record_rollout_items(
+            [
+                InitialContextApplied(
+                    schema_version=SCHEMA_VERSION,
+                    thread_id=self.session.thread_id,
+                    item_count=len(items),
+                )
+            ]
+        )
 
     async def _persist_session_meta_if_needed(self) -> None:
         recorder = self.session.rollout_recorder()

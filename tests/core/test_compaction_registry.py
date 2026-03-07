@@ -7,6 +7,7 @@ from pycodex.core.compaction import (
     DEFAULT_COMPACTION_IMPLEMENTATION,
     DEFAULT_COMPACTION_STRATEGY,
     IMPLEMENTATION_REGISTRY,
+    LOCAL_SUMMARY_V1_IMPLEMENTATION,
     MODEL_SUMMARY_V1_IMPLEMENTATION,
     STRATEGY_REGISTRY,
     LocalSummaryV1Implementation,
@@ -34,7 +35,7 @@ def test_registry_exposes_default_component_names() -> None:
 
 
 def test_create_compaction_orchestrator_uses_default_components() -> None:
-    orchestrator = create_compaction_orchestrator()
+    orchestrator = create_compaction_orchestrator(model_client=_FakeModelCompleteClient())
 
     assert orchestrator.strategy.name == DEFAULT_COMPACTION_STRATEGY
     assert orchestrator.implementation.name == DEFAULT_COMPACTION_IMPLEMENTATION
@@ -52,6 +53,7 @@ def test_create_compaction_orchestrator_rejects_unknown_implementation() -> None
 
 def test_create_compaction_orchestrator_applies_component_options() -> None:
     orchestrator = create_compaction_orchestrator(
+        implementation_name=LOCAL_SUMMARY_V1_IMPLEMENTATION,
         strategy_options={"threshold_ratio": 0.05, "keep_recent_items": 4},
         implementation_options={"max_lines": 3},
     )
@@ -61,9 +63,10 @@ def test_create_compaction_orchestrator_applies_component_options() -> None:
     assert orchestrator.implementation.max_lines == 3
 
 
-def test_create_compaction_orchestrator_rejects_model_summary_without_model_client() -> None:
-    with pytest.raises(ValueError, match="requires a model_client"):
-        create_compaction_orchestrator(implementation_name=MODEL_SUMMARY_V1_IMPLEMENTATION)
+def test_create_compaction_orchestrator_model_summary_falls_back_to_local_without_model_client() -> None:
+    orchestrator = create_compaction_orchestrator(implementation_name=MODEL_SUMMARY_V1_IMPLEMENTATION)
+
+    assert orchestrator.implementation.name == LOCAL_SUMMARY_V1_IMPLEMENTATION
 
 
 def test_create_compaction_orchestrator_builds_model_summary_with_options() -> None:
@@ -95,7 +98,7 @@ def test_create_compaction_orchestrator_supports_legacy_implementation_factory(
         implementation_options={"max_lines": 5},
     )
 
-    assert orchestrator.implementation.name == DEFAULT_COMPACTION_IMPLEMENTATION
+    assert orchestrator.implementation.name == LOCAL_SUMMARY_V1_IMPLEMENTATION
     assert orchestrator.implementation.max_lines == 5
 
 

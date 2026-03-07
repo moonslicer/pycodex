@@ -21,7 +21,7 @@ def test_config_defaults() -> None:
     assert config.compaction_threshold_ratio == 0.2
     assert config.compaction_context_window_tokens == 128_000
     assert config.compaction_strategy == "threshold_v1"
-    assert config.compaction_implementation == "local_summary_v1"
+    assert config.compaction_implementation == "model_summary_v1"
     assert config.compaction_custom_instructions == ""
     assert config.compaction_options == {}
     assert config.default_approval_policy == ApprovalPolicy.NEVER

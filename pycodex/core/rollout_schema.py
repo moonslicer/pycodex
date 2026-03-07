@@ -94,6 +94,15 @@ class CompactionApplied(_FrozenModel):
     implementation_options: dict[str, Any]
 
 
+class InitialContextApplied(_FrozenModel):
+    """Marker written once when initial context items are first persisted to the rollout."""
+
+    schema_version: Literal["1.0"]
+    type: Literal["initial_context.applied"] = "initial_context.applied"
+    thread_id: str
+    item_count: StrictInt
+
+
 class SessionClosed(_FrozenModel):
     """Session-close summary record for fast closed-session reads."""
 
@@ -112,7 +121,12 @@ class SessionClosed(_FrozenModel):
 
 
 RolloutItem: TypeAlias = Annotated[
-    SessionMeta | HistoryItem | TurnCompleted | CompactionApplied | SessionClosed,
+    SessionMeta
+    | HistoryItem
+    | TurnCompleted
+    | CompactionApplied
+    | InitialContextApplied
+    | SessionClosed,
     Field(discriminator="type"),
 ]
 

@@ -136,6 +136,16 @@ export function summarizeCompactionForTurns(
     };
   }
 
+  // Hydrated turns (from resumed sessions) have compaction.summary but no live
+  // detail. Show "idle" in the status bar — the per-turn view already renders
+  // "~ [Resumed: prior context was compacted]" for those turns.
+  if (latestTurn.compaction.status === "triggered" && latestTurn.compaction.detail === null) {
+    return {
+      detail: null,
+      status: "idle",
+    };
+  }
+
   return {
     detail: latestTurn.compaction.detail,
     status: latestTurn.compaction.status,

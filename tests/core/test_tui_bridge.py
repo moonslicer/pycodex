@@ -567,6 +567,10 @@ def test_session_resume_method_replays_and_emits_hydrated_history(
             {"role": "user", "content": "hello"},
             {"role": "assistant", "content": "hi there"},
         ],
+        display_history=[
+            {"role": "user", "content": "hello"},
+            {"role": "assistant", "content": "hi there"},
+        ],
         cumulative_usage={"input_tokens": 5, "output_tokens": 8},
         turn_count=3,
         status="closed",
@@ -614,25 +618,40 @@ def test_session_resume_method_replays_and_emits_hydrated_history(
     assert bridge.session.completed_turn_count() == 3
 
 
-def test_session_resume_method_hydrates_compaction_summary_on_next_turn(
+def test_session_resume_hydrates_full_conversation_from_display_history(
     monkeypatch: pytest.MonkeyPatch,
     tmp_path: Path,
 ) -> None:
+    """display_history (not history) drives the chat view on resume.
+
+    Even when the LLM history is compacted (user message replaced by a summary),
+    the display_history preserves the original user message so the full
+    conversation is visible in the TUI.
+    """
     events: list[Any] = []
     bridge = _new_bridge(tmp_path, events)
     replay_path = tmp_path / "rollout-20260101-000000000000-replayed-thread.jsonl"
     replay_state = ReplayState(
         thread_id="replayed-thread",
+        # LLM history: first user message compacted into summary
         history=[
             {
                 "role": "system",
-                "content": "[compaction.summary.v1]\nConversation summary:\n- earlier",
+                "content": "[compaction.summary.v1]\nConversation summary:\n- user: hello",
             },
+            {"role": "assistant", "content": "here is my analysis"},
+            {"role": "user", "content": "follow up"},
+            {"role": "assistant", "content": "follow up answer"},
+        ],
+        # Display history: original messages preserved (no compaction applied)
+        display_history=[
             {"role": "user", "content": "hello"},
-            {"role": "assistant", "content": "hi there"},
+            {"role": "assistant", "content": "here is my analysis"},
+            {"role": "user", "content": "follow up"},
+            {"role": "assistant", "content": "follow up answer"},
         ],
         cumulative_usage={"input_tokens": 5, "output_tokens": 8},
-        turn_count=3,
+        turn_count=2,
         status="closed",
         warnings=[],
         session_meta=None,
@@ -667,11 +686,14 @@ def test_session_resume_method_hydrates_compaction_summary_on_next_turn(
         )
     )
 
-    hydrated_event = events[-1]
-    assert hydrated_event.type == "session.hydrated"
-    assert len(hydrated_event.turns) == 1
-    assert hydrated_event.turns[0].compaction_summary is not None
-    assert "[compaction.summary.v1]" in hydrated_event.turns[0].compaction_summary
+    hydrated = events[-1]
+    assert hydrated.type == "session.hydrated"
+    # Both turns visible — original user messages preserved in display_history
+    assert len(hydrated.turns) == 2
+    assert hydrated.turns[0].user_text == "hello"
+    assert hydrated.turns[0].assistant_text == "here is my analysis"
+    assert hydrated.turns[1].user_text == "follow up"
+    assert hydrated.turns[1].assistant_text == "follow up answer"
 
 
 def test_session_resume_method_activate_session_error_emits_session_error(

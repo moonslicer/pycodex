@@ -257,12 +257,13 @@ class TuiBridge:
                 sessions_root=resolve_sessions_root(config),
             )
             replay_state = replay_rollout(rollout_path)
-            hydrated_turns = _build_hydrated_turns(replay_state.history)
+            hydrated_turns = _build_hydrated_turns(replay_state.display_history)
             resumed_session = Session(config=config, thread_id=replay_state.thread_id)
             resumed_session.restore_from_rollout(
                 history=replay_state.history,
                 cumulative_usage=replay_state.cumulative_usage,
                 turn_count=replay_state.turn_count,
+                initial_context_injected=replay_state.initial_context_injected,
             )
             resumed_session.configure_rollout_recorder(
                 recorder=RolloutRecorder(path=rollout_path),

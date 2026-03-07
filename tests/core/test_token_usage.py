@@ -132,7 +132,7 @@ def test_run_turn_emits_monotonic_cumulative_usage(tmp_path: Path) -> None:
     }
 
 
-def test_compaction_uses_api_input_tokens_as_primary_trigger_signal() -> None:
+def test_compaction_uses_char_estimate_for_prompt_tokens_estimate() -> None:
     session = Session()
     session.append_user_message("u1")
     session.append_assistant_message("a1")
@@ -149,7 +149,7 @@ def test_compaction_uses_api_input_tokens_as_primary_trigger_signal() -> None:
 
     assert strategy.context is not None
     assert strategy.context.api_input_tokens == 123
-    assert strategy.context.prompt_tokens_estimate == 123
+    assert strategy.context.prompt_tokens_estimate == _estimate_prompt_tokens(session.to_prompt())
 
 
 def test_compaction_falls_back_to_character_estimate_without_api_usage() -> None:

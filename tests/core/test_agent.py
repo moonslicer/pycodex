@@ -22,6 +22,8 @@ from pycodex.core.agent_profile import AgentProfile
 from pycodex.core.compaction import CompactionApplied
 from pycodex.core.config import Config
 from pycodex.core.model_client import Completed, OutputItemDone, OutputTextDelta, ResponseEvent
+from pycodex.core.rollout_recorder import RolloutRecorder
+from pycodex.core.rollout_replay import replay_rollout
 from pycodex.core.session import Session
 from pycodex.tools.orchestrator import ToolAborted
 
@@ -987,6 +989,223 @@ def test_agent_prepends_initial_context_once_across_turns(tmp_path: Path) -> Non
     prompt = session.to_prompt()
     assert sum(1 for item in prompt if item.get("role") == "system") == 1
     assert prompt[0]["role"] == "system"
+
+
+def test_agent_persists_initial_context_items_and_marker_to_rollout(tmp_path: Path) -> None:
+    rollout_path = tmp_path / "rollout.jsonl"
+    config = Config(cwd=tmp_path)
+    session = Session(config=config)
+    session.configure_rollout_recorder(
+        recorder=RolloutRecorder(path=rollout_path),
+        path=rollout_path,
+    )
+    model_client = _FakeModelClient(
+        turns=[[OutputTextDelta(delta="hi"), Completed(response_id="resp_1")]]
+    )
+    router = _FakeToolRouter(specs=[], results=[])
+    agent = Agent(session=session, model_client=model_client, tool_router=router, cwd=tmp_path)
+
+    asyncio.run(agent.run_turn("hello"))
+
+    state = replay_rollout(rollout_path)
+    assert state.initial_context_injected is True
+    sys_items = [item for item in state.history if item.get("role") == "system"]
+    assert len(sys_items) >= 1
+
+
+def test_agent_does_not_repersist_initial_context_on_resumed_session(tmp_path: Path) -> None:
+    """Resumed sessions with initial_context_injected=True must not re-write initial context."""
+    rollout_path = tmp_path / "rollout.jsonl"
+    config = Config(cwd=tmp_path)
+
+    # First session: write initial context + one turn
+    session1 = Session(config=config)
+    session1.configure_rollout_recorder(
+        recorder=RolloutRecorder(path=rollout_path),
+        path=rollout_path,
+    )
+    model_client1 = _FakeModelClient(
+        turns=[[OutputTextDelta(delta="hello"), Completed(response_id="resp_1")]]
+    )
+    asyncio.run(
+        Agent(
+            session=session1,
+            model_client=model_client1,
+            tool_router=_FakeToolRouter(specs=[], results=[]),
+            cwd=tmp_path,
+        ).run_turn("first")
+    )
+
+    state_after_first = replay_rollout(rollout_path)
+    assert state_after_first.initial_context_injected is True
+    sys_count_after_first = sum(
+        1 for item in state_after_first.history if item.get("role") == "system"
+    )
+
+    # Second session: resume with initial_context_injected=True — should NOT re-write
+    session2 = Session(config=config, thread_id=state_after_first.thread_id)
+    session2.restore_from_rollout(
+        history=state_after_first.history,
+        cumulative_usage=state_after_first.cumulative_usage,
+        turn_count=state_after_first.turn_count,
+        initial_context_injected=state_after_first.initial_context_injected,
+    )
+    session2.configure_rollout_recorder(
+        recorder=RolloutRecorder(path=rollout_path),
+        path=rollout_path,
+    )
+    model_client2 = _FakeModelClient(
+        turns=[[OutputTextDelta(delta="world"), Completed(response_id="resp_2")]]
+    )
+    asyncio.run(
+        Agent(
+            session=session2,
+            model_client=model_client2,
+            tool_router=_FakeToolRouter(specs=[], results=[]),
+            cwd=tmp_path,
+        ).run_turn("second")
+    )
+
+    state_after_second = replay_rollout(rollout_path)
+    sys_count_after_second = sum(
+        1 for item in state_after_second.history if item.get("role") == "system"
+    )
+    assert sys_count_after_second == sys_count_after_first
+
+
+@pytest.mark.asyncio
+async def test_multi_compaction_multi_resume_history_and_llm_prompt_are_correct(
+    tmp_path: Path,
+) -> None:
+    """
+    Verifies that across multiple compactions and multiple resumes:
+    1. The JSONL replay produces the correct in-memory history.
+    2. The LLM prompt sent each turn is consistent with that history.
+    3. Initial context items are never duplicated.
+    4. Compaction indices remain correct after every resume.
+    """
+    # context_window_tokens=20 ensures the char-based estimate fires compaction after turn 2:
+    # the env-context sys msg alone is ~25 tokens > 70% threshold of 20 tokens.
+    # keep_recent_items=2 means only 2 messages are kept individually after each compaction.
+    rollout_path = tmp_path / "rollout.jsonl"
+    config = Config(
+        cwd=tmp_path,
+        compaction_context_window_tokens=20,
+        compaction_options={"strategy": {"keep_recent_items": 2, "min_replace_items": 2, "threshold_ratio": 0.3}},
+    )
+
+    def _make_agent(session: Session, responses: list[str]) -> tuple[Agent, _FakeModelClient]:
+        mc = _FakeModelClient(
+            turns=[[OutputTextDelta(delta=r), Completed(response_id=f"resp_{i}")] for i, r in enumerate(responses)]
+        )
+        return Agent(session=session, model_client=mc, tool_router=_FakeToolRouter(specs=[], results=[]), cwd=tmp_path), mc
+
+    def _resume_session() -> Session:
+        state = replay_rollout(rollout_path)
+        s = Session(config=config, thread_id=state.thread_id)
+        s.restore_from_rollout(
+            history=state.history,
+            cumulative_usage=state.cumulative_usage,
+            turn_count=state.turn_count,
+            initial_context_injected=state.initial_context_injected,
+        )
+        s.configure_rollout_recorder(recorder=RolloutRecorder(path=rollout_path), path=rollout_path)
+        return s
+
+    def _summary_blocks(prompt: list[dict]) -> list[dict]:
+        return [m for m in prompt if "[compaction.summary.v1]" in str(m.get("content", ""))]
+
+    def _plain_sys(prompt: list[dict]) -> list[dict]:
+        return [
+            m for m in prompt
+            if m.get("role") == "system"
+            and "[compaction.summary.v1]" not in str(m.get("content", ""))
+        ]
+
+    # --- Session 1: 2 turns — compaction fires on turn 2 ---
+    s1 = Session(config=config)
+    s1.configure_rollout_recorder(recorder=RolloutRecorder(path=rollout_path), path=rollout_path)
+    agent1, mc1 = _make_agent(s1, ["reply-1", "reply-2"])
+    await agent1.run_turn("msg-1")
+    await agent1.run_turn("msg-2")
+
+    # Turn 2 prompt: compaction fired before sampling.
+    # Compaction replaced [sys, msg-1] (indices 0-1), keeping [reply-1, msg-2] as recent.
+    # So reply-1 IS individually visible in the turn-2 prompt; msg-1 is inside the summary.
+    turn2_prompt = mc1.calls[1]["messages"]
+    assert len(_summary_blocks(turn2_prompt)) >= 1, "compaction must fire before turn 2"
+    individual_msgs_t2 = [m for m in turn2_prompt if m.get("role") in ("user", "assistant")]
+    assert len(individual_msgs_t2) <= 2
+    individual_contents_t2 = {str(m.get("content", "")) for m in individual_msgs_t2}
+    assert "msg-1" not in individual_contents_t2     # compacted into summary
+    assert "reply-1" in individual_contents_t2       # kept as recent item
+    assert "msg-2" in individual_contents_t2         # current user message
+
+    state1 = replay_rollout(rollout_path)
+    assert state1.initial_context_injected is True
+    assert len(_plain_sys(state1.history)) <= 1  # env-context not duplicated
+
+    # --- Session 2: resume with initial_context_injected=True.
+    # The env-context sys was compacted into summary1 — it is NOT re-injected as a standalone
+    # message; it lives inside the summary block. ---
+    s2 = _resume_session()
+    agent2, mc2 = _make_agent(s2, ["reply-3", "reply-4"])
+    await agent2.run_turn("msg-3")
+    await agent2.run_turn("msg-4")
+
+    # Both session-2 prompts must have summary blocks
+    for call_idx, call in enumerate(mc2.calls):
+        assert len(_summary_blocks(call["messages"])) >= 1, \
+            f"session 2 turn {call_idx + 1} prompt is missing summary block"
+    # msg-1 must never appear individually in any session-2 call
+    for call in mc2.calls:
+        indiv = {str(m.get("content", "")) for m in call["messages"] if m.get("role") in ("user", "assistant")}
+        assert "msg-1" not in indiv, "msg-1 leaked individually in session 2"
+
+    state2 = replay_rollout(rollout_path)
+    assert state2.initial_context_injected is True
+    assert len(_plain_sys(state2.history)) <= 1
+
+    # --- Session 3: resume again, verify full prompt shape ---
+    s3 = _resume_session()
+    agent3, mc3 = _make_agent(s3, ["reply-5"])
+    await agent3.run_turn("msg-5")
+
+    prompt = mc3.calls[0]["messages"]
+
+    # Prompt must start with a system message (first summary block)
+    assert prompt[0]["role"] == "system"
+
+    # Multiple compaction summary blocks must be present by now
+    assert len(_summary_blocks(prompt)) >= 1, "session 3 prompt must contain compaction summaries"
+
+    # No duplicate system messages
+    for i in range(len(prompt) - 1):
+        assert not (
+            prompt[i]["role"] == "system"
+            and prompt[i + 1]["role"] == "system"
+            and prompt[i]["content"] == prompt[i + 1]["content"]
+        ), f"duplicate system message at index {i}"
+
+    # At most keep_recent_items=2 individual user/assistant messages remain
+    individual_msgs = [m for m in prompt if m.get("role") in ("user", "assistant")]
+    assert len(individual_msgs) <= 2
+
+    # msg-5 is the last user message
+    user_msgs = [m["content"] for m in prompt if m.get("role") == "user"]
+    assert user_msgs[-1] == "msg-5"
+
+    # Messages from earlier rounds that were compacted must NOT appear individually.
+    # (reply-4 may still be a recent item depending on compaction boundary)
+    individual_contents = {str(m.get("content", "")) for m in individual_msgs}
+    deeply_compacted = {"msg-1", "reply-1", "msg-2", "reply-2", "msg-3"}
+    leaked = deeply_compacted & individual_contents
+    assert not leaked, f"deeply compacted messages appeared individually: {leaked}"
+
+    # --- Final replay: initial_context_injected True, no plain sys duplication ---
+    state_final = replay_rollout(rollout_path)
+    assert state_final.initial_context_injected is True
+    assert len(_plain_sys(state_final.history)) <= 1
 
 
 def test_run_turn_threads_profile_instructions_to_model_client(tmp_path: Path) -> None:

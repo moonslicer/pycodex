@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import inspect
 import json
+import logging
 import math
 import re
 from collections.abc import Callable
@@ -12,9 +13,12 @@ from typing import Protocol, TypeAlias
 
 from pycodex.core.session import PromptItem, Session
 
+_log = logging.getLogger(__name__)
+
 DEFAULT_COMPACTION_STRATEGY = "threshold_v1"
-DEFAULT_COMPACTION_IMPLEMENTATION = "local_summary_v1"
+LOCAL_SUMMARY_V1_IMPLEMENTATION = "local_summary_v1"
 MODEL_SUMMARY_V1_IMPLEMENTATION = "model_summary_v1"
+DEFAULT_COMPACTION_IMPLEMENTATION = MODEL_SUMMARY_V1_IMPLEMENTATION
 DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000
 DEFAULT_SUMMARY_MAX_CHARS = 1_200
 _CHARS_PER_TOKEN_ESTIMATE = 4
@@ -162,7 +166,7 @@ class LocalSummaryV1Implementation:
 
     max_lines: int = 8
     max_line_chars: int = 120
-    name: str = DEFAULT_COMPACTION_IMPLEMENTATION
+    name: str = LOCAL_SUMMARY_V1_IMPLEMENTATION
 
     async def summarize(self, request: SummaryRequest) -> SummaryOutput:
         source_items = _summary_source_items(request.items)
@@ -229,8 +233,7 @@ class CompactionOrchestrator:
         history = session.to_prompt()
         cumulative_usage = session.cumulative_usage()
         api_input_tokens = int(cumulative_usage.get("input_tokens", 0))
-        char_estimate = _estimate_prompt_tokens(history)
-        token_estimate = api_input_tokens if api_input_tokens > 0 else char_estimate
+        token_estimate = _estimate_prompt_tokens(history)
         context = CompactionContext(
             history=history,
             prompt_tokens_estimate=token_estimate,
@@ -339,9 +342,11 @@ def _build_model_summary_v1_implementation(
     model_client: SupportsModelComplete | None,
 ) -> CompactionImplementation:
     if model_client is None or not hasattr(model_client, "complete"):
-        raise ValueError(
-            "compaction implementation 'model_summary_v1' requires a model_client with complete()"
+        _log.warning(
+            "compaction: model_summary_v1 requested but no model_client available; "
+            "falling back to local_summary_v1"
         )
+        return LocalSummaryV1Implementation()
 
     custom_instructions = options.get("custom_instructions", "")
     if not isinstance(custom_instructions, str):
@@ -358,7 +363,7 @@ STRATEGY_REGISTRY: dict[str, StrategyFactory] = {
     DEFAULT_COMPACTION_STRATEGY: _build_threshold_v1_strategy,
 }
 IMPLEMENTATION_REGISTRY: dict[str, ImplementationFactory] = {
-    DEFAULT_COMPACTION_IMPLEMENTATION: _build_local_summary_v1_implementation,
+    LOCAL_SUMMARY_V1_IMPLEMENTATION: _build_local_summary_v1_implementation,
     MODEL_SUMMARY_V1_IMPLEMENTATION: _build_model_summary_v1_implementation,
 }
 

@@ -9,6 +9,7 @@ from pycodex.core.rollout_schema import (
     SCHEMA_VERSION,
     CompactionApplied,
     HistoryItem,
+    InitialContextApplied,
     SessionClosed,
     SessionMeta,
     TokenUsage,
@@ -86,6 +87,27 @@ def test_replay_rollout_reconstructs_history_and_usage(tmp_path: Path) -> None:
     assert state.cumulative_usage == {"input_tokens": 4, "output_tokens": 2}
     assert state.status == "closed"
     assert state.warnings == []
+
+
+def test_replay_rollout_display_history_preserves_original_messages_before_compaction(
+    tmp_path: Path,
+) -> None:
+    """display_history retains all original history.item records without applying
+    compaction transforms, so the full conversation is available for display."""
+    path = tmp_path / "rollout.jsonl"
+    _write_jsonl(path, _build_rollout_records())
+
+    state = replay_rollout(path)
+
+    # history (LLM-ready) has the compaction summary; original user message is gone
+    assert state.history == [
+        {
+            "role": "system",
+            "content": "[compaction.summary.v1]\nConversation summary:\n- user: hello",
+        }
+    ]
+    # display_history preserves the original message
+    assert state.display_history == [{"role": "user", "content": "hello"}]
 
 
 def test_replay_rollout_skips_unknown_record_types_with_warning(tmp_path: Path) -> None:
@@ -274,6 +296,121 @@ def test_replay_rollout_clamps_replace_end_and_emits_warning(tmp_path: Path) -> 
         {"role": "system", "content": "[compaction.summary.v1]\nclamped"},
     ]
     assert any("clamped" in warning for warning in state.warnings)
+
+
+def test_replay_rollout_sets_initial_context_injected_from_marker(tmp_path: Path) -> None:
+    path = tmp_path / "rollout.jsonl"
+    records = [
+        SessionMeta(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            profile="codex",
+            model="gpt-4.1-mini",
+            cwd="/tmp/project",
+            opened_at="2026-03-02T12:00:00Z",
+        ).model_dump(mode="json"),
+        HistoryItem(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            item={"role": "system", "content": "# instructions"},
+        ).model_dump(mode="json"),
+        InitialContextApplied(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            item_count=1,
+        ).model_dump(mode="json"),
+        HistoryItem(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            item={"role": "user", "content": "hello"},
+        ).model_dump(mode="json"),
+    ]
+    _write_jsonl(path, records)
+
+    state = replay_rollout(path)
+
+    assert state.initial_context_injected is True
+    assert state.history == [
+        {"role": "system", "content": "# instructions"},
+        {"role": "user", "content": "hello"},
+    ]
+
+
+def test_replay_rollout_initial_context_injected_false_without_marker(tmp_path: Path) -> None:
+    path = tmp_path / "rollout.jsonl"
+    _write_jsonl(path, _build_rollout_records())
+
+    state = replay_rollout(path)
+
+    assert state.initial_context_injected is False
+
+
+def test_replay_rollout_compaction_indices_correct_with_initial_context(tmp_path: Path) -> None:
+    """Compaction applied after initial context items should use JSONL-relative indices."""
+    path = tmp_path / "rollout.jsonl"
+    records = [
+        SessionMeta(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            profile="codex",
+            model="gpt-4.1-mini",
+            cwd="/tmp/project",
+            opened_at="2026-03-02T12:00:00Z",
+        ).model_dump(mode="json"),
+        HistoryItem(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            item={"role": "system", "content": "# sys1"},
+        ).model_dump(mode="json"),
+        HistoryItem(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            item={"role": "system", "content": "# sys2"},
+        ).model_dump(mode="json"),
+        InitialContextApplied(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            item_count=2,
+        ).model_dump(mode="json"),
+        HistoryItem(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            item={"role": "user", "content": "u1"},
+        ).model_dump(mode="json"),
+        HistoryItem(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            item={"role": "assistant", "content": "a1"},
+        ).model_dump(mode="json"),
+        # Compaction replaces [sys1, sys2, u1] (indices 0-3 in-memory, 0-3 in JSONL since sys items are persisted)
+        CompactionApplied(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            summary_text="[compaction.summary.v1]\nsummary1",
+            replace_start=0,
+            replace_end=3,
+            replaced_items=3,
+            strategy="threshold_v1",
+            implementation="local_summary_v1",
+            strategy_options={},
+            implementation_options={},
+        ).model_dump(mode="json"),
+        HistoryItem(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            item={"role": "user", "content": "u2"},
+        ).model_dump(mode="json"),
+    ]
+    _write_jsonl(path, records)
+
+    state = replay_rollout(path)
+
+    assert state.initial_context_injected is True
+    assert state.history == [
+        {"role": "system", "content": "[compaction.summary.v1]\nsummary1"},
+        {"role": "assistant", "content": "a1"},
+        {"role": "user", "content": "u2"},
+    ]
 
 
 def test_replay_rollout_applies_consecutive_compactions(tmp_path: Path) -> None:

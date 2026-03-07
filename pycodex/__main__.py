@@ -257,6 +257,7 @@ async def _build_session(*, config: Config, resume: str | None) -> Session:
         history=replay_state.history,
         cumulative_usage=replay_state.cumulative_usage,
         turn_count=replay_state.turn_count,
+        initial_context_injected=replay_state.initial_context_injected,
     )
     session.configure_rollout_recorder(
         recorder=RolloutRecorder(path=rollout_path),

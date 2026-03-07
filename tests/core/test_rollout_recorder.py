@@ -292,13 +292,15 @@ async def test_rollout_write_points_persist_meta_history_turn_and_close(tmp_path
     types = [record["type"] for record in records]
     assert types == [
         "session.meta",
-        "history.item",
-        "history.item",
+        "history.item",          # initial context (env context system message)
+        "initial_context.applied",
+        "history.item",          # user message
+        "history.item",          # assistant message
         "turn.completed",
         "session.closed",
     ]
-    assert records[3]["usage"]["cumulative"] == {"input_tokens": 10, "output_tokens": 4}
-    assert records[4]["turn_count"] == 1
+    assert records[5]["usage"]["cumulative"] == {"input_tokens": 10, "output_tokens": 4}
+    assert records[6]["turn_count"] == 1
 
 
 @pytest.mark.asyncio

@@ -4,7 +4,7 @@ from __future__ import annotations
 
 import asyncio
 import json
-from dataclasses import dataclass
+from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
 from typing import Any, Literal, cast
@@ -20,6 +20,7 @@ from pycodex.core.rollout_schema import (
     SCHEMA_VERSION,
     CompactionApplied,
     HistoryItem,
+    InitialContextApplied,
     RolloutItem,
     SessionClosed,
     SessionMeta,
@@ -32,6 +33,7 @@ _KNOWN_TYPES = {
     "history.item",
     "turn.completed",
     "compaction.applied",
+    "initial_context.applied",
     "session.closed",
 }
 
@@ -57,6 +59,10 @@ class ReplayState:
     turn_count: int
     status: Literal["closed", "incomplete"]
     warnings: list[str]
+    # All history items in JSONL order, without any compaction transforms applied.
+    # Used to display the full conversation to the user on resume.
+    display_history: list[PromptItem] = field(default_factory=list)
+    initial_context_injected: bool = False
     session_meta: SessionMeta | None = None
     session_closed: SessionClosed | None = None
 
@@ -72,11 +78,13 @@ def replay_rollout(path: Path, *, expected_major: int = 1) -> ReplayState:
 
     warnings: list[str] = []
     history: list[PromptItem] = []
+    display_history: list[PromptItem] = []
     thread_id = ""
     session_meta: SessionMeta | None = None
     session_closed: SessionClosed | None = None
     cumulative_usage = {"input_tokens": 0, "output_tokens": 0}
     turn_count = 0
+    initial_context_injected = False
 
     lines = path.read_text(encoding="utf-8").splitlines()
     for index, raw_line in enumerate(lines):
@@ -131,6 +139,10 @@ def replay_rollout(path: Path, *, expected_major: int = 1) -> ReplayState:
             ) from exc
 
         thread_id = _thread_id_for(item=item, fallback=thread_id)
+        if isinstance(item, HistoryItem):
+            raw = item.item
+            if isinstance(raw, dict) and ("role" in raw or raw.get("type") == "function_call"):
+                display_history.append(cast(PromptItem, raw))
         _apply_rollout_item(
             item=item,
             history=history,
@@ -139,7 +151,9 @@ def replay_rollout(path: Path, *, expected_major: int = 1) -> ReplayState:
         )
         if item.type == "turn.completed":
             turn_count += 1
-        if isinstance(item, SessionMeta):
+        if isinstance(item, InitialContextApplied):
+            initial_context_injected = True
+        elif isinstance(item, SessionMeta):
             session_meta = item
         elif isinstance(item, SessionClosed):
             session_closed = item
@@ -150,10 +164,12 @@ def replay_rollout(path: Path, *, expected_major: int = 1) -> ReplayState:
     return ReplayState(
         thread_id=thread_id,
         history=history,
+        display_history=display_history,
         cumulative_usage=cumulative_usage,
         turn_count=turn_count,
         status=status,
         warnings=warnings,
+        initial_context_injected=initial_context_injected,
         session_meta=session_meta,
         session_closed=session_closed,
     )

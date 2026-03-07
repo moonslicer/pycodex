@@ -29,7 +29,7 @@ class Config(BaseModel):
     compaction_threshold_ratio: float = 0.2
     compaction_context_window_tokens: int = 128_000
     compaction_strategy: str = "threshold_v1"
-    compaction_implementation: str = "local_summary_v1"
+    compaction_implementation: str = "model_summary_v1"
     compaction_custom_instructions: str = ""
     compaction_options: dict[str, dict[str, Any]] = Field(default_factory=dict)
     default_approval_policy: ApprovalPolicy = ApprovalPolicy.NEVER
