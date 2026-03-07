@@ -476,15 +476,21 @@ export function InputArea({
   const before = `> ${editorState.value.slice(0, editorState.cursorIndex)}`;
   const atCursor = editorState.value[editorState.cursorIndex] ?? " ";
   const after = editorState.value.slice(editorState.cursorIndex + 1);
+  const showSlashPopup =
+    slashCompletion.isOpen && slashCompletion.matches.length > 0;
 
   return (
     <Box flexDirection="column">
-      {slashCompletion.isOpen && slashCompletion.matches.length > 0 ? (
-        <SlashCommandPopup
-          matches={slashCompletion.matches}
-          selectedIndex={slashCompletion.selectedIndex}
-        />
-      ) : null}
+      <Box minHeight={1}>
+        {showSlashPopup ? (
+          <SlashCommandPopup
+            matches={slashCompletion.matches}
+            selectedIndex={slashCompletion.selectedIndex}
+          />
+        ) : (
+          <Text dimColor />
+        )}
+      </Box>
       <Box borderStyle="single" paddingX={1}>
         {disabled ? (
           <Text color="yellow">

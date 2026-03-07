@@ -19,11 +19,20 @@ Install deps:
 npm install
 ```
 
-Run in watch mode:
+Run for interactive local use:
 
 ```bash
 npm run dev
 ```
+
+Run in watch mode (for TUI code iteration):
+
+```bash
+npm run dev:watch
+```
+
+`dev:watch` can restart the process while typing because it is a file-watcher wrapper.
+Use `npm run dev` or `npm run start` for normal interactive chatting.
 
 Build:
 

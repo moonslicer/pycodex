@@ -15,7 +15,15 @@ export function isSlashCompletionOpen(
   value: string,
   dismissedValue: string | null,
 ): boolean {
-  return value.startsWith("/") && !value.includes(" ") && dismissedValue !== value;
+  if (!value.startsWith("/") || value.includes(" ")) {
+    return false;
+  }
+
+  if (value.length <= 1) {
+    return false;
+  }
+
+  return dismissedValue !== value;
 }
 
 export function getSlashMatches(

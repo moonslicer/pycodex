@@ -38,6 +38,10 @@ export function isInputDisabled(
   return hasActiveTurn || queueLength > 0 || hasPendingUserInput;
 }
 
+export function shouldQueueUserInput(text: string): boolean {
+  return !text.startsWith("/");
+}
+
 function isSessionSummaryItem(value: unknown): value is SessionSummaryItem {
   if (typeof value !== "object" || value === null) {
     return false;
@@ -185,9 +189,11 @@ export function App({
       if (inputDisabled) {
         return;
       }
-      const queued = queueUserInput(text);
-      if (!queued) {
-        return;
+      if (shouldQueueUserInput(text)) {
+        const queued = queueUserInput(text);
+        if (!queued) {
+          return;
+        }
       }
       writer.sendUserInput(text);
     },

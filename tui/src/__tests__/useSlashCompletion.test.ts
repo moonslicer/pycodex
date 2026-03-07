@@ -15,12 +15,12 @@ describe("useSlashCompletion helpers", () => {
     ]);
   });
 
-  test("isOpen is true for slash prefix without spaces", () => {
-    expect(isSlashCompletionOpen("/", null)).toBe(true);
+  test("isOpen is true for slash prefix with at least one command character", () => {
     expect(isSlashCompletionOpen("/r", null)).toBe(true);
   });
 
-  test("isOpen is false when input does not start with slash or has spaces", () => {
+  test("isOpen is false for bare slash, non-slash text, or values with spaces", () => {
+    expect(isSlashCompletionOpen("/", null)).toBe(false);
     expect(isSlashCompletionOpen("", null)).toBe(false);
     expect(isSlashCompletionOpen("hello", null)).toBe(false);
     expect(isSlashCompletionOpen("/resume now", null)).toBe(false);

@@ -12,6 +12,7 @@
 import type { ProtocolEvent } from "../protocol/types.js";
 import {
   isInputDisabled,
+  shouldQueueUserInput,
   summarizeCompactionForTurns,
   toSessionSummaryItems,
 } from "../app.js";
@@ -268,5 +269,17 @@ describe("toSessionSummaryItems", () => {
     ]);
 
     expect(normalized).toEqual([]);
+  });
+});
+
+describe("shouldQueueUserInput", () => {
+  test("returns false for slash commands", () => {
+    expect(shouldQueueUserInput("/status")).toBe(false);
+    expect(shouldQueueUserInput("/resume")).toBe(false);
+    expect(shouldQueueUserInput("/new")).toBe(false);
+  });
+
+  test("returns true for regular prompts", () => {
+    expect(shouldQueueUserInput("hello world")).toBe(true);
   });
 });
