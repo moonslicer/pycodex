@@ -566,13 +566,13 @@ describe("handleSlashPopupKey", () => {
       callbacks,
     );
 
-    expect(upResult).toEqual({ handled: true, completion: null });
-    expect(downResult).toEqual({ handled: true, completion: null });
+    expect(upResult).toEqual({ handled: true, completion: null, submit: false });
+    expect(downResult).toEqual({ handled: true, completion: null, submit: false });
     expect(callbacks.selectPrevious).toHaveBeenCalledTimes(1);
     expect(callbacks.selectNext).toHaveBeenCalledTimes(1);
   });
 
-  test("enter falls through to normal submit handling", () => {
+  test("enter completes and marks submit", () => {
     const callbacks = {
       complete: jest.fn(() => "/resume "),
       dismiss: jest.fn(),
@@ -582,8 +582,8 @@ describe("handleSlashPopupKey", () => {
 
     const result = handleSlashPopupKey(true, makeKey({ return: true }), callbacks);
 
-    expect(result).toEqual({ handled: false, completion: null });
-    expect(callbacks.complete).not.toHaveBeenCalled();
+    expect(result).toEqual({ handled: true, completion: "/resume ", submit: true });
+    expect(callbacks.complete).toHaveBeenCalledTimes(1);
   });
 
   test("tab falls through when no completion is available", () => {
@@ -596,7 +596,7 @@ describe("handleSlashPopupKey", () => {
 
     const result = handleSlashPopupKey(true, makeKey({ tab: true }), callbacks);
 
-    expect(result).toEqual({ handled: false, completion: null });
+    expect(result).toEqual({ handled: false, completion: null, submit: false });
     expect(callbacks.complete).toHaveBeenCalledTimes(1);
   });
 
@@ -610,7 +610,7 @@ describe("handleSlashPopupKey", () => {
 
     const result = handleSlashPopupKey(true, makeKey({ escape: true }), callbacks);
 
-    expect(result).toEqual({ handled: true, completion: null });
+    expect(result).toEqual({ handled: true, completion: null, submit: false });
     expect(callbacks.dismiss).toHaveBeenCalledTimes(1);
   });
 
@@ -624,7 +624,7 @@ describe("handleSlashPopupKey", () => {
 
     const result = handleSlashPopupKey(false, makeKey({ upArrow: true }), callbacks);
 
-    expect(result).toEqual({ handled: false, completion: null });
+    expect(result).toEqual({ handled: false, completion: null, submit: false });
     expect(callbacks.selectPrevious).not.toHaveBeenCalled();
   });
 });

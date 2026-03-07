@@ -254,11 +254,13 @@ export function handleSlashPopupKey(
 ): {
   handled: boolean;
   completion: string | null;
+  submit: boolean;
 } {
   if (!isOpen || key.ctrl || key.meta) {
     return {
       handled: false,
       completion: null,
+      submit: false,
     };
   }
 
@@ -267,6 +269,7 @@ export function handleSlashPopupKey(
     return {
       handled: true,
       completion: null,
+      submit: false,
     };
   }
   if (key.downArrow) {
@@ -274,6 +277,7 @@ export function handleSlashPopupKey(
     return {
       handled: true,
       completion: null,
+      submit: false,
     };
   }
   if (key.escape ?? false) {
@@ -281,31 +285,29 @@ export function handleSlashPopupKey(
     return {
       handled: true,
       completion: null,
+      submit: false,
     };
   }
-  if (key.return) {
-    return {
-      handled: false,
-      completion: null,
-    };
-  }
-  if (key.tab ?? false) {
+  if (key.return || (key.tab ?? false)) {
     const completion = callbacks.complete();
     if (completion === null) {
       return {
         handled: false,
         completion: null,
+        submit: false,
       };
     }
     return {
       handled: true,
       completion,
+      submit: key.return,
     };
   }
 
   return {
     handled: false,
     completion: null,
+    submit: false,
   };
 }
 
@@ -474,13 +476,27 @@ export function InputArea({
     );
     if (popupResult.handled) {
       if (popupResult.completion !== null) {
-        setEditorState({
-          ...editorStateRef.current,
-          value: popupResult.completion,
-          cursorIndex: popupResult.completion.length,
-          historyIndex: null,
-          draftBeforeHistory: "",
-        });
+        if (popupResult.submit) {
+          const text = normalizeSlashSubmitText(popupResult.completion.trim());
+          if (text.length > 0) {
+            setEditorState({
+              value: "",
+              cursorIndex: 0,
+              history: pushHistoryEntry(editorStateRef.current.history, text, HISTORY_MAX),
+              historyIndex: null,
+              draftBeforeHistory: "",
+            });
+            onSubmit(text);
+          }
+        } else {
+          setEditorState({
+            ...editorStateRef.current,
+            value: popupResult.completion,
+            cursorIndex: popupResult.completion.length,
+            historyIndex: null,
+            draftBeforeHistory: "",
+          });
+        }
       }
       return;
     }

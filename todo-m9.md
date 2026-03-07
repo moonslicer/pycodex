@@ -207,6 +207,49 @@ cd tui && npm test
     - `cd tui && npm run lint`
     - `cd tui && npm test`
 
+### Wave R3 — Resume Metadata + Presentation (Trimmed Scope)
+
+- [x] T19: Extend resume session summary contract (`pycodex/protocol/events.py`, `tui/src/protocol/types.ts`, `tui/src/protocol/transports/stdio.ts`, `tui/src/app.tsx`)
+  - Add new fields to `SessionSummary` / `SessionSummaryItem`:
+    - `updated_at: string`
+    - `size_bytes: number`
+  - Keep Python and TUI protocol contracts atomic in one change.
+  - Update app-side normalizer to validate these fields and drop malformed rows safely.
+  - Verify:
+    - `.venv/bin/pytest tests/protocol/test_events.py -q`
+    - `cd tui && npm run typecheck`
+    - `cd tui && npm test -- --runInBand --findRelatedTests src/protocol/types.ts src/protocol/transports/stdio.ts src/app.tsx`
+
+- [x] T20: Enrich session listing metadata in storage layer (`pycodex/core/session_store.py`, `tests/core/test_session_store.py`, `tests/core/test_tui_bridge.py`)
+  - Extend `SessionSummaryRecord` with `updated_at`, `size_bytes`.
+  - Compute:
+    - `size_bytes` from rollout file stat.
+    - `updated_at` from `session.closed.closed_at` when present; otherwise from file mtime in ISO UTC.
+  - Preserve legacy rollout compatibility with null-safe fallback values.
+  - Verify:
+    - `.venv/bin/pytest tests/core/test_session_store.py -q`
+    - `.venv/bin/pytest tests/core/test_tui_bridge.py -q`
+
+- [x] T21: Upgrade session picker presentation (`tui/src/components/SessionPickerModal.tsx`, `tui/src/__tests__/sessionPickerModal.test.tsx`)
+  - Keep visible window capped at 5 rows and scrolling behavior.
+  - Render two-line entries:
+    - line 1: prompt preview
+    - line 2: `relative time · size`
+  - Header format: `Resume Session (X of Y)`.
+  - Footer preserves navigation hints.
+  - Verify:
+    - `cd tui && npm run typecheck`
+    - `cd tui && npm test -- --runInBand --findRelatedTests src/components/SessionPickerModal.tsx src/__tests__/sessionPickerModal.test.tsx`
+
+- [x] T22: Wave R3 hard gates
+  - Verify:
+    - `.venv/bin/ruff check . --fix && .venv/bin/ruff format .`
+    - `.venv/bin/mypy --strict pycodex/`
+    - `.venv/bin/pytest tests/ -v`
+    - `cd tui && npm run typecheck`
+    - `cd tui && npm run lint`
+    - `cd tui && npm test`
+
 ---
 
 ## Task Dependency Graph
@@ -225,6 +268,11 @@ T6 + T8 + T9 + T10 + T13 + T14 ──> T15 (app.tsx wiring)
 T5 + T6                         ──> T16 (Python tests)
 T7 + T8 + T9 + T11 + T13 + T14 ──> T17 (TS tests)
 T15 + T16 + T17                 ──> T18 (final gates)
+
+T18                             ──> T19 (summary contract v2)
+T19                             ──> T20 (session_store enrichment)
+T19 + T20                       ──> T21 (picker presentation)
+T20 + T21                       ──> T22 (wave R3 hard gates)
 ```
 
 ## Acceptance Criteria
@@ -264,5 +312,9 @@ T15 + T16 + T17                 ──> T18 (final gates)
 - [x] T16 complete
 - [x] T17 complete
 - [x] T18 complete
+- [x] T19 complete
+- [x] T20 complete
+- [x] T21 complete
+- [x] T22 complete
 - [x] All quality gates pass
 - [ ] Manual acceptance criteria verified

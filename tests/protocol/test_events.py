@@ -10,6 +10,8 @@ from pycodex.protocol.events import (
     ItemStarted,
     ItemUpdated,
     ProtocolEvent,
+    SessionListed,
+    SessionSummary,
     ThreadStarted,
     TokenUsage,
     TurnCompleted,
@@ -98,6 +100,23 @@ from pydantic import TypeAdapter, ValidationError
                 preview='{"file_path":"notes.txt"}',
             ),
             ApprovalRequested,
+        ),
+        (
+            SessionListed(
+                sessions=[
+                    SessionSummary(
+                        thread_id="thread_1",
+                        status="closed",
+                        turn_count=2,
+                        token_total=30,
+                        last_user_message="hello",
+                        date="20260306",
+                        updated_at="2026-03-06T00:00:00Z",
+                        size_bytes=2048,
+                    )
+                ]
+            ),
+            SessionListed,
         ),
     ],
 )
@@ -193,6 +212,24 @@ def test_event_model_round_trip_json(event: Any, event_cls: type[Any]) -> None:
                 "preview": "rm -f temp.txt",
             },
             ApprovalRequested,
+        ),
+        (
+            {
+                "type": "session.listed",
+                "sessions": [
+                    {
+                        "thread_id": "thread_1",
+                        "status": "closed",
+                        "turn_count": 2,
+                        "token_total": 30,
+                        "last_user_message": "hello",
+                        "date": "20260306",
+                        "updated_at": "2026-03-06T00:00:00Z",
+                        "size_bytes": 2048,
+                    }
+                ],
+            },
+            SessionListed,
         ),
     ],
 )

@@ -221,6 +221,8 @@ describe("toSessionSummaryItems", () => {
         token_total: 20,
         last_user_message: "hello",
         date: "2026-03-06",
+        updated_at: "2026-03-06T01:00:00Z",
+        size_bytes: 1024,
       },
       {
         thread_id: 12,
@@ -233,6 +235,8 @@ describe("toSessionSummaryItems", () => {
         token_total: 0,
         last_user_message: null,
         date: "2026-03-07",
+        updated_at: "2026-03-07T01:00:00Z",
+        size_bytes: 2048,
       },
     ]);
 
@@ -244,6 +248,8 @@ describe("toSessionSummaryItems", () => {
         token_total: 20,
         last_user_message: "hello",
         date: "2026-03-06",
+        updated_at: "2026-03-06T01:00:00Z",
+        size_bytes: 1024,
       },
       {
         thread_id: "thread_2",
@@ -252,6 +258,8 @@ describe("toSessionSummaryItems", () => {
         token_total: 0,
         last_user_message: null,
         date: "2026-03-07",
+        updated_at: "2026-03-07T01:00:00Z",
+        size_bytes: 2048,
       },
     ]);
   });
@@ -265,6 +273,33 @@ describe("toSessionSummaryItems", () => {
         thread_id: "thread_1",
         status: "closed",
         turn_count: "nope",
+      },
+    ]);
+
+    expect(normalized).toEqual([]);
+  });
+
+  test("drops rows with non-finite or negative numeric metadata", () => {
+    const normalized = toSessionSummaryItems([
+      {
+        thread_id: "thread_nan",
+        status: "closed",
+        turn_count: Number.NaN,
+        token_total: 1,
+        last_user_message: "hello",
+        date: "2026-03-06",
+        updated_at: "2026-03-06T01:00:00Z",
+        size_bytes: 10,
+      },
+      {
+        thread_id: "thread_neg",
+        status: "closed",
+        turn_count: 1,
+        token_total: 1,
+        last_user_message: "hello",
+        date: "2026-03-06",
+        updated_at: "2026-03-06T01:00:00Z",
+        size_bytes: -1,
       },
     ]);
 

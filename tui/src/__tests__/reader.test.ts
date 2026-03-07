@@ -125,6 +125,8 @@ describe("StdioReader", () => {
             token_total: 2,
             last_user_message: "hello",
             date: "2026-03-06",
+            updated_at: "2026-03-06T00:00:00Z",
+            size_bytes: 1024,
           },
           { broken: true },
         ],

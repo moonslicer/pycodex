@@ -1,6 +1,10 @@
 import {
   clampSessionSelection,
+  formatRelativeTime,
+  formatSessionPickerTitle,
   formatSessionRow,
+  formatSizeBytes,
+  getVisibleSessions,
   handleSessionPickerKey,
   truncateForDisplay,
 } from "../components/SessionPickerModal.js";
@@ -14,6 +18,8 @@ const SESSION: SessionSummaryItem = {
   last_user_message:
     "Hi support team, I reset my password this morning and got locked out.",
   date: "2026-03-06",
+  updated_at: "2026-03-06T00:00:00Z",
+  size_bytes: 634_573,
 };
 
 function makeKey(overrides: {
@@ -37,14 +43,32 @@ describe("SessionPickerModal helpers", () => {
     expect(truncateForDisplay("abc", 5)).toBe("abc");
   });
 
-  test("formatSessionRow includes core summary fields", () => {
-    const line = formatSessionRow(SESSION);
+  test("formatSessionRow renders prompt preview and metadata line", () => {
+    const row = formatSessionRow(
+      { ...SESSION, size_bytes: 1536 },
+      Date.parse("2026-03-06T02:00:00Z"),
+    );
 
-    expect(line).toContain("2026-03-06");
-    expect(line).toContain("turns:7");
-    expect(line).toContain("tokens:420");
-    expect(line).toContain("closed");
-    expect(line).toContain("thread_12...");
+    expect(row.primary).toContain("Hi support team");
+    expect(row.secondary).toBe("2h ago · 1.5KB");
+  });
+
+  test("formatSessionRow falls back when last message is empty", () => {
+    const row = formatSessionRow(
+      { ...SESSION, last_user_message: "   " },
+      Date.parse("2026-03-06T00:00:00Z"),
+    );
+    expect(row.primary).toBe("No prompt yet");
+  });
+
+  test("formatRelativeTime handles invalid timestamps", () => {
+    expect(formatRelativeTime("not-a-date")).toBe("unknown time");
+  });
+
+  test("formatSizeBytes humanizes common ranges", () => {
+    expect(formatSizeBytes(42)).toBe("42B");
+    expect(formatSizeBytes(1024)).toBe("1KB");
+    expect(formatSizeBytes(1536)).toBe("1.5KB");
   });
 
   test("selection index clamps to bounds", () => {
@@ -106,5 +130,58 @@ describe("SessionPickerModal helpers", () => {
       nextIndex: 0,
       selectedThreadId: null,
     });
+  });
+
+  test("getVisibleSessions caps window and follows selected index", () => {
+    const sessions: SessionSummaryItem[] = Array.from({ length: 8 }, (_, idx) => ({
+      ...SESSION,
+      thread_id: `thread_${String(idx)}`,
+    }));
+
+    expect(getVisibleSessions(sessions, 0, 5).map((entry) => entry.originalIndex)).toEqual([
+      0,
+      1,
+      2,
+      3,
+      4,
+    ]);
+    expect(getVisibleSessions(sessions, 4, 5).map((entry) => entry.originalIndex)).toEqual([
+      2,
+      3,
+      4,
+      5,
+      6,
+    ]);
+    expect(getVisibleSessions(sessions, 7, 5).map((entry) => entry.originalIndex)).toEqual([
+      3,
+      4,
+      5,
+      6,
+      7,
+    ]);
+  });
+
+  test("getVisibleSessions returns all sessions when list is smaller than window", () => {
+    const sessions: SessionSummaryItem[] = [
+      { ...SESSION, thread_id: "thread_1" },
+      { ...SESSION, thread_id: "thread_2" },
+      { ...SESSION, thread_id: "thread_3" },
+    ];
+
+    expect(getVisibleSessions(sessions, 1, 5).map((entry) => entry.originalIndex)).toEqual([
+      0,
+      1,
+      2,
+    ]);
+  });
+
+  test("formatSessionPickerTitle includes selected position when sessions exist", () => {
+    expect(formatSessionPickerTitle(8, 0)).toBe("Resume Session (1 of 8)");
+    expect(formatSessionPickerTitle(8, 4)).toBe("Resume Session (5 of 8)");
+    expect(formatSessionPickerTitle(8, 99)).toBe("Resume Session (8 of 8)");
+  });
+
+  test("formatSessionPickerTitle falls back to base title for empty list", () => {
+    expect(formatSessionPickerTitle(0, 0)).toBe("Resume Session");
   });
 });

@@ -90,6 +90,8 @@ export type SessionSummaryItem = {
   token_total: number;
   last_user_message: string | null;
   date: string;
+  updated_at: string;
+  size_bytes: number;
 };
 
 export type SessionListedEvent = {

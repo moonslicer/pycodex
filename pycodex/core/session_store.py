@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import asyncio
 import json
+import os
 import sys
 from collections.abc import Sequence
 from dataclasses import dataclass
+from datetime import UTC, datetime
 from pathlib import Path
 from typing import Literal
 
@@ -28,6 +30,11 @@ class SessionSummaryRecord:
     token_total: int
     last_user_message: str | None
     date: str
+    updated_at: str
+    size_bytes: int
+
+
+_FALLBACK_UPDATED_AT = "1970-01-01T00:00:00Z"
 
 
 async def resolve_resume_rollout_path(
@@ -121,11 +128,19 @@ def list_sessions(
     records: list[SessionSummaryRecord] = []
     for path in rollout_paths:
         date_token = rollout_date_token(path.name)
+        stat_result = _safe_stat(path)
+        size_bytes = stat_result.st_size if stat_result is not None else 0
+        updated_at_from_stat = (
+            _format_iso_utc(stat_result.st_mtime)
+            if stat_result is not None
+            else _FALLBACK_UPDATED_AT
+        )
         session_closed = read_session_closed(path)
         if session_closed is not None:
             token_total = (
                 session_closed.token_total.input_tokens + session_closed.token_total.output_tokens
             )
+            updated_at = session_closed.closed_at or updated_at_from_stat
             records.append(
                 SessionSummaryRecord(
                     thread_id=session_closed.thread_id,
@@ -134,6 +149,8 @@ def list_sessions(
                     token_total=token_total,
                     last_user_message=session_closed.last_user_message,
                     date=date_token,
+                    updated_at=updated_at,
+                    size_bytes=size_bytes,
                 )
             )
         else:
@@ -149,6 +166,8 @@ def list_sessions(
                     token_total=token_total,
                     last_user_message=last_user_message_from_history(state.history),
                     date=date_token,
+                    updated_at=updated_at_from_stat,
+                    size_bytes=size_bytes,
                 )
             )
 
@@ -176,6 +195,22 @@ def rollout_date_token(filename: str) -> str:
         return "unknown"
     remainder = filename[len(prefix) :]
     return remainder.split("-", 1)[0]
+
+
+def _safe_stat(path: Path) -> os.stat_result | None:
+    try:
+        return path.stat()
+    except OSError:
+        return None
+
+
+def _format_iso_utc(timestamp_seconds: float) -> str:
+    return (
+        datetime.fromtimestamp(timestamp_seconds, tz=UTC)
+        .replace(microsecond=0)
+        .isoformat()
+        .replace("+00:00", "Z")
+    )
 
 
 def _ensure_directory(path: Path) -> bool:

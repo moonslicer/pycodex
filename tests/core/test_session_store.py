@@ -1,6 +1,7 @@
 from __future__ import annotations
 
 import asyncio
+import os
 from pathlib import Path
 from typing import Any
 
@@ -127,6 +128,8 @@ def test_list_sessions_uncapped_returns_newest_first(
 
     assert [record.thread_id for record in records] == ["thread-new", "thread-mid", "thread-old"]
     assert [record.status for record in records] == ["closed", "incomplete", "closed"]
+    assert records[0].updated_at == "2026-01-01T00:01:00Z"
+    assert records[0].size_bytes > 0
 
 
 def test_list_sessions_respects_limit(
@@ -178,6 +181,54 @@ def test_list_sessions_respects_limit(
 
     assert len(records) == 2
     assert [record.thread_id for record in records] == ["thread-c", "thread-b"]
+
+
+def test_list_sessions_uses_file_metadata_for_incomplete_sessions(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(session_store, "_resolve_sessions_root", lambda _config: tmp_path)
+    path = tmp_path / "rollout-20260102-000000000000-thread-incomplete.jsonl"
+    _write_rollout(
+        path,
+        _incomplete_items(
+            thread_id="thread-incomplete",
+            message="incomplete",
+            input_tokens=10,
+            output_tokens=5,
+        ),
+    )
+    os.utime(path, (1735689600, 1735689600))  # 2025-01-01T00:00:00Z
+
+    records = session_store.list_sessions(config=_config(tmp_path), limit=None)
+
+    assert len(records) == 1
+    assert records[0].updated_at == "2025-01-01T00:00:00Z"
+    assert records[0].size_bytes == path.stat().st_size
+
+
+def test_list_sessions_falls_back_to_stat_time_when_closed_at_is_missing(
+    tmp_path: Path,
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    monkeypatch.setattr(session_store, "_resolve_sessions_root", lambda _config: tmp_path)
+    path = tmp_path / "rollout-20260102-000000000000-thread-closed.jsonl"
+    path.write_text("{}", encoding="utf-8")
+    os.utime(path, (1735689600, 1735689600))  # 2025-01-01T00:00:00Z
+
+    class _FakeClosed:
+        thread_id = "thread-closed"
+        turn_count = 1
+        last_user_message = "hello"
+        closed_at = ""
+        token_total = TokenUsage(input_tokens=1, output_tokens=2)
+
+    monkeypatch.setattr(session_store, "read_session_closed", lambda _path: _FakeClosed())
+
+    records = session_store.list_sessions(config=_config(tmp_path), limit=None)
+
+    assert len(records) == 1
+    assert records[0].updated_at == "2025-01-01T00:00:00Z"
 
 
 def test_list_sessions_uses_fast_path_for_closed_sessions(

@@ -221,6 +221,8 @@ def test_slash_resume_emits_filtered_session_list(
                 token_total=2,
                 last_user_message="current",
                 date="20260101",
+                updated_at="2026-01-01T00:00:00Z",
+                size_bytes=1024,
             ),
             SessionSummaryRecord(
                 thread_id="other-thread",
@@ -229,6 +231,8 @@ def test_slash_resume_emits_filtered_session_list(
                 token_total=9,
                 last_user_message="other",
                 date="20260102",
+                updated_at="2026-01-02T00:00:00Z",
+                size_bytes=2048,
             ),
         ],
     )
@@ -240,6 +244,8 @@ def test_slash_resume_emits_filtered_session_list(
     assert len(listed_event.sessions) == 1
     assert listed_event.sessions[0].thread_id == "other-thread"
     assert listed_event.sessions[0].status == "incomplete"
+    assert listed_event.sessions[0].updated_at == "2026-01-02T00:00:00Z"
+    assert listed_event.sessions[0].size_bytes == 2048
 
 
 def test_slash_resume_with_no_sessions_emits_empty_list(
@@ -336,6 +342,16 @@ def test_unknown_slash_command_emits_slash_unknown(tmp_path: Path) -> None:
 
     assert _event_types(events) == ["thread.started", "slash.unknown"]
     assert events[-1].command == "nope"
+
+
+def test_bare_slash_command_emits_slash_unknown_without_crash(tmp_path: Path) -> None:
+    events: list[Any] = []
+    bridge = _new_bridge(tmp_path, events)
+
+    asyncio.run(bridge._handle_line(_user_input_line("/")))
+
+    assert _event_types(events) == ["thread.started", "slash.unknown"]
+    assert events[-1].command == ""
 
 
 def test_activate_session_replaces_bridge_session_and_clears_pending_approvals(

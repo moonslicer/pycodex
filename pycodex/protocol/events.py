@@ -129,6 +129,8 @@ class SessionSummary(_FrozenModel):
     token_total: StrictInt
     last_user_message: str | None
     date: str
+    updated_at: str
+    size_bytes: StrictInt
 
 
 class SessionListed(_FrozenModel):

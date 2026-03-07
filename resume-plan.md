@@ -1018,3 +1018,111 @@ Both PRs merged and all gates passing, plus manual verification:
 3. **Picker row format:** the current design truncates `thread_id` and
    `last_user_message`. Should threads have human-readable names (the upstream
    supports `/rename`)? Defer to a future `/rename` command.
+
+---
+
+## Wave R3 Plan (Selected Scope: Items 2 + 3, Trimmed)
+
+### Scope
+
+Implement only:
+1. **Session metadata contract upgrade** for resume rows with:
+   - `updated_at`
+   - `size_bytes`
+2. **Resume list presentation upgrade** toward Claude-style rows.
+
+Explicitly out of scope for this wave:
+- `git_branch` and `cwd` fields.
+- Current-worktree grouping.
+- Search input in picker (follow-up wave).
+- Cursor-based pagination and backend query paging.
+- Session renaming/forking.
+
+### R3.1 Contract changes (Python + TUI, atomic)
+
+Upgrade `SessionSummary` payload from:
+- `thread_id`, `status`, `turn_count`, `token_total`, `last_user_message`, `date`
+
+to include:
+- `updated_at: str` (ISO 8601 UTC; source for "1 week ago")
+- `size_bytes: int` (rollout file size)
+
+Files:
+- `pycodex/protocol/events.py`
+- `tui/src/protocol/types.ts`
+- `tui/src/protocol/transports/stdio.ts` (runtime shape checks)
+- `tui/src/app.tsx` normalizer for `session.listed`
+- `tui/src/__tests__/reader.test.ts`
+- `tui/src/__tests__/app.test.tsx`
+
+### R3.2 Session metadata sourcing
+
+In `pycodex/core/session_store.py`, enrich `SessionSummaryRecord` and `list_sessions`:
+- `size_bytes` from `path.stat().st_size`.
+- `updated_at`:
+  - closed session: `session_closed.closed_at`
+  - incomplete session: file mtime converted to ISO 8601 UTC.
+- Keep deterministic fallback values for legacy rollouts.
+
+Files:
+- `pycodex/core/session_store.py`
+- `tests/core/test_session_store.py`
+- `tests/core/test_tui_bridge.py` (bridge emits enriched session rows)
+
+### R3.3 Resume picker presentation upgrade
+
+Upgrade `SessionPickerModal` to render richer rows with 5-row windowing preserved:
+- Header: `Resume Session (X of Y)` where X is selected index.
+- Two-line row format:
+  - line 1: prompt preview (`last_user_message` fallback text if empty)
+  - line 2: `relative_time · size` (e.g. `1 week ago · 619.7KB`)
+- Navigation:
+  - existing up/down/j/k semantics preserved.
+  - scrolling window advances as selection moves beyond visible range.
+
+Files:
+- `tui/src/components/SessionPickerModal.tsx`
+- `tui/src/__tests__/sessionPickerModal.test.tsx`
+
+### R3.4 Verification gates
+
+Python:
+```bash
+.venv/bin/ruff check . --fix
+.venv/bin/ruff format .
+.venv/bin/mypy --strict pycodex/
+.venv/bin/pytest tests/core/test_session_store.py -q
+.venv/bin/pytest tests/core/test_tui_bridge.py -q
+.venv/bin/pytest tests/protocol/test_events.py -q
+```
+
+TUI:
+```bash
+cd tui && npm run typecheck
+cd tui && npm run lint
+cd tui && npm test -- --runInBand --findRelatedTests \
+  src/components/SessionPickerModal.tsx \
+  src/app.tsx \
+  src/protocol/types.ts \
+  src/protocol/transports/stdio.ts
+```
+
+### R3 acceptance criteria
+
+1. `/resume` rows include `updated_at` and `size_bytes` in protocol payload.
+2. Legacy rollouts without new metadata still list successfully (null-safe rendering).
+3. Picker shows max 5 rows at once and scrolls while moving selection.
+4. Picker row second line shows relative time and humanized size.
+5. No regression in resume/select behavior or `session.resume` command wiring.
+
+### R3 completion status
+
+- Implemented in code and tests.
+- Hard gates passed:
+  - `.venv/bin/ruff check . --fix`
+  - `.venv/bin/ruff format .`
+  - `.venv/bin/mypy --strict pycodex/`
+  - `.venv/bin/pytest tests -v`
+  - `cd tui && npm run typecheck`
+  - `cd tui && npm run lint`
+  - `cd tui && npm test`

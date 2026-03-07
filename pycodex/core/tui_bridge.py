@@ -148,7 +148,8 @@ class TuiBridge:
         self._active_turn = asyncio.create_task(self._run_turn(text))
 
     async def _handle_slash_command(self, text: str) -> None:
-        command = text[1:].strip().split(maxsplit=1)[0].lower() if text.strip() else ""
+        remainder = text[1:].strip()
+        command = remainder.split(maxsplit=1)[0].lower() if remainder else ""
         if command == "status":
             await self._slash_status()
             return
@@ -186,6 +187,8 @@ class TuiBridge:
                     token_total=record.token_total,
                     last_user_message=record.last_user_message,
                     date=record.date,
+                    updated_at=record.updated_at,
+                    size_bytes=record.size_bytes,
                 )
                 for record in records
                 if record.thread_id != self.session.thread_id

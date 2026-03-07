@@ -42,6 +42,10 @@ export function shouldQueueUserInput(text: string): boolean {
   return !text.startsWith("/");
 }
 
+function isNonNegativeFiniteNumber(value: unknown): value is number {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0;
+}
+
 function isSessionSummaryItem(value: unknown): value is SessionSummaryItem {
   if (typeof value !== "object" || value === null) {
     return false;
@@ -57,13 +61,19 @@ function isSessionSummaryItem(value: unknown): value is SessionSummaryItem {
   ) {
     return false;
   }
-  if (typeof record["turn_count"] !== "number") {
+  if (!isNonNegativeFiniteNumber(record["turn_count"])) {
     return false;
   }
-  if (typeof record["token_total"] !== "number") {
+  if (!isNonNegativeFiniteNumber(record["token_total"])) {
     return false;
   }
   if (typeof record["date"] !== "string") {
+    return false;
+  }
+  if (typeof record["updated_at"] !== "string") {
+    return false;
+  }
+  if (!isNonNegativeFiniteNumber(record["size_bytes"])) {
     return false;
   }
 
