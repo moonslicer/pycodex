@@ -22,6 +22,7 @@ def test_config_defaults() -> None:
     assert config.compaction_context_window_tokens == 128_000
     assert config.compaction_strategy == "threshold_v1"
     assert config.compaction_implementation == "local_summary_v1"
+    assert config.compaction_custom_instructions == ""
     assert config.compaction_options == {}
     assert config.default_approval_policy == ApprovalPolicy.NEVER
     assert config.default_sandbox_policy == SandboxPolicy.DANGER_FULL_ACCESS
@@ -139,6 +140,7 @@ def test_load_config_global_config_applies_when_project_missing(tmp_path: Path) 
                 "compaction_context_window_tokens = 64000",
                 'compaction_strategy = "threshold_v1"',
                 'compaction_implementation = "local_summary_v1"',
+                'compaction_custom_instructions = "Focus on code diffs."',
                 'default_approval_policy = "on-request"',
                 'default_sandbox_policy = "read-only"',
                 "",
@@ -162,12 +164,24 @@ def test_load_config_global_config_applies_when_project_missing(tmp_path: Path) 
     assert config.compaction_context_window_tokens == 64000
     assert config.compaction_strategy == "threshold_v1"
     assert config.compaction_implementation == "local_summary_v1"
+    assert config.compaction_custom_instructions == "Focus on code diffs."
     assert config.default_approval_policy == ApprovalPolicy.ON_REQUEST
     assert config.default_sandbox_policy == SandboxPolicy.READ_ONLY
     assert config.compaction_options == {
         "strategy": {"keep_recent_items": 6},
         "implementation": {"max_lines": 5},
     }
+
+
+def test_load_config_reads_compaction_custom_instructions_from_env(monkeypatch) -> None:
+    monkeypatch.setenv("PYCODEX_COMPACTION_CUSTOM_INSTRUCTIONS", "Summarize Python changes.")
+
+    config = load_config(
+        config_path=Path("does-not-exist.toml"),
+        global_config_path=_MISSING_GLOBAL_CONFIG,
+    )
+
+    assert config.compaction_custom_instructions == "Summarize Python changes."
 
 
 def test_load_config_precedence_env_over_project_over_global(tmp_path: Path, monkeypatch) -> None:

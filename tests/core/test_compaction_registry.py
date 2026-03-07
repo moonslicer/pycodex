@@ -1,18 +1,36 @@
 from __future__ import annotations
 
+from dataclasses import dataclass
+
 import pytest
 from pycodex.core.compaction import (
     DEFAULT_COMPACTION_IMPLEMENTATION,
     DEFAULT_COMPACTION_STRATEGY,
     IMPLEMENTATION_REGISTRY,
+    MODEL_SUMMARY_V1_IMPLEMENTATION,
     STRATEGY_REGISTRY,
+    LocalSummaryV1Implementation,
     create_compaction_orchestrator,
 )
+
+
+@dataclass(slots=True)
+class _FakeModelCompleteClient:
+    async def complete(
+        self,
+        messages: list[dict[str, object]],
+        *,
+        instructions: str = "",
+        max_output_tokens: int = 4096,
+    ) -> str:
+        _ = messages, instructions, max_output_tokens
+        return "<summary>ok</summary>"
 
 
 def test_registry_exposes_default_component_names() -> None:
     assert DEFAULT_COMPACTION_STRATEGY in STRATEGY_REGISTRY
     assert DEFAULT_COMPACTION_IMPLEMENTATION in IMPLEMENTATION_REGISTRY
+    assert MODEL_SUMMARY_V1_IMPLEMENTATION in IMPLEMENTATION_REGISTRY
 
 
 def test_create_compaction_orchestrator_uses_default_components() -> None:
@@ -41,3 +59,41 @@ def test_create_compaction_orchestrator_applies_component_options() -> None:
     assert orchestrator.strategy.threshold_ratio == 0.05
     assert orchestrator.strategy.keep_recent_items == 4
     assert orchestrator.implementation.max_lines == 3
+
+
+def test_create_compaction_orchestrator_rejects_model_summary_without_model_client() -> None:
+    with pytest.raises(ValueError, match="requires a model_client"):
+        create_compaction_orchestrator(implementation_name=MODEL_SUMMARY_V1_IMPLEMENTATION)
+
+
+def test_create_compaction_orchestrator_builds_model_summary_with_options() -> None:
+    orchestrator = create_compaction_orchestrator(
+        implementation_name=MODEL_SUMMARY_V1_IMPLEMENTATION,
+        implementation_options={
+            "max_output_tokens": 256,
+            "custom_instructions": "Focus on code changes.",
+        },
+        model_client=_FakeModelCompleteClient(),
+    )
+
+    assert orchestrator.implementation.name == MODEL_SUMMARY_V1_IMPLEMENTATION
+    assert orchestrator.implementation.max_output_tokens == 256
+    assert orchestrator.implementation.custom_instructions == "Focus on code changes."
+
+
+def test_create_compaction_orchestrator_supports_legacy_implementation_factory(
+    monkeypatch: pytest.MonkeyPatch,
+) -> None:
+    def _legacy_factory(options: dict[str, object]) -> LocalSummaryV1Implementation:
+        return LocalSummaryV1Implementation(max_lines=int(options.get("max_lines", 8)))
+
+    implementation_name = "legacy_local_summary_test"
+    monkeypatch.setitem(IMPLEMENTATION_REGISTRY, implementation_name, _legacy_factory)
+
+    orchestrator = create_compaction_orchestrator(
+        implementation_name=implementation_name,
+        implementation_options={"max_lines": 5},
+    )
+
+    assert orchestrator.implementation.name == DEFAULT_COMPACTION_IMPLEMENTATION
+    assert orchestrator.implementation.max_lines == 5

@@ -168,18 +168,33 @@ class Session:
         self._total_output_tokens = max(0, int(cumulative_usage.get("output_tokens", 0)))
         self._turn_count = max(0, turn_count)
 
-    def replace_prefix_with_system_summary(self, *, replace_count: int, summary_text: str) -> bool:
-        """Replace a leading history slice with one system summary message."""
-        if replace_count <= 0:
+    def replace_range_with_system_summary(
+        self,
+        *,
+        replace_start: int,
+        replace_end: int,
+        summary_text: str,
+    ) -> bool:
+        """Replace history[replace_start:replace_end] with one system summary message."""
+        if replace_start < 0 or replace_end <= replace_start:
             return False
-        effective_replace_count = min(replace_count, len(self._history))
-        if effective_replace_count == 0:
+        effective_end = min(replace_end, len(self._history))
+        if effective_end <= replace_start:
             return False
         self._history = [
+            *self._history[:replace_start],
             {"role": "system", "content": summary_text},
-            *self._history[effective_replace_count:],
+            *self._history[effective_end:],
         ]
         return True
+
+    def replace_prefix_with_system_summary(self, *, replace_count: int, summary_text: str) -> bool:
+        """Replace a leading history slice with one system summary message."""
+        return self.replace_range_with_system_summary(
+            replace_start=0,
+            replace_end=replace_count,
+            summary_text=summary_text,
+        )
 
     def has_initial_context(self) -> bool:
         """Return whether initial context has already been injected."""

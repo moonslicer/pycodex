@@ -11,7 +11,11 @@ from inspect import isawaitable
 from pathlib import Path
 from typing import Any, Literal, Protocol, cast
 
-from pycodex.core.compaction import CompactionApplied, create_compaction_orchestrator
+from pycodex.core.compaction import (
+    CompactionApplied,
+    SupportsModelComplete,
+    create_compaction_orchestrator,
+)
 from pycodex.core.initial_context import build_initial_context
 from pycodex.core.model_client import Completed as ModelCompleted
 from pycodex.core.model_client import OutputItemDone, OutputTextDelta
@@ -138,7 +142,7 @@ class SupportsToolRouter(Protocol):
 class SupportsCompactionOrchestrator(Protocol):
     """Protocol for applying history compaction before model sampling."""
 
-    def compact(self, session: Session) -> CompactionApplied | None:
+    async def compact(self, session: Session) -> CompactionApplied | None:
         """Compact session history when required."""
 
 
@@ -174,7 +178,7 @@ class Agent:
 
         try:
             while True:
-                compaction = self._compact_history_if_needed()
+                compaction = await self._compact_history_if_needed()
                 if compaction is not None:
                     await self._persist_compaction(compaction)
                     await self._emit(
@@ -342,11 +346,11 @@ class Agent:
             return ""
         return self.session.config.profile.instructions
 
-    def _compact_history_if_needed(self) -> CompactionApplied | None:
+    async def _compact_history_if_needed(self) -> CompactionApplied | None:
         orchestrator = self._resolve_compaction_orchestrator()
         if orchestrator is None:
             return None
-        return orchestrator.compact(self.session)
+        return await orchestrator.compact(self.session)
 
     def _resolve_compaction_orchestrator(self) -> SupportsCompactionOrchestrator | None:
         if self.compaction_orchestrator is not None:
@@ -358,6 +362,9 @@ class Agent:
         implementation_options = _compaction_component_options(
             config.compaction_options, key="implementation"
         )
+        implementation_options.setdefault(
+            "custom_instructions", config.compaction_custom_instructions
+        )
         if "threshold_ratio" not in strategy_options:
             strategy_options["threshold_ratio"] = config.compaction_threshold_ratio
         self.compaction_orchestrator = create_compaction_orchestrator(
@@ -366,6 +373,7 @@ class Agent:
             strategy_options=strategy_options,
             implementation_options=implementation_options,
             context_window_tokens=config.compaction_context_window_tokens,
+            model_client=cast(SupportsModelComplete | None, self.model_client),
         )
         return self.compaction_orchestrator
 
@@ -444,6 +452,7 @@ class Agent:
                     schema_version=SCHEMA_VERSION,
                     thread_id=self.session.thread_id,
                     summary_text=compaction.summary_text,
+                    replace_start=compaction.replace_start,
                     replace_end=compaction.replace_end,
                     replaced_items=compaction.replaced_items,
                     strategy=compaction.strategy,

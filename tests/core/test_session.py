@@ -205,3 +205,46 @@ def test_restore_from_rollout_does_not_mark_initial_context_injected() -> None:
     session = Session()
     session.restore_from_rollout(history=[], cumulative_usage={}, turn_count=0)
     assert not session.has_initial_context()
+
+
+def test_replace_range_with_system_summary_replaces_middle_slice() -> None:
+    session = Session()
+    session.append_user_message("u1")
+    session.append_assistant_message("a1")
+    session.append_user_message("u2")
+    session.append_assistant_message("a2")
+
+    replaced = session.replace_range_with_system_summary(
+        replace_start=1,
+        replace_end=3,
+        summary_text="[compaction.summary.v1]\nConversation summary:\n- middle",
+    )
+
+    assert replaced is True
+    assert session.to_prompt() == [
+        {"role": "user", "content": "u1"},
+        {"role": "system", "content": "[compaction.summary.v1]\nConversation summary:\n- middle"},
+        {"role": "assistant", "content": "a2"},
+    ]
+
+
+def test_replace_range_with_system_summary_rejects_invalid_bounds() -> None:
+    session = Session()
+    session.append_user_message("u1")
+
+    assert (
+        session.replace_range_with_system_summary(
+            replace_start=1,
+            replace_end=1,
+            summary_text="x",
+        )
+        is False
+    )
+    assert (
+        session.replace_range_with_system_summary(
+            replace_start=2,
+            replace_end=4,
+            summary_text="x",
+        )
+        is False
+    )

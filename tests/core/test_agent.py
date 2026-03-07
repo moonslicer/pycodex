@@ -103,7 +103,7 @@ class _BlockingToolRouter:
 class _RecordingCompactionOrchestrator:
     calls: int = 0
 
-    def compact(self, session: Session) -> None:
+    async def compact(self, session: Session) -> None:
         _ = session
         self.calls += 1
 
@@ -112,7 +112,7 @@ class _RecordingCompactionOrchestrator:
 class _ApplyingCompactionOrchestrator:
     calls: int = 0
 
-    def compact(self, session: Session) -> CompactionApplied | None:
+    async def compact(self, session: Session) -> CompactionApplied | None:
         _ = session
         self.calls += 1
         if self.calls > 1:
@@ -120,6 +120,7 @@ class _ApplyingCompactionOrchestrator:
         return CompactionApplied(
             strategy="threshold_v1",
             implementation="local_summary_v1",
+            replace_start=0,
             replace_end=3,
             replaced_items=3,
             estimated_prompt_tokens=9100,

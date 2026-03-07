@@ -66,6 +66,7 @@ def test_compaction_applied_matches_golden_fixture() -> None:
         schema_version=SCHEMA_VERSION,
         thread_id="thread_123",
         summary_text="[compaction.summary.v1]\nConversation summary:\n- user: hello",
+        replace_start=0,
         replace_end=8,
         replaced_items=8,
         strategy="threshold_v1",
@@ -127,6 +128,26 @@ def test_validate_rollout_item_requires_schema_version() -> None:
 
     with pytest.raises(ValidationError):
         validate_rollout_item(item)
+
+
+def test_compaction_applied_defaults_replace_start_for_legacy_records() -> None:
+    parsed = validate_rollout_item(
+        {
+            "schema_version": SCHEMA_VERSION,
+            "type": "compaction.applied",
+            "thread_id": "thread_123",
+            "summary_text": "[compaction.summary.v1]\nConversation summary:\n- user: hello",
+            "replace_end": 2,
+            "replaced_items": 2,
+            "strategy": "threshold_v1",
+            "implementation": "local_summary_v1",
+            "strategy_options": {},
+            "implementation_options": {},
+        }
+    )
+
+    assert isinstance(parsed, CompactionApplied)
+    assert parsed.replace_start == 0
 
 
 def test_session_meta_accepts_valid_iso_timestamp() -> None:

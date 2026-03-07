@@ -18,6 +18,7 @@ from pycodex.core.rollout_recorder import (
 )
 from pycodex.core.rollout_schema import (
     SCHEMA_VERSION,
+    CompactionApplied,
     HistoryItem,
     RolloutItem,
     SessionClosed,
@@ -251,11 +252,27 @@ def _apply_rollout_item(
         cumulative_usage["input_tokens"] = int(cumulative.input_tokens)
         cumulative_usage["output_tokens"] = int(cumulative.output_tokens)
     elif item_type == "compaction.applied":
-        # Compaction is already reflected in the history.item records written after it —
-        # those records represent the post-compaction state. The compaction.applied record
-        # carries audit metadata (strategy, summary text) only and does not need to mutate
-        # history during replay.
-        pass
+        compaction_record = cast(CompactionApplied, item)
+        replace_start = int(compaction_record.replace_start)
+        replace_end = int(compaction_record.replace_end)
+        if replace_end > len(history):
+            state_warnings.append(
+                f"compaction.applied replace_end {replace_end} exceeds history length "
+                f"{len(history)}; clamped"
+            )
+        effective_end = min(replace_end, len(history))
+        if effective_end > replace_start >= 0:
+            summary_item: PromptItem = {
+                "role": "system",
+                "content": compaction_record.summary_text,
+            }
+            del history[replace_start:effective_end]
+            history.insert(replace_start, summary_item)
+        else:
+            state_warnings.append(
+                f"compaction.applied record has invalid range "
+                f"[{replace_start}:{replace_end}] for history length {len(history)}"
+            )
     elif item_type in {"session.meta", "session.closed"}:
         return
 

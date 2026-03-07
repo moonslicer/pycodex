@@ -2,20 +2,29 @@
 
 from __future__ import annotations
 
+import json
 import math
+import re
 from collections.abc import Callable
 from dataclasses import dataclass
-from typing import Protocol
+from typing import Protocol, TypeAlias, cast
 
 from pycodex.core.session import PromptItem, Session
 
 DEFAULT_COMPACTION_STRATEGY = "threshold_v1"
 DEFAULT_COMPACTION_IMPLEMENTATION = "local_summary_v1"
+MODEL_SUMMARY_V1_IMPLEMENTATION = "model_summary_v1"
 DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000
 DEFAULT_SUMMARY_MAX_CHARS = 1_200
 _CHARS_PER_TOKEN_ESTIMATE = 4
 
 _SUMMARY_BLOCK_MARKER = "[compaction.summary.v1]"
+_SUMMARY_TOOL_RESULT_MAX_CHARS = 2_000
+_SUMMARY_TOOL_ARGS_MAX_CHARS = 500
+
+_SUMMARY_TAG_PATTERN = re.compile(r"<summary>(.*?)</summary>", re.DOTALL | re.IGNORECASE)
+_DATA_URL_IMAGE_PATTERN = re.compile(r"data:image/[^;]+;base64,[A-Za-z0-9+/=]{20,}")
+_LONG_BASE64_PATTERN = re.compile(r"\b[A-Za-z0-9+/]{200,}={0,2}\b")
 
 
 @dataclass(frozen=True, slots=True)
@@ -25,12 +34,14 @@ class CompactionContext:
     history: list[PromptItem]
     prompt_tokens_estimate: int
     context_window_tokens: int
+    api_input_tokens: int = 0
 
 
 @dataclass(frozen=True, slots=True)
 class CompactionPlan:
     """Decision output from a compaction strategy."""
 
+    replace_start: int
     replace_end: int
     used_tokens: int
     remaining_ratio: float
@@ -58,6 +69,7 @@ class CompactionApplied:
 
     strategy: str
     implementation: str
+    replace_start: int
     replace_end: int
     replaced_items: int
     estimated_prompt_tokens: int
@@ -81,8 +93,21 @@ class CompactionImplementation(Protocol):
 
     name: str
 
-    def summarize(self, request: SummaryRequest) -> SummaryOutput:
-        """Return deterministic summary output for the requested prompt items."""
+    async def summarize(self, request: SummaryRequest) -> SummaryOutput:
+        """Return summary output for the requested prompt items."""
+
+
+class SupportsModelComplete(Protocol):
+    """Protocol for model clients that can produce one full response."""
+
+    async def complete(
+        self,
+        messages: list[PromptItem],
+        *,
+        instructions: str = "",
+        max_output_tokens: int = 4096,
+    ) -> str:
+        """Return one full model text response."""
 
 
 @dataclass(slots=True)
@@ -107,10 +132,22 @@ class ThresholdV1Strategy:
             return None
 
         replace_end = len(context.history) - self.keep_recent_items
-        if replace_end < self.min_replace_items:
+        if replace_end <= 0:
+            return None
+
+        replace_start = 0
+        for index, item in enumerate(context.history):
+            if index >= replace_end:
+                break
+            if _is_summary_block_item(item):
+                replace_start = index + 1
+
+        compactable_count = replace_end - replace_start
+        if compactable_count < self.min_replace_items:
             return None
 
         return CompactionPlan(
+            replace_start=replace_start,
             replace_end=replace_end,
             used_tokens=used_tokens,
             remaining_ratio=remaining_ratio,
@@ -126,7 +163,7 @@ class LocalSummaryV1Implementation:
     max_line_chars: int = 120
     name: str = DEFAULT_COMPACTION_IMPLEMENTATION
 
-    def summarize(self, request: SummaryRequest) -> SummaryOutput:
+    async def summarize(self, request: SummaryRequest) -> SummaryOutput:
         source_items = _summary_source_items(request.items)
         lines: list[str] = []
         for item in source_items[: self.max_lines]:
@@ -147,6 +184,38 @@ class LocalSummaryV1Implementation:
 
 
 @dataclass(slots=True)
+class ModelSummaryV1Implementation:
+    """Model-generated semantic summary implementation."""
+
+    model_client: SupportsModelComplete
+    custom_instructions: str = ""
+    max_output_tokens: int = 4096
+    name: str = MODEL_SUMMARY_V1_IMPLEMENTATION
+
+    async def summarize(self, request: SummaryRequest) -> SummaryOutput:
+        transcript = _format_transcript_for_summary(request.items)
+        prompt = _build_model_summary_prompt(
+            transcript=transcript,
+            custom_instructions=self.custom_instructions,
+        )
+        raw = await self.model_client.complete(
+            [{"role": "user", "content": prompt}],
+            instructions="",
+            max_output_tokens=self.max_output_tokens,
+        )
+
+        extracted = _extract_summary_block(raw)
+        text = extracted if extracted is not None else raw.strip()
+        if not text:
+            text = "No summary generated."
+
+        if len(text) > request.max_chars:
+            text = text[: request.max_chars] + "..."
+
+        return SummaryOutput(text=text)
+
+
+@dataclass(slots=True)
 class CompactionOrchestrator:
     """Apply strategy + implementation to compact session history."""
 
@@ -155,43 +224,64 @@ class CompactionOrchestrator:
     context_window_tokens: int = DEFAULT_CONTEXT_WINDOW_TOKENS
     summary_max_chars: int = DEFAULT_SUMMARY_MAX_CHARS
 
-    def compact(self, session: Session) -> CompactionApplied | None:
+    async def compact(self, session: Session) -> CompactionApplied | None:
         history = session.to_prompt()
+        cumulative_usage = session.cumulative_usage()
+        api_input_tokens = int(cumulative_usage.get("input_tokens", 0))
+        char_estimate = _estimate_prompt_tokens(history)
+        token_estimate = api_input_tokens if api_input_tokens > 0 else char_estimate
         context = CompactionContext(
             history=history,
-            prompt_tokens_estimate=_estimate_prompt_tokens(history),
+            prompt_tokens_estimate=token_estimate,
             context_window_tokens=self.context_window_tokens,
+            api_input_tokens=api_input_tokens,
         )
+
         plan = self.strategy.plan(context)
         if plan is None:
             return None
 
-        items_to_replace = history[: plan.replace_end]
+        items_to_replace = history[plan.replace_start : plan.replace_end]
         summary_items = _summary_source_items(items_to_replace)
         if len(summary_items) == 0:
             return None
-        summary_output = self.implementation.summarize(
+
+        summary_output = await self.implementation.summarize(
             SummaryRequest(items=summary_items, max_chars=self.summary_max_chars)
         )
         summary_text = _render_summary_block(summary=summary_output.text)
-        replaced = session.replace_prefix_with_system_summary(
-            replace_count=plan.replace_end,
+        replaced = session.replace_range_with_system_summary(
+            replace_start=plan.replace_start,
+            replace_end=plan.replace_end,
             summary_text=summary_text,
         )
         if not replaced:
             return None
 
+        replaced_items = plan.replace_end - plan.replace_start
         return CompactionApplied(
             strategy=self.strategy.name,
             implementation=self.implementation.name,
+            replace_start=plan.replace_start,
             replace_end=plan.replace_end,
-            replaced_items=plan.replace_end,
+            replaced_items=replaced_items,
             estimated_prompt_tokens=plan.used_tokens,
             context_window_tokens=self.context_window_tokens,
             remaining_ratio=plan.remaining_ratio,
             threshold_ratio=plan.threshold_ratio,
             summary_text=summary_text,
         )
+
+
+StrategyFactory: TypeAlias = Callable[[dict[str, object]], CompactionStrategy]
+LegacyImplementationFactory: TypeAlias = Callable[[dict[str, object]], CompactionImplementation]
+ModelAwareImplementationFactory: TypeAlias = Callable[
+    [dict[str, object], SupportsModelComplete | None],
+    CompactionImplementation,
+]
+ImplementationFactory: TypeAlias = (
+    LegacyImplementationFactory | ModelAwareImplementationFactory
+)
 
 
 def create_compaction_orchestrator(
@@ -202,6 +292,7 @@ def create_compaction_orchestrator(
     implementation_options: dict[str, object] | None = None,
     context_window_tokens: int = DEFAULT_CONTEXT_WINDOW_TOKENS,
     summary_max_chars: int = DEFAULT_SUMMARY_MAX_CHARS,
+    model_client: SupportsModelComplete | None = None,
 ) -> CompactionOrchestrator:
     """Build a compaction orchestrator from named components."""
     strategy_factory = STRATEGY_REGISTRY.get(strategy_name)
@@ -218,7 +309,11 @@ def create_compaction_orchestrator(
 
     return CompactionOrchestrator(
         strategy=strategy_factory(strategy_options or {}),
-        implementation=implementation_factory(implementation_options or {}),
+        implementation=_build_implementation(
+            implementation_factory,
+            options=implementation_options or {},
+            model_client=model_client,
+        ),
         context_window_tokens=context_window_tokens,
         summary_max_chars=summary_max_chars,
     )
@@ -232,25 +327,153 @@ def _build_threshold_v1_strategy(options: dict[str, object]) -> CompactionStrate
     )
 
 
-def _build_local_summary_v1_implementation(options: dict[str, object]) -> CompactionImplementation:
+def _build_local_summary_v1_implementation(
+    options: dict[str, object],
+    _model_client: SupportsModelComplete | None,
+) -> CompactionImplementation:
     return LocalSummaryV1Implementation(
         max_lines=_to_int_option(options, "max_lines", 8),
         max_line_chars=_to_int_option(options, "max_line_chars", 120),
     )
 
 
-STRATEGY_REGISTRY: dict[str, Callable[[dict[str, object]], CompactionStrategy]] = {
+def _build_model_summary_v1_implementation(
+    options: dict[str, object],
+    model_client: SupportsModelComplete | None,
+) -> CompactionImplementation:
+    if model_client is None or not hasattr(model_client, "complete"):
+        raise ValueError(
+            "compaction implementation 'model_summary_v1' requires a model_client with complete()"
+        )
+
+    custom_instructions = options.get("custom_instructions", "")
+    if not isinstance(custom_instructions, str):
+        custom_instructions = ""
+
+    return ModelSummaryV1Implementation(
+        model_client=model_client,
+        custom_instructions=custom_instructions,
+        max_output_tokens=_to_int_option(options, "max_output_tokens", 4096),
+    )
+
+
+STRATEGY_REGISTRY: dict[str, StrategyFactory] = {
     DEFAULT_COMPACTION_STRATEGY: _build_threshold_v1_strategy,
 }
-IMPLEMENTATION_REGISTRY: dict[str, Callable[[dict[str, object]], CompactionImplementation]] = {
+IMPLEMENTATION_REGISTRY: dict[str, ImplementationFactory] = {
     DEFAULT_COMPACTION_IMPLEMENTATION: _build_local_summary_v1_implementation,
+    MODEL_SUMMARY_V1_IMPLEMENTATION: _build_model_summary_v1_implementation,
 }
 
 
-def _render_summary_block(
+def _build_implementation(
+    factory: ImplementationFactory,
     *,
-    summary: str,
-) -> str:
+    options: dict[str, object],
+    model_client: SupportsModelComplete | None,
+) -> CompactionImplementation:
+    try:
+        model_aware_factory = cast(ModelAwareImplementationFactory, factory)
+        return model_aware_factory(options, model_client)
+    except TypeError as model_aware_error:
+        # Backward compatibility for one-arg implementation factories.
+        try:
+            legacy_factory = cast(LegacyImplementationFactory, factory)
+            return legacy_factory(options)
+        except TypeError:
+            raise model_aware_error from None
+
+
+def _build_model_summary_prompt(*, transcript: str, custom_instructions: str) -> str:
+    sections = [
+        "Your task is to create a detailed summary of the conversation so far.",
+        "This summary will replace compacted history for a future model instance.",
+        "",
+        "Your summary MUST include these sections:",
+        "1. Primary Request and Intent",
+        "2. Key Technical Concepts",
+        "3. Files and Code Sections",
+        "4. Tool Calls and Outcomes",
+        "5. Errors and Fixes",
+        "6. All User Messages",
+        "7. Pending Tasks",
+        "8. Current Work",
+        "9. Next Step",
+        "",
+        "Wrap reasoning in <analysis> tags first, then output ONLY",
+        "the summary inside <summary>...</summary> tags.",
+        "Do not use any tools.",
+    ]
+    prompt = "\n".join(sections)
+
+    trimmed_custom = custom_instructions.strip()
+    if trimmed_custom:
+        prompt += f"\n\nAdditional instructions:\n{trimmed_custom}"
+
+    prompt += f"\n\nConversation transcript:\n{transcript}"
+    return prompt
+
+
+def _extract_summary_block(raw: str) -> str | None:
+    matches = _SUMMARY_TAG_PATTERN.findall(raw)
+    if len(matches) == 0:
+        return None
+    return matches[-1].strip() or None
+
+
+def _format_transcript_for_summary(items: list[PromptItem]) -> str:
+    lines: list[str] = []
+    for item in items:
+        if _is_summary_block_item(item):
+            content = str(item.get("content", ""))
+            lines.append(f"[Prior compaction summary]\n{content}")
+            continue
+
+        item_type = item.get("type")
+        role = item.get("role")
+
+        if item_type == "function_call":
+            name = str(item.get("name", "unknown"))
+            arguments = item.get("arguments", "{}")
+            rendered_args = _render_tool_arguments(arguments)
+            rendered_args = _truncate(rendered_args, max_chars=_SUMMARY_TOOL_ARGS_MAX_CHARS)
+            lines.append(f"Tool call: {name}({rendered_args})")
+            continue
+
+        if role == "tool":
+            call_id = str(item.get("tool_call_id", ""))
+            content = _sanitize_tool_output(str(item.get("content", "")))
+            lines.append(f"Tool result [{call_id}]: {content}")
+            continue
+
+        if role == "user":
+            lines.append(f"User: {item.get('content', '')}")
+            continue
+
+        if role == "assistant":
+            lines.append(f"Assistant: {item.get('content', '')}")
+            continue
+
+    if len(lines) == 0:
+        return "No transcript items to summarize."
+    return "\n\n".join(lines)
+
+
+def _render_tool_arguments(arguments: object) -> str:
+    if isinstance(arguments, dict):
+        return json.dumps(arguments, ensure_ascii=True, sort_keys=True)
+    return str(arguments)
+
+
+def _sanitize_tool_output(text: str) -> str:
+    sanitized = _DATA_URL_IMAGE_PATTERN.sub("[binary data omitted]", text)
+    sanitized = _LONG_BASE64_PATTERN.sub("[binary data omitted]", sanitized)
+    if len(sanitized) > _SUMMARY_TOOL_RESULT_MAX_CHARS:
+        return sanitized[:_SUMMARY_TOOL_RESULT_MAX_CHARS] + "[...truncated]"
+    return sanitized
+
+
+def _render_summary_block(*, summary: str) -> str:
     body = summary.strip() or "No summary content."
     return f"{_SUMMARY_BLOCK_MARKER}\n{body}"
 

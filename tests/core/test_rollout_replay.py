@@ -50,8 +50,9 @@ def _build_rollout_records() -> list[dict[str, object]]:
             schema_version=SCHEMA_VERSION,
             thread_id="thread_123",
             summary_text="[compaction.summary.v1]\nConversation summary:\n- user: hello",
-            replace_end=2,
-            replaced_items=2,
+            replace_start=0,
+            replace_end=1,
+            replaced_items=1,
             strategy="threshold_v1",
             implementation="local_summary_v1",
             strategy_options={"threshold_ratio": 0.2},
@@ -76,7 +77,12 @@ def test_replay_rollout_reconstructs_history_and_usage(tmp_path: Path) -> None:
 
     assert isinstance(state, ReplayState)
     assert state.thread_id == "thread_123"
-    assert state.history == [{"role": "user", "content": "hello"}]
+    assert state.history == [
+        {
+            "role": "system",
+            "content": "[compaction.summary.v1]\nConversation summary:\n- user: hello",
+        }
+    ]
     assert state.cumulative_usage == {"input_tokens": 4, "output_tokens": 2}
     assert state.status == "closed"
     assert state.warnings == []
@@ -150,7 +156,6 @@ def test_replay_rollout_returns_not_found_error_when_missing_path(tmp_path: Path
 def test_replay_rollout_skips_malformed_history_item_with_warning(tmp_path: Path) -> None:
     path = tmp_path / "rollout.jsonl"
     records = _build_rollout_records()
-    # Insert a history.item whose inner dict has neither 'role' nor 'type=function_call'
     records.insert(
         1,
         {
@@ -164,6 +169,175 @@ def test_replay_rollout_skips_malformed_history_item_with_warning(tmp_path: Path
 
     state = replay_rollout(path)
 
-    assert any("malformed history item" in w for w in state.warnings)
-    # The malformed item must not appear in reconstructed history
-    assert all("garbage" not in str(h) for h in state.history)
+    assert any("malformed history item" in warning for warning in state.warnings)
+    assert all("garbage" not in str(history_item) for history_item in state.history)
+
+
+def test_replay_rollout_applies_partial_compaction_and_preserves_prefix(tmp_path: Path) -> None:
+    path = tmp_path / "rollout.jsonl"
+    records = [
+        SessionMeta(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            profile="codex",
+            model="gpt-4.1-mini",
+            cwd="/tmp/project",
+            opened_at="2026-03-02T12:00:00Z",
+            import_source=None,
+        ).model_dump(mode="json"),
+        HistoryItem(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            item={"role": "system", "content": "[compaction.summary.v1]\nold"},
+        ).model_dump(mode="json"),
+        HistoryItem(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            item={"role": "user", "content": "u1"},
+        ).model_dump(mode="json"),
+        HistoryItem(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            item={"role": "assistant", "content": "a1"},
+        ).model_dump(mode="json"),
+        CompactionApplied(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            summary_text="[compaction.summary.v1]\nnew",
+            replace_start=1,
+            replace_end=3,
+            replaced_items=2,
+            strategy="threshold_v1",
+            implementation="local_summary_v1",
+            strategy_options={},
+            implementation_options={},
+        ).model_dump(mode="json"),
+        HistoryItem(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            item={"role": "user", "content": "after"},
+        ).model_dump(mode="json"),
+    ]
+    _write_jsonl(path, records)
+
+    state = replay_rollout(path)
+
+    assert state.history == [
+        {"role": "system", "content": "[compaction.summary.v1]\nold"},
+        {"role": "system", "content": "[compaction.summary.v1]\nnew"},
+        {"role": "user", "content": "after"},
+    ]
+    assert state.warnings == []
+
+
+def test_replay_rollout_clamps_replace_end_and_emits_warning(tmp_path: Path) -> None:
+    path = tmp_path / "rollout.jsonl"
+    records = [
+        SessionMeta(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            profile="codex",
+            model="gpt-4.1-mini",
+            cwd="/tmp/project",
+            opened_at="2026-03-02T12:00:00Z",
+            import_source=None,
+        ).model_dump(mode="json"),
+        HistoryItem(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            item={"role": "user", "content": "u1"},
+        ).model_dump(mode="json"),
+        HistoryItem(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            item={"role": "assistant", "content": "a1"},
+        ).model_dump(mode="json"),
+        CompactionApplied(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            summary_text="[compaction.summary.v1]\nclamped",
+            replace_start=1,
+            replace_end=99,
+            replaced_items=98,
+            strategy="threshold_v1",
+            implementation="local_summary_v1",
+            strategy_options={},
+            implementation_options={},
+        ).model_dump(mode="json"),
+    ]
+    _write_jsonl(path, records)
+
+    state = replay_rollout(path)
+
+    assert state.history == [
+        {"role": "user", "content": "u1"},
+        {"role": "system", "content": "[compaction.summary.v1]\nclamped"},
+    ]
+    assert any("clamped" in warning for warning in state.warnings)
+
+
+def test_replay_rollout_applies_consecutive_compactions(tmp_path: Path) -> None:
+    path = tmp_path / "rollout.jsonl"
+    records = [
+        SessionMeta(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            profile="codex",
+            model="gpt-4.1-mini",
+            cwd="/tmp/project",
+            opened_at="2026-03-02T12:00:00Z",
+            import_source=None,
+        ).model_dump(mode="json"),
+        HistoryItem(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            item={"role": "user", "content": "u1"},
+        ).model_dump(mode="json"),
+        HistoryItem(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            item={"role": "assistant", "content": "a1"},
+        ).model_dump(mode="json"),
+        HistoryItem(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            item={"role": "user", "content": "u2"},
+        ).model_dump(mode="json"),
+        HistoryItem(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            item={"role": "assistant", "content": "a2"},
+        ).model_dump(mode="json"),
+        CompactionApplied(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            summary_text="[compaction.summary.v1]\nfirst",
+            replace_start=0,
+            replace_end=2,
+            replaced_items=2,
+            strategy="threshold_v1",
+            implementation="local_summary_v1",
+            strategy_options={},
+            implementation_options={},
+        ).model_dump(mode="json"),
+        CompactionApplied(
+            schema_version=SCHEMA_VERSION,
+            thread_id="thread_123",
+            summary_text="[compaction.summary.v1]\nsecond",
+            replace_start=1,
+            replace_end=3,
+            replaced_items=2,
+            strategy="threshold_v1",
+            implementation="local_summary_v1",
+            strategy_options={},
+            implementation_options={},
+        ).model_dump(mode="json"),
+    ]
+    _write_jsonl(path, records)
+
+    state = replay_rollout(path)
+
+    assert state.history == [
+        {"role": "system", "content": "[compaction.summary.v1]\nfirst"},
+        {"role": "system", "content": "[compaction.summary.v1]\nsecond"},
+    ]

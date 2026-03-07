@@ -85,6 +85,7 @@ class CompactionApplied(_FrozenModel):
     type: Literal["compaction.applied"] = "compaction.applied"
     thread_id: str
     summary_text: str
+    replace_start: StrictInt = 0
     replace_end: StrictInt
     replaced_items: StrictInt
     strategy: str

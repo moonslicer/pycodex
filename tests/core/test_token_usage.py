@@ -5,6 +5,13 @@ from pathlib import Path
 from typing import Any
 
 from pycodex.core.agent import AgentEvent, TurnCompleted, run_turn
+from pycodex.core.compaction import (
+    CompactionContext,
+    CompactionOrchestrator,
+    CompactionPlan,
+    LocalSummaryV1Implementation,
+    _estimate_prompt_tokens,
+)
 from pycodex.core.model_client import Completed, OutputTextDelta, ResponseEvent
 from pycodex.core.session import Session
 
@@ -33,6 +40,16 @@ class _NoopToolRouter:
     async def dispatch(self, *, name: str, arguments: str | dict[str, Any], cwd: Path) -> str:
         _ = name, arguments, cwd
         raise AssertionError("dispatch should not be called")
+
+
+class _CaptureStrategy:
+    def __init__(self) -> None:
+        self.context: CompactionContext | None = None
+        self.name = "capture"
+
+    def plan(self, context: CompactionContext) -> CompactionPlan | None:
+        self.context = context
+        return None
 
 
 def test_session_record_turn_usage_updates_cumulative_totals() -> None:
@@ -113,3 +130,42 @@ def test_run_turn_emits_monotonic_cumulative_usage(tmp_path: Path) -> None:
         "turn": {"input_tokens": 4, "output_tokens": 2},
         "cumulative": {"input_tokens": 7, "output_tokens": 3},
     }
+
+
+def test_compaction_uses_api_input_tokens_as_primary_trigger_signal() -> None:
+    session = Session()
+    session.append_user_message("u1")
+    session.append_assistant_message("a1")
+    session.record_turn_usage({"input_tokens": 123, "output_tokens": 7})
+
+    strategy = _CaptureStrategy()
+    orchestrator = CompactionOrchestrator(
+        strategy=strategy,
+        implementation=LocalSummaryV1Implementation(),
+        context_window_tokens=1000,
+    )
+
+    asyncio.run(orchestrator.compact(session))
+
+    assert strategy.context is not None
+    assert strategy.context.api_input_tokens == 123
+    assert strategy.context.prompt_tokens_estimate == 123
+
+
+def test_compaction_falls_back_to_character_estimate_without_api_usage() -> None:
+    session = Session()
+    session.append_user_message("u1")
+    session.append_assistant_message("a1")
+
+    strategy = _CaptureStrategy()
+    orchestrator = CompactionOrchestrator(
+        strategy=strategy,
+        implementation=LocalSummaryV1Implementation(),
+        context_window_tokens=1000,
+    )
+
+    asyncio.run(orchestrator.compact(session))
+
+    assert strategy.context is not None
+    assert strategy.context.api_input_tokens == 0
+    assert strategy.context.prompt_tokens_estimate == _estimate_prompt_tokens(session.to_prompt())

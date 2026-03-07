@@ -52,7 +52,7 @@ class _SingleCompaction:
     def __init__(self) -> None:
         self._used = False
 
-    def compact(self, session: Session) -> CompactionApplied | None:
+    async def compact(self, session: Session) -> CompactionApplied | None:
         if self._used:
             return None
         self._used = True
@@ -63,6 +63,7 @@ class _SingleCompaction:
         return CompactionApplied(
             strategy="threshold_v1",
             implementation="local_summary_v1",
+            replace_start=0,
             replace_end=1,
             replaced_items=1,
             estimated_prompt_tokens=400,
@@ -357,6 +358,7 @@ async def test_rollout_write_points_include_compaction_applied_record(tmp_path: 
     assert len(compaction_records) == 1
     assert compaction_records[0]["strategy"] == "threshold_v1"
     assert compaction_records[0]["implementation"] == "local_summary_v1"
+    assert compaction_records[0]["replace_start"] == 0
 
 
 @pytest.mark.asyncio

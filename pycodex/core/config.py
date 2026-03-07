@@ -30,6 +30,7 @@ class Config(BaseModel):
     compaction_context_window_tokens: int = 128_000
     compaction_strategy: str = "threshold_v1"
     compaction_implementation: str = "local_summary_v1"
+    compaction_custom_instructions: str = ""
     compaction_options: dict[str, dict[str, Any]] = Field(default_factory=dict)
     default_approval_policy: ApprovalPolicy = ApprovalPolicy.NEVER
     default_sandbox_policy: SandboxPolicy = SandboxPolicy.DANGER_FULL_ACCESS
@@ -71,6 +72,8 @@ def _load_env_config() -> dict[str, Any]:
         env["compaction_strategy"] = value
     if value := os.getenv("PYCODEX_COMPACTION_IMPLEMENTATION"):
         env["compaction_implementation"] = value
+    if value := os.getenv("PYCODEX_COMPACTION_CUSTOM_INSTRUCTIONS"):
+        env["compaction_custom_instructions"] = value
     if value := os.getenv("PYCODEX_DEFAULT_APPROVAL_POLICY"):
         env["default_approval_policy"] = value
     if value := os.getenv("PYCODEX_DEFAULT_SANDBOX_POLICY"):
