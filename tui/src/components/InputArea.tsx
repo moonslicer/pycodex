@@ -1,7 +1,10 @@
 import { useEffect, useRef, useState } from "react";
 import { Box, Text, useInput } from "ink";
 
-import { useSlashCompletion } from "../hooks/useSlashCompletion.js";
+import {
+  getSlashMatches,
+  useSlashCompletion,
+} from "../hooks/useSlashCompletion.js";
 import { SlashCommandPopup } from "./SlashCommandPopup.js";
 
 type InputAreaProps = {
@@ -280,7 +283,13 @@ export function handleSlashPopupKey(
       completion: null,
     };
   }
-  if (key.return || (key.tab ?? false)) {
+  if (key.return) {
+    return {
+      handled: false,
+      completion: null,
+    };
+  }
+  if (key.tab ?? false) {
     const completion = callbacks.complete();
     if (completion === null) {
       return {
@@ -396,6 +405,23 @@ export function computeKeyEvent(
   };
 }
 
+export function normalizeSlashSubmitText(text: string): string {
+  if (!text.startsWith("/") || text.includes(" ")) {
+    return text;
+  }
+
+  const matches = getSlashMatches(text);
+  if (matches.length !== 1) {
+    return text;
+  }
+
+  const onlyMatch = matches[0];
+  if (onlyMatch === undefined) {
+    return text;
+  }
+  return `/${onlyMatch.command}`;
+}
+
 export function InputArea({
   disabled,
   hasActiveTurn,
@@ -463,7 +489,7 @@ export function InputArea({
     switch (result.type) {
       case "submit":
         setEditorState(result.state);
-        onSubmit(result.text);
+        onSubmit(normalizeSlashSubmitText(result.text));
         break;
       case "state":
         setEditorState(result.state);
@@ -481,16 +507,12 @@ export function InputArea({
 
   return (
     <Box flexDirection="column">
-      <Box minHeight={1}>
-        {showSlashPopup ? (
-          <SlashCommandPopup
-            matches={slashCompletion.matches}
-            selectedIndex={slashCompletion.selectedIndex}
-          />
-        ) : (
-          <Text dimColor />
-        )}
-      </Box>
+      {showSlashPopup ? (
+        <SlashCommandPopup
+          matches={slashCompletion.matches}
+          selectedIndex={slashCompletion.selectedIndex}
+        />
+      ) : null}
       <Box borderStyle="single" paddingX={1}>
         {disabled ? (
           <Text color="yellow">

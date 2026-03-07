@@ -14,12 +14,15 @@ export const SLASH_COMMANDS: readonly SlashCommandDef[] = [
 export function isSlashCompletionOpen(
   value: string,
   dismissedValue: string | null,
+  commands: readonly SlashCommandDef[] = SLASH_COMMANDS,
 ): boolean {
   if (!value.startsWith("/") || value.includes(" ")) {
     return false;
   }
 
-  if (value.length <= 1) {
+  const query = value.slice(1).toLowerCase();
+  const isExactCommand = commands.some((commandDef) => commandDef.command === query);
+  if (isExactCommand) {
     return false;
   }
 

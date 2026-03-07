@@ -11,6 +11,7 @@ import {
   isSubmitInput,
   moveCursorLeft,
   moveCursorRight,
+  normalizeSlashSubmitText,
   pushHistoryEntry,
   resetEditorForDisabled,
   recallHistoryDown,
@@ -571,7 +572,7 @@ describe("handleSlashPopupKey", () => {
     expect(callbacks.selectNext).toHaveBeenCalledTimes(1);
   });
 
-  test("enter completes command when a match exists", () => {
+  test("enter falls through to normal submit handling", () => {
     const callbacks = {
       complete: jest.fn(() => "/resume "),
       dismiss: jest.fn(),
@@ -581,8 +582,8 @@ describe("handleSlashPopupKey", () => {
 
     const result = handleSlashPopupKey(true, makeKey({ return: true }), callbacks);
 
-    expect(result).toEqual({ handled: true, completion: "/resume " });
-    expect(callbacks.complete).toHaveBeenCalledTimes(1);
+    expect(result).toEqual({ handled: false, completion: null });
+    expect(callbacks.complete).not.toHaveBeenCalled();
   });
 
   test("tab falls through when no completion is available", () => {
@@ -625,5 +626,21 @@ describe("handleSlashPopupKey", () => {
 
     expect(result).toEqual({ handled: false, completion: null });
     expect(callbacks.selectPrevious).not.toHaveBeenCalled();
+  });
+});
+
+describe("normalizeSlashSubmitText", () => {
+  test("keeps plain text unchanged", () => {
+    expect(normalizeSlashSubmitText("hello world")).toBe("hello world");
+  });
+
+  test("normalizes unique slash prefix to full command", () => {
+    expect(normalizeSlashSubmitText("/stat")).toBe("/status");
+    expect(normalizeSlashSubmitText("/res")).toBe("/resume");
+  });
+
+  test("leaves slash text unchanged when matches are ambiguous or include spaces", () => {
+    expect(normalizeSlashSubmitText("/")).toBe("/");
+    expect(normalizeSlashSubmitText("/status now")).toBe("/status now");
   });
 });

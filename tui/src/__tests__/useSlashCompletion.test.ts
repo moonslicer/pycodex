@@ -15,15 +15,21 @@ describe("useSlashCompletion helpers", () => {
     ]);
   });
 
-  test("isOpen is true for slash prefix with at least one command character", () => {
+  test("isOpen is true for slash prefix including bare slash", () => {
+    expect(isSlashCompletionOpen("/", null)).toBe(true);
     expect(isSlashCompletionOpen("/r", null)).toBe(true);
   });
 
-  test("isOpen is false for bare slash, non-slash text, or values with spaces", () => {
-    expect(isSlashCompletionOpen("/", null)).toBe(false);
+  test("isOpen is false for non-slash text or values with spaces", () => {
     expect(isSlashCompletionOpen("", null)).toBe(false);
     expect(isSlashCompletionOpen("hello", null)).toBe(false);
     expect(isSlashCompletionOpen("/resume now", null)).toBe(false);
+  });
+
+  test("isOpen is false for exact slash commands", () => {
+    expect(isSlashCompletionOpen("/resume", null)).toBe(false);
+    expect(isSlashCompletionOpen("/status", null)).toBe(false);
+    expect(isSlashCompletionOpen("/new", null)).toBe(false);
   });
 
   test("dismiss keeps popup closed until value changes", () => {
