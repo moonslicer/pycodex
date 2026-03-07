@@ -117,7 +117,7 @@ cd tui && npm test
   - Verify:
     - `cd tui && npm run typecheck && npm run lint`
 
-- [ ] T9: `useTurns` thread reset fix (`tui/src/hooks/useTurns.ts`)
+- [x] T9: `useTurns` thread reset fix (`tui/src/hooks/useTurns.ts`)
   - `thread.started` reducer: if `state.threadId !== null && state.threadId !== event.thread_id`, return `{ threadId: event.thread_id, turns: [] }`.
   - Otherwise return `{ ...state, threadId: event.thread_id }` (startup and same-id reconnect unchanged).
   - Verify:
@@ -254,7 +254,7 @@ T15 + T16 + T17                 ──> T18 (final gates)
 - [ ] T6 complete
 - [ ] T7 complete
 - [ ] T8 complete
-- [ ] T9 complete
+- [x] T9 complete
 - [ ] T10 complete
 - [ ] T11 complete
 - [ ] T12 complete

@@ -222,6 +222,13 @@ export function reduceTurns(
 ): TurnsViewState {
   switch (event.type) {
     case "thread.started":
+      if (state.threadId !== null && state.threadId !== event.thread_id) {
+        return {
+          threadId: event.thread_id,
+          turns: [],
+        };
+      }
+
       return {
         ...state,
         threadId: event.thread_id,

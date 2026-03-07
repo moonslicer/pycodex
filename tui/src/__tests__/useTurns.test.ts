@@ -13,6 +13,80 @@ const ABORT_TEXT = "Aborted by user.";
 const INTERRUPTED_ERROR = "interrupted";
 
 describe("reduceTurns", () => {
+  test("thread.started with same thread id preserves turns", () => {
+    const state: TurnsViewState = {
+      threadId: "thread_1",
+      turns: [
+        {
+          turn_id: "turn_1",
+          userText: "hello",
+          assistantLines: ["hi"],
+          partialLine: "",
+          toolCalls: {},
+          status: "completed",
+          error: null,
+          usage: null,
+          compaction: {
+            status: "idle",
+            detail: null,
+          },
+        },
+      ],
+    };
+
+    const next = reduceTurns(state, {
+      type: "thread.started",
+      thread_id: "thread_1",
+    });
+
+    expect(next).toEqual(state);
+    expect(next.turns).toHaveLength(1);
+  });
+
+  test("thread.started with different thread id resets turns", () => {
+    const state: TurnsViewState = {
+      threadId: "thread_1",
+      turns: [
+        {
+          turn_id: "turn_1",
+          userText: "hello",
+          assistantLines: ["hi"],
+          partialLine: "",
+          toolCalls: {},
+          status: "completed",
+          error: null,
+          usage: null,
+          compaction: {
+            status: "idle",
+            detail: null,
+          },
+        },
+      ],
+    };
+
+    const next = reduceTurns(state, {
+      type: "thread.started",
+      thread_id: "thread_2",
+    });
+
+    expect(next).toEqual({
+      threadId: "thread_2",
+      turns: [],
+    });
+  });
+
+  test("thread.started when thread id is null sets thread id without reset", () => {
+    const next = reduceTurns(INITIAL_TURNS_STATE, {
+      type: "thread.started",
+      thread_id: "thread_1",
+    });
+
+    expect(next).toEqual({
+      ...INITIAL_TURNS_STATE,
+      threadId: "thread_1",
+    });
+  });
+
   test("turn.started appends an active turn", () => {
     const next = reduceTurns(INITIAL_TURNS_STATE, {
       type: "turn.started",
