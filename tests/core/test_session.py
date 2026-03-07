@@ -3,7 +3,6 @@ from __future__ import annotations
 from unittest.mock import AsyncMock, patch
 
 import pytest
-
 from pycodex.core.config import Config
 from pycodex.core.rollout_recorder import RolloutRecorder, build_rollout_path
 from pycodex.core.session import MAX_TOOL_RESULT_CHARS, Session
@@ -166,10 +165,12 @@ async def test_session_context_manager_does_not_mask_body_exception(tmp_path):
     session = Session(config=config)
 
     mock = AsyncMock(side_effect=RuntimeError("cleanup error"))
-    with patch.object(Session, "close_rollout", mock):
-        with pytest.raises(ValueError, match="body error"):
-            async with session:
-                raise ValueError("body error")
+    with (
+        patch.object(Session, "close_rollout", mock),
+        pytest.raises(ValueError, match="body error"),
+    ):
+        async with session:
+            raise ValueError("body error")
 
 
 @pytest.mark.asyncio
@@ -178,10 +179,12 @@ async def test_session_context_manager_propagates_cleanup_error_when_body_succee
     session = Session(config=config)
 
     mock = AsyncMock(side_effect=RuntimeError("cleanup error"))
-    with patch.object(Session, "close_rollout", mock):
-        with pytest.raises(RuntimeError, match="cleanup error"):
-            async with session:
-                pass
+    with (
+        patch.object(Session, "close_rollout", mock),
+        pytest.raises(RuntimeError, match="cleanup error"),
+    ):
+        async with session:
+            pass
 
 
 def test_append_tool_result_truncates_oversized_content() -> None:

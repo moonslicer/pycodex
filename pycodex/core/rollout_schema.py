@@ -35,10 +35,10 @@ def _validate_iso_timestamp(field_name: str, v: object) -> object:
         normalized = v.replace("Z", "+00:00") if v.endswith("Z") else v
         try:
             datetime.fromisoformat(normalized)
-        except ValueError:
+        except ValueError as exc:
             raise ValueError(
                 f"{field_name} must be a valid ISO 8601 timestamp, got: {v!r}"
-            )
+            ) from exc
     return v
 
 

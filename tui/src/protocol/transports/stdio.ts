@@ -129,6 +129,29 @@ function isProtocolEvent(value: unknown): value is ProtocolEvent {
         isString(value["tool"]) &&
         isString(value["preview"])
       );
+    case "session.listed":
+      return Array.isArray(value["sessions"]);
+    case "session.status":
+      return (
+        isString(threadId) &&
+        isNumber(value["turn_count"]) &&
+        isNumber(value["input_tokens"]) &&
+        isNumber(value["output_tokens"])
+      );
+    case "slash.unknown":
+      return isString(value["command"]);
+    case "slash.blocked":
+      return (
+        isString(value["command"]) &&
+        value["reason"] === "active_turn"
+      );
+    case "session.error":
+      return (
+        (value["operation"] === "resume" ||
+          value["operation"] === "new" ||
+          value["operation"] === "list") &&
+        isString(value["message"])
+      );
     default:
       return false;
   }
@@ -266,6 +289,22 @@ export class StdioWriter implements ProtocolWriter {
     this.write({
       jsonrpc: "2.0",
       method: "interrupt",
+      params: {},
+    });
+  }
+
+  sendSessionResume(threadId: string): void {
+    this.write({
+      jsonrpc: "2.0",
+      method: "session.resume",
+      params: { thread_id: threadId },
+    });
+  }
+
+  sendSessionNew(): void {
+    this.write({
+      jsonrpc: "2.0",
+      method: "session.new",
       params: {},
     });
   }

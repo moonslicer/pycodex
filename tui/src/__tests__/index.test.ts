@@ -69,6 +69,15 @@ class MockWriter implements ProtocolWriter {
     this.interruptCount += 1;
   }
 
+  sendSessionResume(threadId: string): void {
+    void threadId;
+    // no-op for lifecycle tests
+  }
+
+  sendSessionNew(): void {
+    // no-op for lifecycle tests
+  }
+
   close(): void {
     this.closeCount += 1;
   }
