@@ -938,8 +938,8 @@ in this task.
 Run in order; all four must pass before the task is done.
 
 ```sh
-cd /Users/hao/Projects/pycodex/tui && npm run typecheck
-cd /Users/hao/Projects/pycodex/tui && npm run lint
-cd /Users/hao/Projects/pycodex/tui && npm test -- --runInBand --findRelatedTests src/components/InputArea.tsx src/__tests__/inputArea.test.ts
-cd /Users/hao/Projects/pycodex/tui && npm test
+cd tui && npm run typecheck
+cd tui && npm run lint
+cd tui && npm test -- --runInBand --findRelatedTests src/components/InputArea.tsx src/__tests__/inputArea.test.ts
+cd tui && npm test
 ```
