@@ -21,6 +21,13 @@ class SkillRegistry:
     by_name: Mapping[str, SkillMetadata]
     by_path: Mapping[Path, SkillMetadata]
 
+    def is_model_invocation_disabled(self, name: str) -> bool:
+        """Return whether the named skill opts out of model self-invocation."""
+        skill = self.by_name.get(name)
+        if skill is None:
+            return False
+        return skill.disable_model_invocation
+
 
 DiscoverFn = Callable[..., SkillDiscoveryResult]
 

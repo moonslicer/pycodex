@@ -34,6 +34,7 @@ class SkillMetadata:
     skill_root: Path
     scope: SkillScope
     dependencies: SkillDependencies | None = None
+    disable_model_invocation: bool = False
 
 
 @dataclass(frozen=True, slots=True)

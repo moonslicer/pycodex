@@ -35,6 +35,7 @@ class ParsedSkillDocument:
     description: str
     short_description: str | None
     body: str
+    disable_model_invocation: bool = False
     dependencies: SkillDependencies | None = None
     warnings: tuple[str, ...] = ()
 
@@ -49,6 +50,11 @@ def parse_skill_markdown(skill_path: Path) -> ParsedSkillDocument:
 
     name = _required_string(parsed, "name", path=skill_path)
     description = _required_string(parsed, "description", path=skill_path)
+    disable_model_invocation = _optional_bool(
+        parsed,
+        key="disable-model-invocation",
+        path=skill_path,
+    )
 
     short_description: str | None = None
     metadata = parsed.get("metadata")
@@ -70,10 +76,19 @@ def parse_skill_markdown(skill_path: Path) -> ParsedSkillDocument:
         description=description,
         short_description=short_description,
         body=body,
+        disable_model_invocation=disable_model_invocation,
         dependencies=dependencies,
         warnings=tuple(dep_warnings),
     )
 
+
+def _optional_bool(parsed: dict[str, YamlValue], *, key: str, path: Path) -> bool:
+    raw = parsed.get(key)
+    if raw is None:
+        return False
+    if isinstance(raw, bool):
+        return raw
+    raise SkillParseError(path, f"{key} must be a boolean")
 
 
 def _read_text(path: Path) -> str:
@@ -179,7 +194,6 @@ def _extract_dependencies(
     return SkillDependencies(
         env_vars=tuple(SkillEnvVarDependency(name=name) for name in deduped_names),
     )
-
 
 
 def _parse_yaml(text: str, *, path: Path) -> YamlValue:

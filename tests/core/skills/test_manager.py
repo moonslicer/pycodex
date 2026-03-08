@@ -110,3 +110,31 @@ def test_skills_manager_registry_excludes_ambiguous_name_lookup(tmp_path: Path) 
     assert "duplicate" not in registry.by_name
     assert registry.by_path[first.path_to_skill_md] is first
     assert registry.by_path[second.path_to_skill_md] is second
+
+
+def test_skills_manager_registry_reports_model_invocation_disable(tmp_path: Path) -> None:
+    skill_path = tmp_path / "skill" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True)
+    skill_path.write_text("---\nname: hidden\ndescription: hidden\n---\n", encoding="utf-8")
+    hidden_skill = SkillMetadata(
+        name="hidden",
+        description="hidden",
+        short_description=None,
+        path_to_skill_md=skill_path.resolve(),
+        skill_root=skill_path.parent.resolve(),
+        scope="repo",
+        disable_model_invocation=True,
+    )
+
+    def _discover(**_: object) -> SkillDiscoveryResult:
+        return SkillDiscoveryResult(
+            skills=(hidden_skill,),
+            errors=(),
+            ambiguous_names=frozenset(),
+        )
+
+    manager = SkillsManager(discover_fn=_discover)
+    registry = manager.get_registry(cwd=tmp_path)
+
+    assert registry.is_model_invocation_disabled("hidden") is True
+    assert registry.is_model_invocation_disabled("missing") is False

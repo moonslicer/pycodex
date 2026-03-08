@@ -126,3 +126,46 @@ def test_parse_skill_markdown_warns_on_malformed_dependencies(tmp_path: Path) ->
     assert parsed.dependencies is None
     assert len(parsed.warnings) == 1
     assert "ignored dependencies" in parsed.warnings[0]
+
+
+def test_parse_skill_markdown_parses_disable_model_invocation(tmp_path: Path) -> None:
+    skill_file = tmp_path / "SKILL.md"
+    skill_file.write_text(
+        "\n".join(
+            [
+                "---",
+                "name: no-model",
+                "description: Keep this skill user-invoked only.",
+                "disable-model-invocation: true",
+                "---",
+                "body",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    parsed = parse_skill_markdown(skill_file)
+
+    assert parsed.disable_model_invocation is True
+
+
+def test_parse_skill_markdown_rejects_non_boolean_disable_model_invocation(tmp_path: Path) -> None:
+    skill_file = tmp_path / "SKILL.md"
+    skill_file.write_text(
+        "\n".join(
+            [
+                "---",
+                "name: invalid",
+                "description: Invalid disable flag.",
+                "disable-model-invocation: nope",
+                "---",
+                "body",
+            ]
+        )
+        + "\n",
+        encoding="utf-8",
+    )
+
+    with pytest.raises(SkillParseError, match="disable-model-invocation must be a boolean"):
+        parse_skill_markdown(skill_file)

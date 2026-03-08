@@ -144,6 +144,7 @@ def discover_skills(
                 skill_root=canonical_skill_path.parent,
                 scope=root.scope,
                 dependencies=parsed_skill.dependencies,
+                disable_model_invocation=parsed_skill.disable_model_invocation,
             )
 
             existing = kept_by_name.get(metadata.name)
