@@ -58,3 +58,27 @@ Verification:
 
 Follow-ups:
 - Milestone 2 manual verification command (`python3 -m pycodex --approval on-request ...`) depends on local runtime OpenAI client setup and reachable endpoint; keep the completion checklist item blocked until that environment check is satisfied.
+
+## 2026-03-07 - Architecture docs converted to current-state references
+Context:
+- `engineering-plan.md` and `summary-plan.md` still described already-shipped compaction and replay work as pending tasks.
+- `docs/ai/system-map.md` and `docs/README.md` still referenced a non-existent active `todo-m5.md` tracker.
+
+Decision:
+- Rewrote `engineering-plan.md` as a current-state architecture document with locked contracts, implementation scope, and near-term priorities.
+- Rewrote `summary-plan.md` as a concise status/contract snapshot aligned to the implemented runtime.
+- Updated `docs/ai/system-map.md` and `docs/README.md` to reference current sources of truth and archived milestone artifacts under `docs/archive/`.
+
+Impact:
+- `engineering-plan.md`
+- `summary-plan.md`
+- `docs/ai/system-map.md`
+- `docs/README.md`
+- `docs/ai/memory.md`
+
+Verification:
+- Manual source review against current runtime modules in `pycodex/core/`, `pycodex/tools/`, `pycodex/approval/`, and `pycodex/protocol/`.
+- Consistency check for stale `todo-m5.md` references in updated docs.
+
+Follow-ups:
+- Keep architecture docs synchronized whenever protocol events, compaction contracts, or session/rollout semantics change.

@@ -2,20 +2,24 @@
 
 Use this directory for durable project documentation that should outlive task chat history.
 
-## AI Docs
+## Core Docs
 
 - `docs/ai/system-map.md`: ownership map and behavior/contract boundaries.
 - `docs/ai/harness.md`: agent behavior evaluation workflow.
-- `docs/ai/memory.md`: durable decisions and postmortem notes.
+- `docs/ai/memory.md`: durable architecture and policy decisions.
+- `../engineering-plan.md`: full current-state architecture and engineering plan.
+- `../summary-plan.md`: concise architecture/status summary.
 
-## Milestone Trackers
+## Historical Milestone Artifacts
 
-- `../todo-m5.md`: active milestone tracker.
-- `todo-m1.md`: historical milestone 1 tracker.
-- `../archive/todo-m2.md`, `../archive/todo-m3.md`, `../archive/todo-m4.md`: archived milestone trackers.
+Historical milestone plans, reviews, and one-off design plans are stored under:
+- `docs/archive/`
+
+There is currently no active `todo-m*.md` tracker in the repository root.
 
 ## Update Rules
 
-- Update `docs/ai/system-map.md` when ownership, contracts, or key runtime boundaries change.
+- Update `engineering-plan.md` and `summary-plan.md` when architecture ownership or runtime behavior changes.
+- Update `docs/ai/system-map.md` when contract boundaries or module ownership moves.
 - Update `docs/ai/harness.md` when behavior test strategy or required commands change.
-- Add durable architecture/policy decisions to `docs/ai/memory.md` after non-trivial changes.
+- Add durable non-trivial architecture/policy decisions to `docs/ai/memory.md`.
