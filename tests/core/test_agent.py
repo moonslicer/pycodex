@@ -119,6 +119,7 @@ def _skill_metadata(
     skill_path: Path,
     *,
     dependencies: SkillDependencies | None = None,
+    disable_model_invocation: bool = False,
 ) -> SkillMetadata:
     resolved = skill_path.resolve()
     return SkillMetadata(
@@ -129,6 +130,7 @@ def _skill_metadata(
         skill_root=resolved.parent,
         scope="repo",
         dependencies=dependencies,
+        disable_model_invocation=disable_model_invocation,
     )
 
 
@@ -469,6 +471,190 @@ def test_run_turn_does_not_reemit_existing_unavailable_message_on_resumed_sessio
         if isinstance(message.get("content"), str) and "<skill-unavailable>" in message["content"]
     ]
     assert len(unavailable_messages) == 1
+
+
+def test_run_turn_model_signal_injects_skill_and_resamples(tmp_path: Path) -> None:
+    session = Session(config=Config(cwd=tmp_path))
+    model_client = _FakeModelClient(
+        turns=[
+            [OutputTextDelta(delta="I will use $alpha."), Completed(response_id="resp_1")],
+            [OutputTextDelta(delta="done"), Completed(response_id="resp_2")],
+        ]
+    )
+    router = _FakeToolRouter(specs=[], results=[])
+
+    skill_path = tmp_path / "alpha" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True)
+    skill_path.write_text(
+        "---\nname: alpha\ndescription: Alpha\n---\nUse alpha.\n", encoding="utf-8"
+    )
+    registry = _registry_with_skills((_skill_metadata("alpha", skill_path),))
+    skills_manager = _SkillsManagerStub(registry=registry)
+
+    result = asyncio.run(
+        Agent(
+            session=session,
+            model_client=model_client,
+            tool_router=router,
+            cwd=tmp_path,
+            skills_manager=skills_manager,
+        ).run_turn("please help")
+    )
+
+    assert result == "done"
+    assert len(model_client.calls) == 2
+    assert not any(
+        message.get("skill_injected") is True for message in model_client.calls[0]["messages"]
+    )
+    assert any(
+        message.get("skill_injected") is True and message.get("skill_name") == "alpha"
+        for message in model_client.calls[1]["messages"]
+    )
+
+
+def test_run_turn_model_signal_respects_budget(tmp_path: Path) -> None:
+    session = Session(config=Config(cwd=tmp_path))
+    model_client = _FakeModelClient(
+        turns=[
+            [OutputTextDelta(delta="use $alpha"), Completed(response_id="resp_1")],
+            [OutputTextDelta(delta="then $beta"), Completed(response_id="resp_2")],
+        ]
+    )
+    router = _FakeToolRouter(specs=[], results=[])
+
+    alpha_path = tmp_path / "alpha" / "SKILL.md"
+    alpha_path.parent.mkdir(parents=True)
+    alpha_path.write_text(
+        "---\nname: alpha\ndescription: Alpha\n---\nUse alpha.\n",
+        encoding="utf-8",
+    )
+    beta_path = tmp_path / "beta" / "SKILL.md"
+    beta_path.parent.mkdir(parents=True)
+    beta_path.write_text(
+        "---\nname: beta\ndescription: Beta\n---\nUse beta.\n",
+        encoding="utf-8",
+    )
+    registry = _registry_with_skills(
+        (_skill_metadata("alpha", alpha_path), _skill_metadata("beta", beta_path))
+    )
+    skills_manager = _SkillsManagerStub(registry=registry)
+
+    result = asyncio.run(
+        Agent(
+            session=session,
+            model_client=model_client,
+            tool_router=router,
+            cwd=tmp_path,
+            skills_manager=skills_manager,
+            model_signal_budget=1,
+        ).run_turn("help")
+    )
+
+    assert result == "then $beta"
+    assert len(model_client.calls) == 2
+    injected_names = [
+        message.get("skill_name")
+        for message in session.to_prompt()
+        if message.get("skill_injected") is True
+    ]
+    assert injected_names == ["alpha"]
+
+
+def test_run_turn_model_signal_deduplicates_with_preflight(tmp_path: Path) -> None:
+    session = Session(config=Config(cwd=tmp_path))
+    model_client = _FakeModelClient(
+        turns=[[OutputTextDelta(delta="I will use $alpha."), Completed(response_id="resp_1")]]
+    )
+    router = _FakeToolRouter(specs=[], results=[])
+
+    skill_path = tmp_path / "alpha" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True)
+    skill_path.write_text(
+        "---\nname: alpha\ndescription: Alpha\n---\nUse alpha.\n", encoding="utf-8"
+    )
+    registry = _registry_with_skills((_skill_metadata("alpha", skill_path),))
+    skills_manager = _SkillsManagerStub(registry=registry)
+
+    result = asyncio.run(
+        Agent(
+            session=session,
+            model_client=model_client,
+            tool_router=router,
+            cwd=tmp_path,
+            skills_manager=skills_manager,
+        ).run_turn("please run $alpha")
+    )
+
+    assert result == "I will use $alpha."
+    assert len(model_client.calls) == 1
+    injected_messages = [
+        message
+        for message in session.to_prompt()
+        if message.get("skill_injected") is True and message.get("skill_name") == "alpha"
+    ]
+    assert len(injected_messages) == 1
+
+
+def test_run_turn_model_signal_skips_code_spans(tmp_path: Path) -> None:
+    session = Session(config=Config(cwd=tmp_path))
+    model_client = _FakeModelClient(
+        turns=[[OutputTextDelta(delta="Use `$alpha` for this."), Completed(response_id="resp_1")]]
+    )
+    router = _FakeToolRouter(specs=[], results=[])
+
+    skill_path = tmp_path / "alpha" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True)
+    skill_path.write_text(
+        "---\nname: alpha\ndescription: Alpha\n---\nUse alpha.\n", encoding="utf-8"
+    )
+    registry = _registry_with_skills((_skill_metadata("alpha", skill_path),))
+    skills_manager = _SkillsManagerStub(registry=registry)
+
+    result = asyncio.run(
+        Agent(
+            session=session,
+            model_client=model_client,
+            tool_router=router,
+            cwd=tmp_path,
+            skills_manager=skills_manager,
+        ).run_turn("help")
+    )
+
+    assert result == "Use `$alpha` for this."
+    assert len(model_client.calls) == 1
+    assert not any(message.get("skill_injected") is True for message in session.to_prompt())
+
+
+def test_run_turn_model_signal_respects_disable_model_invocation(tmp_path: Path) -> None:
+    session = Session(config=Config(cwd=tmp_path))
+    model_client = _FakeModelClient(
+        turns=[[OutputTextDelta(delta="I will use $alpha."), Completed(response_id="resp_1")]]
+    )
+    router = _FakeToolRouter(specs=[], results=[])
+
+    skill_path = tmp_path / "alpha" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True)
+    skill_path.write_text(
+        "---\nname: alpha\ndescription: Alpha\n---\nUse alpha.\n", encoding="utf-8"
+    )
+    registry = _registry_with_skills(
+        (_skill_metadata("alpha", skill_path, disable_model_invocation=True),)
+    )
+    skills_manager = _SkillsManagerStub(registry=registry)
+
+    result = asyncio.run(
+        Agent(
+            session=session,
+            model_client=model_client,
+            tool_router=router,
+            cwd=tmp_path,
+            skills_manager=skills_manager,
+        ).run_turn("help")
+    )
+
+    assert result == "I will use $alpha."
+    assert len(model_client.calls) == 1
+    assert not any(message.get("skill_injected") is True for message in session.to_prompt())
 
 
 def test_run_turn_invokes_compaction_orchestrator_once_per_model_sample(tmp_path: Path) -> None:
