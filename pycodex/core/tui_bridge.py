@@ -172,22 +172,7 @@ class TuiBridge:
         self._emit_protocol_event(SlashUnknown(command=command))
 
     async def _slash_status(self) -> None:
-        usage = self.session.cumulative_usage()
-        context_window_tokens = (
-            self.session.config.compaction_context_window_tokens
-            if self.session.config is not None
-            else 0
-        )
-        self._emit_protocol_event(
-            SessionStatus(
-                thread_id=self.session.thread_id,
-                turn_count=self.session.completed_turn_count(),
-                input_tokens=usage["input_tokens"],
-                output_tokens=usage["output_tokens"],
-                context_window_tokens=context_window_tokens,
-                compaction_count=self.session.compaction_count(),
-            )
-        )
+        self._emit_session_status()
 
     async def _slash_resume(self) -> None:
         if self._turn_is_active():
@@ -221,6 +206,7 @@ class TuiBridge:
         try:
             new_session = self._create_new_session()
             await self._activate_session(new_session)
+            self._emit_session_status()
         except Exception as exc:
             self._emit_protocol_event(SessionError(operation="new", message=_error_message(exc)))
 
@@ -260,6 +246,7 @@ class TuiBridge:
             hydrated_turns = _build_hydrated_turns(replay_state.display_history)
             resumed_session = restore_session_from_rollout(rollout_path, config=config)
             await self._activate_session(resumed_session)
+            self._emit_session_status()
             self._emit_protocol_event(
                 SessionHydrated(
                     thread_id=resumed_session.thread_id,
@@ -281,6 +268,7 @@ class TuiBridge:
         try:
             new_session = self._create_new_session()
             await self._activate_session(new_session)
+            self._emit_session_status()
         except Exception as exc:
             self._emit_protocol_event(SessionError(operation="new", message=_error_message(exc)))
 
@@ -290,6 +278,8 @@ class TuiBridge:
                 if protocol_event.type == "turn.started":
                     self._active_turn_id = protocol_event.turn_id
                 self._emit_protocol_event(protocol_event)
+                if protocol_event.type == "turn.completed":
+                    self._emit_session_status()
 
         try:
             await run_turn(
@@ -367,6 +357,25 @@ class TuiBridge:
 
         sys.stdout.write(f"{event.model_dump_json()}\n")
         sys.stdout.flush()
+
+    def _emit_session_status(self) -> None:
+        usage = self.session.cumulative_usage()
+        context_window_tokens = (
+            self.session.config.compaction_context_window_tokens
+            if self.session.config is not None
+            else 0
+        )
+        self._emit_protocol_event(
+            SessionStatus(
+                thread_id=self.session.thread_id,
+                turn_count=self.session.completed_turn_count(),
+                input_tokens=usage["input_tokens"],
+                output_tokens=usage["output_tokens"],
+                estimated_prompt_tokens=self.session.estimated_prompt_tokens(),
+                context_window_tokens=context_window_tokens,
+                compaction_count=self.session.compaction_count(),
+            )
+        )
 
     def _turn_is_active(self) -> bool:
         return self._active_turn is not None and not self._active_turn.done()

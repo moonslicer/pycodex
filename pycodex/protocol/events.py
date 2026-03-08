@@ -159,6 +159,7 @@ class SessionStatus(_FrozenModel):
     turn_count: StrictInt
     input_tokens: StrictInt
     output_tokens: StrictInt
+    estimated_prompt_tokens: StrictInt
     context_window_tokens: StrictInt
     compaction_count: StrictInt
 

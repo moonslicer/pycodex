@@ -20,6 +20,7 @@ _log = logging.getLogger(__name__)
 
 MAX_TOOL_RESULT_CHARS = 200_000
 _MISSING_TOOL_OUTPUT_PLACEHOLDER = "aborted"
+_CHARS_PER_TOKEN_ESTIMATE = 4
 
 
 class UserMessageItem(TypedDict):
@@ -332,6 +333,18 @@ class Session:
     def last_turn_input_tokens(self) -> int:
         """Return the input token count reported by the API for the most recent turn."""
         return self._last_turn_input_tokens
+
+    def estimated_prompt_tokens(self) -> int:
+        """Estimate current prompt token count for context-occupancy calculations."""
+        # Use max(last API-reported input tokens, live char-based estimate) to avoid
+        # under-counting while new tool results are appended within a turn.
+        char_total = 0
+        for item in self.to_prompt():
+            for value in item.values():
+                if isinstance(value, str):
+                    char_total += len(value)
+        char_estimate = max(1, char_total // _CHARS_PER_TOKEN_ESTIMATE)
+        return max(self._last_turn_input_tokens, char_estimate)
 
     def cumulative_usage(self) -> TokenUsageCounts:
         """Return cumulative usage totals for the session."""

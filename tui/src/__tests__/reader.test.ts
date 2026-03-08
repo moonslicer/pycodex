@@ -150,6 +150,7 @@ describe("StdioReader", () => {
         turn_count: 1,
         input_tokens: 12,
         output_tokens: 7,
+        estimated_prompt_tokens: 8,
         context_window_tokens: 128000,
         compaction_count: 0,
       })}\n`,

@@ -68,7 +68,7 @@ export function formatContextMeter(status: SessionStatusEvent | null): string | 
     return null;
   }
 
-  const fillRatio = status.input_tokens / status.context_window_tokens;
+  const fillRatio = status.estimated_prompt_tokens / status.context_window_tokens;
   return `context: ${renderAsciiBar(fillRatio)} ${toPercentage(clampRatio(fillRatio))} (${formatContextWindow(status.context_window_tokens)})`;
 }
 
@@ -135,7 +135,7 @@ export function StatusBar({
       ) : (
         <Text dimColor>{contextLabel}</Text>
       )}
-      <Text dimColor>{` | ${compactionLabel}${compactionCountSuffix}`}</Text>
+      <Text dimColor>{` | ${usageLabel} | ${compactionLabel}${compactionCountSuffix}`}</Text>
     </Box>
   );
 }

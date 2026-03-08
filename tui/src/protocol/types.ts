@@ -114,6 +114,7 @@ export type SessionStatusEvent = {
   turn_count: number;
   input_tokens: number;
   output_tokens: number;
+  estimated_prompt_tokens: number;
   context_window_tokens: number;
   compaction_count: number;
 };

@@ -37,7 +37,6 @@ from pycodex.core.session import PromptItem, Session, UsageSnapshot
 from pycodex.tools.orchestrator import ToolAborted
 
 _log = logging.getLogger(__name__)
-_CHARS_PER_TOKEN_ESTIMATE = 4
 
 
 @dataclass(slots=True, frozen=True)
@@ -543,31 +542,7 @@ def _compaction_component_options(
 
 
 def _estimate_prompt_tokens_for_session(session: Session) -> int:
-    # Use the maximum of two estimates to avoid under-counting:
-    #
-    # 1. last_turn_input_tokens: the actual token count reported by the API for
-    #    the most recently completed model call.  This is the most accurate but
-    #    can be stale within a multi-tool turn — if tool results have been
-    #    appended since the last model call, the prompt is now larger than this
-    #    value and compaction would fire too late.
-    #
-    # 2. Char-based estimate of the current prompt: always reflects the live
-    #    prompt size, but is only approximate (chars / chars_per_token).
-    #
-    # Taking the max ensures that a sudden growth from many tool results
-    # (which updates the prompt but not last_turn_input_tokens) is caught
-    # before the next model call, while still benefiting from the accuracy of
-    # the API-reported count when it dominates.
-    last_turn_tokens = session.last_turn_input_tokens()
-
-    char_total = 0
-    for item in session.to_prompt():
-        for value in item.values():
-            if isinstance(value, str):
-                char_total += len(value)
-    char_estimate = max(1, char_total // _CHARS_PER_TOKEN_ESTIMATE)
-
-    return max(last_turn_tokens, char_estimate)
+    return session.estimated_prompt_tokens()
 
 
 def _compaction_threshold_ratio(orchestrator: SupportsCompactionOrchestrator) -> float | None:

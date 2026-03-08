@@ -193,7 +193,7 @@ export function summarizeCompactionNoticeForTurn(
       : detail.estimated_prompt_tokens / detail.context_window_tokens;
     return {
       text:
-        `~ Context compacted: ${String(detail.replaced_items)} message(s) summarized (context ${toPercentage(contextFillRatio)} used)`,
+        `~ Context compacted: ${String(detail.replaced_items)} message(s) summarized (pre-compaction context ${toPercentage(contextFillRatio)} used)`,
       tone: "info",
     };
   }

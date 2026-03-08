@@ -168,6 +168,7 @@ def test_user_input_command_starts_turn(
         "thread.started",
         "turn.started",
         "turn.completed",
+        "session.status",
     ]
 
 
@@ -192,6 +193,7 @@ def test_slash_status_emits_session_status(tmp_path: Path) -> None:
     assert status_event.turn_count == 1
     assert status_event.input_tokens == 12
     assert status_event.output_tokens == 7
+    assert status_event.estimated_prompt_tokens >= 12
     assert status_event.context_window_tokens == 128_000
     assert status_event.compaction_count == 1
 
@@ -212,6 +214,7 @@ def test_slash_status_allowed_during_active_turn(tmp_path: Path) -> None:
 
     assert _event_types(events) == ["thread.started", "session.status"]
     status_event = events[-1]
+    assert status_event.estimated_prompt_tokens == 1
     assert status_event.context_window_tokens == 128_000
     assert status_event.compaction_count == 0
 
@@ -321,10 +324,10 @@ def test_slash_new_emits_new_thread_started(tmp_path: Path) -> None:
 
     asyncio.run(bridge._handle_line(_user_input_line("/new")))
 
-    assert _event_types(events) == ["thread.started", "thread.started"]
+    assert _event_types(events) == ["thread.started", "thread.started", "session.status"]
     new_thread_event = events[-1]
-    assert new_thread_event.thread_id != old_thread_id
-    assert bridge.session.thread_id == new_thread_event.thread_id
+    assert new_thread_event.thread_id == bridge.session.thread_id
+    assert bridge.session.thread_id != old_thread_id
 
 
 def test_slash_new_blocked_when_turn_is_active(tmp_path: Path) -> None:
@@ -431,7 +434,7 @@ def test_session_new_method_emits_thread_started(tmp_path: Path) -> None:
         bridge._handle_line(json.dumps({"jsonrpc": "2.0", "method": "session.new", "params": {}}))
     )
 
-    assert _event_types(events) == ["thread.started", "thread.started"]
+    assert _event_types(events) == ["thread.started", "thread.started", "session.status"]
     assert events[-1].thread_id != old_thread_id
     assert bridge.session.thread_id == events[-1].thread_id
 
@@ -619,9 +622,14 @@ def test_session_resume_method_replays_and_emits_hydrated_history(
         )
     )
 
-    assert _event_types(events) == ["thread.started", "thread.started", "session.hydrated"]
+    assert _event_types(events) == [
+        "thread.started",
+        "thread.started",
+        "session.status",
+        "session.hydrated",
+    ]
+    assert events[-3].thread_id == "replayed-thread"
     assert events[-2].thread_id == "replayed-thread"
-    assert events[-1].thread_id == "replayed-thread"
     assert len(events[-1].turns) == 1
     assert events[-1].turns[0].user_text == "hello"
     assert events[-1].turns[0].assistant_text == "hi there"
@@ -886,8 +894,9 @@ def test_abort_completion_emits_turn_completed_not_failed(
         "thread.started",
         "turn.started",
         "turn.completed",
+        "session.status",
     ]
-    assert events[-1].final_text == ABORT_TEXT
+    assert events[-2].final_text == ABORT_TEXT
 
 
 def test_unknown_command_during_active_turn_is_noop(
@@ -934,8 +943,9 @@ def test_unknown_command_during_active_turn_is_noop(
         "thread.started",
         "turn.started",
         "turn.completed",
+        "session.status",
     ]
-    assert events[-1].final_text == "done"
+    assert events[-2].final_text == "done"
 
 
 def test_unknown_commands_are_ignored_safely(
@@ -1122,6 +1132,7 @@ def test_approval_request_emitted_and_unblocks_on_matching_response(
         "turn.started",
         "approval.request",
         "turn.completed",
+        "session.status",
     ]
 
 

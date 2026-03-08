@@ -60,6 +60,20 @@ export function updateSystemNotices(
       continue;
     }
 
+    if (event.type === "session.status") {
+      const statusNotice = {
+        id: "notice_status",
+        text,
+      };
+      const existingStatusIndex = nextNotices.findIndex((notice) => notice.id === "notice_status");
+      if (existingStatusIndex >= 0) {
+        nextNotices[existingStatusIndex] = statusNotice;
+      } else {
+        nextNotices.push(statusNotice);
+      }
+      continue;
+    }
+
     nextNotices.push({
       id: `notice_${String(nextIndex)}`,
       text,

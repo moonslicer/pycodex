@@ -158,6 +158,7 @@ function isProtocolEvent(value: unknown): value is ProtocolEvent {
         isNumber(value["turn_count"]) &&
         isNumber(value["input_tokens"]) &&
         isNumber(value["output_tokens"]) &&
+        isNumber(value["estimated_prompt_tokens"]) &&
         isNumber(value["context_window_tokens"]) &&
         isNumber(value["compaction_count"])
       );

@@ -303,7 +303,8 @@ describe("summarizeCompactionNoticeForTurn", () => {
         }),
       ),
     ).toEqual({
-      text: "~ Context compacted: 6 message(s) summarized (context 91.0% used)",
+      text:
+        "~ Context compacted: 6 message(s) summarized (pre-compaction context 91.0% used)",
       tone: "info",
     });
   });

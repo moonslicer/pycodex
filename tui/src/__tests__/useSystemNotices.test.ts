@@ -14,6 +14,7 @@ describe("toSystemNoticeText", () => {
         turn_count: 2,
         input_tokens: 15,
         output_tokens: 9,
+        estimated_prompt_tokens: 11,
         context_window_tokens: 128000,
         compaction_count: 1,
       },
@@ -48,12 +49,16 @@ describe("toSystemNoticeText", () => {
   });
 
   test("returns null for unrelated events", () => {
-    expect(
-      toSystemNoticeText({
+    const unrelatedEvents: ProtocolEvent[] = [
+      {
         type: "thread.started",
         thread_id: "thread_1",
-      }),
-    ).toBeNull();
+      },
+    ];
+
+    for (const event of unrelatedEvents) {
+      expect(toSystemNoticeText(event)).toBeNull();
+    }
   });
 });
 
@@ -66,6 +71,7 @@ describe("updateSystemNotices", () => {
         turn_count: 1,
         input_tokens: 10,
         output_tokens: 5,
+        estimated_prompt_tokens: 8,
         context_window_tokens: 128000,
         compaction_count: 0,
       },
@@ -79,16 +85,16 @@ describe("updateSystemNotices", () => {
 
     expect(next.notices).toEqual<SystemNotice[]>([
       {
-        id: "notice_1",
+        id: "notice_status",
         text:
           "Session thread_1: turns=1 tokens(in/out)=10/5 context_window=128000 compacted=0",
       },
       {
-        id: "notice_2",
+        id: "notice_1",
         text: "Unknown command: /wat",
       },
     ]);
-    expect(next.nextNoticeIndex).toBe(3);
+    expect(next.nextNoticeIndex).toBe(2);
     expect(next.lastProcessedEvent).toBe(events[1]);
   });
 
@@ -109,13 +115,8 @@ describe("updateSystemNotices", () => {
 
   test("processes only events after the last processed event", () => {
     const first: ProtocolEvent = {
-      type: "session.status",
+      type: "thread.started",
       thread_id: "thread_1",
-      turn_count: 1,
-      input_tokens: 10,
-      output_tokens: 5,
-      context_window_tokens: 128000,
-      compaction_count: 0,
     };
     const second: ProtocolEvent = {
       type: "slash.unknown",
@@ -131,11 +132,6 @@ describe("updateSystemNotices", () => {
     const existingNotices: SystemNotice[] = [
       {
         id: "notice_1",
-        text:
-          "Session thread_1: turns=1 tokens(in/out)=10/5 context_window=128000 compacted=0",
-      },
-      {
-        id: "notice_2",
         text: "Unknown command: /first",
       },
     ];
@@ -144,18 +140,54 @@ describe("updateSystemNotices", () => {
       existingNotices,
       allEvents,
       second,
-      3,
+      2,
     );
 
     expect(next.notices).toEqual<SystemNotice[]>([
       ...existingNotices,
       {
-        id: "notice_3",
+        id: "notice_2",
         text: "Session list failed: boom",
       },
     ]);
-    expect(next.nextNoticeIndex).toBe(4);
+    expect(next.nextNoticeIndex).toBe(3);
     expect(next.lastProcessedEvent).toBe(third);
+  });
+
+  test("upserts session.status as one rolling notice", () => {
+    const firstStatus: ProtocolEvent = {
+      type: "session.status",
+      thread_id: "thread_1",
+      turn_count: 1,
+      input_tokens: 10,
+      output_tokens: 5,
+      estimated_prompt_tokens: 8,
+      context_window_tokens: 128000,
+      compaction_count: 0,
+    };
+    const secondStatus: ProtocolEvent = {
+      type: "session.status",
+      thread_id: "thread_1",
+      turn_count: 2,
+      input_tokens: 20,
+      output_tokens: 10,
+      estimated_prompt_tokens: 16,
+      context_window_tokens: 128000,
+      compaction_count: 1,
+    };
+
+    const once = updateSystemNotices([], [firstStatus], null, 1);
+    const twice = updateSystemNotices(once.notices, [firstStatus, secondStatus], firstStatus, 1);
+
+    expect(twice.notices).toEqual<SystemNotice[]>([
+      {
+        id: "notice_status",
+        text:
+          "Session thread_1: turns=2 tokens(in/out)=20/10 context_window=128000 compacted=1",
+      },
+    ]);
+    expect(twice.nextNoticeIndex).toBe(1);
+    expect(twice.lastProcessedEvent).toBe(secondStatus);
   });
 
   test("clears notices when events reset to empty", () => {
