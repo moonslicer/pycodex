@@ -310,8 +310,8 @@ This example reflects Codex's actual flow.
 ...project instructions...
 
 ## Skills
-- db-migrate: Generate SQL migrations safely (file: /Users/me/.codex/skills/db-migrate/SKILL.md)
-- release-checks: Pre-release validation checklist (file: /Users/me/.codex/skills/release-checks/SKILL.md)
+- db-migrate: Generate SQL migrations safely (file: ${CODEX_HOME}/skills/db-migrate/SKILL.md)
+- release-checks: Pre-release validation checklist (file: ${CODEX_HOME}/skills/release-checks/SKILL.md)
 ...
 </INSTRUCTIONS>
 ```
@@ -326,7 +326,7 @@ Resolver selects `db-migrate`, reads `SKILL.md`, injects:
 ```xml
 <skill>
 <name>db-migrate</name>
-<path>/Users/me/.codex/skills/db-migrate/SKILL.md</path>
+<path>${CODEX_HOME}/skills/db-migrate/SKILL.md</path>
 ---
 name: db-migrate
 description: ...
