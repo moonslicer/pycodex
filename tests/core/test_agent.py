@@ -3,6 +3,7 @@ from __future__ import annotations
 import asyncio
 from dataclasses import dataclass, field
 from pathlib import Path
+from types import MappingProxyType
 from typing import Any
 
 import pytest
@@ -25,6 +26,9 @@ from pycodex.core.model_client import Completed, OutputItemDone, OutputTextDelta
 from pycodex.core.rollout_recorder import RolloutRecorder
 from pycodex.core.rollout_replay import replay_rollout
 from pycodex.core.session import Session
+from pycodex.core.skills.injector import build_skill_injection_plan
+from pycodex.core.skills.manager import SkillRegistry
+from pycodex.core.skills.models import SkillDependencies, SkillEnvVarDependency, SkillMetadata
 from pycodex.tools.orchestrator import ToolAborted
 
 
@@ -100,6 +104,44 @@ class _BlockingToolRouter:
         self.started.set()
         await asyncio.Event().wait()
         return "unreachable"
+
+
+@dataclass(slots=True)
+class _SkillsManagerStub:
+    registry: SkillRegistry
+
+    def get_registry(self, **_: object) -> SkillRegistry:
+        return self.registry
+
+
+def _skill_metadata(
+    name: str,
+    skill_path: Path,
+    *,
+    dependencies: SkillDependencies | None = None,
+) -> SkillMetadata:
+    resolved = skill_path.resolve()
+    return SkillMetadata(
+        name=name,
+        description=f"{name} description",
+        short_description=None,
+        path_to_skill_md=resolved,
+        skill_root=resolved.parent,
+        scope="repo",
+        dependencies=dependencies,
+    )
+
+
+def _registry_with_skills(skills: tuple[SkillMetadata, ...]) -> SkillRegistry:
+    by_name = {skill.name: skill for skill in skills}
+    by_path = {skill.path_to_skill_md: skill for skill in skills}
+    return SkillRegistry(
+        skills=skills,
+        errors=(),
+        ambiguous_names=frozenset(),
+        by_name=MappingProxyType(by_name),
+        by_path=MappingProxyType(by_path),
+    )
 
 
 @dataclass(slots=True)
@@ -190,6 +232,244 @@ def test_run_turn_returns_text_when_no_tool_calls(tmp_path: Path) -> None:
         {"role": "user", "content": "say hi"},
         {"role": "assistant", "content": "hello world"},
     ]
+
+
+def test_run_turn_injects_skill_message_before_model_sampling(tmp_path: Path) -> None:
+    session = Session(config=Config(cwd=tmp_path))
+    model_client = _FakeModelClient(
+        turns=[[OutputTextDelta(delta="done"), Completed(response_id="resp_1")]]
+    )
+    router = _FakeToolRouter(specs=[], results=[])
+
+    skill_path = tmp_path / "alpha" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True)
+    skill_path.write_text(
+        "---\nname: alpha\ndescription: Alpha\n---\nUse alpha steps.\n",
+        encoding="utf-8",
+    )
+    registry = _registry_with_skills((_skill_metadata("alpha", skill_path),))
+    skills_manager = _SkillsManagerStub(registry=registry)
+
+    result = asyncio.run(
+        Agent(
+            session=session,
+            model_client=model_client,
+            tool_router=router,
+            cwd=tmp_path,
+            skills_manager=skills_manager,
+        ).run_turn("please run $alpha")
+    )
+
+    assert result == "done"
+    messages = model_client.calls[0]["messages"]
+    user_index = next(
+        index
+        for index, message in enumerate(messages)
+        if message.get("role") == "user" and message.get("content") == "please run $alpha"
+    )
+    injected = messages[user_index + 1]
+    assert injected["role"] == "user"
+    assert injected["skill_injected"] is True
+    assert injected["skill_name"] == "alpha"
+    assert injected["skill_path"] == str(skill_path.resolve())
+    assert "<skill>" in injected["content"]
+    assert "<name>alpha</name>" in injected["content"]
+
+
+def test_run_turn_injects_unavailable_before_skill_message(tmp_path: Path) -> None:
+    session = Session(config=Config(cwd=tmp_path))
+    model_client = _FakeModelClient(
+        turns=[[OutputTextDelta(delta="done"), Completed(response_id="resp_1")]]
+    )
+    router = _FakeToolRouter(specs=[], results=[])
+
+    skill_path = tmp_path / "alpha" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True)
+    skill_path.write_text(
+        "---\nname: alpha\ndescription: Alpha\n---\nUse alpha steps.\n",
+        encoding="utf-8",
+    )
+    missing_path = tmp_path / "missing" / "SKILL.md"
+    registry = _registry_with_skills((_skill_metadata("alpha", skill_path),))
+    skills_manager = _SkillsManagerStub(registry=registry)
+
+    user_input = f"[$missing]({missing_path}) and $alpha"
+    asyncio.run(
+        Agent(
+            session=session,
+            model_client=model_client,
+            tool_router=router,
+            cwd=tmp_path,
+            skills_manager=skills_manager,
+        ).run_turn(user_input)
+    )
+
+    messages = model_client.calls[0]["messages"]
+    user_index = next(
+        index
+        for index, message in enumerate(messages)
+        if message.get("role") == "user" and message.get("content") == user_input
+    )
+    unavailable = messages[user_index + 1]
+    injected_skill = messages[user_index + 2]
+    assert "<skill-unavailable>" in unavailable["content"]
+    assert "<reason>file not found</reason>" in unavailable["content"]
+    assert unavailable["skill_reason"] == "file not found"
+    assert "<skill>" in injected_skill["content"]
+    assert "<name>alpha</name>" in injected_skill["content"]
+
+
+def test_run_turn_injects_env_var_unavailable_message_when_dependency_missing(
+    tmp_path: Path,
+) -> None:
+    session = Session(config=Config(cwd=tmp_path))
+    model_client = _FakeModelClient(
+        turns=[[OutputTextDelta(delta="done"), Completed(response_id="resp_1")]]
+    )
+    router = _FakeToolRouter(specs=[], results=[])
+
+    needs_path = tmp_path / "needs" / "SKILL.md"
+    needs_path.parent.mkdir(parents=True)
+    needs_path.write_text(
+        "---\nname: needs\ndescription: Needs\n---\nUse needs steps.\n",
+        encoding="utf-8",
+    )
+    needs = _skill_metadata(
+        "needs",
+        needs_path,
+        dependencies=SkillDependencies(env_vars=(SkillEnvVarDependency(name="MISSING_ENV"),)),
+    )
+    registry = _registry_with_skills((needs,))
+    skills_manager = _SkillsManagerStub(registry=registry)
+
+    asyncio.run(
+        Agent(
+            session=session,
+            model_client=model_client,
+            tool_router=router,
+            cwd=tmp_path,
+            skills_manager=skills_manager,
+        ).run_turn("please run $needs")
+    )
+
+    messages = model_client.calls[0]["messages"]
+    user_index = next(
+        index
+        for index, message in enumerate(messages)
+        if message.get("role") == "user" and message.get("content") == "please run $needs"
+    )
+    unavailable = messages[user_index + 1]
+    assert "<skill-unavailable>" in unavailable["content"]
+    assert "<reason>missing required env var: MISSING_ENV</reason>" in unavailable["content"]
+
+
+def test_run_turn_does_not_reinject_existing_skill_message_on_resumed_session(
+    tmp_path: Path,
+    caplog: pytest.LogCaptureFixture,
+) -> None:
+    session = Session(config=Config(cwd=tmp_path))
+    model_client = _FakeModelClient(
+        turns=[[OutputTextDelta(delta="done"), Completed(response_id="resp_1")]]
+    )
+    router = _FakeToolRouter(specs=[], results=[])
+
+    skill_path = tmp_path / "alpha" / "SKILL.md"
+    skill_path.parent.mkdir(parents=True)
+    skill_path.write_text(
+        "---\nname: alpha\ndescription: Alpha\n---\nUse alpha steps.\n",
+        encoding="utf-8",
+    )
+    registry = _registry_with_skills((_skill_metadata("alpha", skill_path),))
+    skills_manager = _SkillsManagerStub(registry=registry)
+    user_input = "please run $alpha"
+
+    prior_plan = build_skill_injection_plan(user_input=user_input, registry=registry)
+    prior_history: list[dict[str, Any]] = [{"role": "user", "content": user_input}]
+    for injected in prior_plan.messages:
+        prior_history.append(
+            {
+                "role": "user",
+                "content": injected.content,
+                "skill_injected": True,
+                "skill_name": injected.name,
+                "skill_path": str(injected.path) if injected.path is not None else None,
+                "skill_reason": injected.reason,
+            }
+        )
+    session.restore_from_rollout(
+        history=prior_history,
+        cumulative_usage={"input_tokens": 0, "output_tokens": 0},
+        turn_count=0,
+    )
+
+    caplog.set_level("DEBUG", logger="pycodex.core.agent")
+    asyncio.run(
+        Agent(
+            session=session,
+            model_client=model_client,
+            tool_router=router,
+            cwd=tmp_path,
+            skills_manager=skills_manager,
+        ).run_turn(user_input)
+    )
+
+    injected_messages = [
+        message
+        for message in model_client.calls[0]["messages"]
+        if message.get("skill_injected") is True and message.get("skill_name") == "alpha"
+    ]
+    assert len(injected_messages) == 1
+    assert any("skill.replay_skip" in record.getMessage() for record in caplog.records)
+
+
+def test_run_turn_does_not_reemit_existing_unavailable_message_on_resumed_session(
+    tmp_path: Path,
+) -> None:
+    session = Session(config=Config(cwd=tmp_path))
+    model_client = _FakeModelClient(
+        turns=[[OutputTextDelta(delta="done"), Completed(response_id="resp_1")]]
+    )
+    router = _FakeToolRouter(specs=[], results=[])
+    registry = _registry_with_skills(())
+    skills_manager = _SkillsManagerStub(registry=registry)
+    missing_path = tmp_path / "missing" / "SKILL.md"
+    user_input = f"[$ghost]({missing_path})"
+
+    prior_plan = build_skill_injection_plan(user_input=user_input, registry=registry)
+    prior_history: list[dict[str, Any]] = [{"role": "user", "content": user_input}]
+    for injected in prior_plan.messages:
+        prior_history.append(
+            {
+                "role": "user",
+                "content": injected.content,
+                "skill_injected": True,
+                "skill_name": injected.name,
+                "skill_path": str(injected.path) if injected.path is not None else None,
+                "skill_reason": injected.reason,
+            }
+        )
+    session.restore_from_rollout(
+        history=prior_history,
+        cumulative_usage={"input_tokens": 0, "output_tokens": 0},
+        turn_count=0,
+    )
+
+    asyncio.run(
+        Agent(
+            session=session,
+            model_client=model_client,
+            tool_router=router,
+            cwd=tmp_path,
+            skills_manager=skills_manager,
+        ).run_turn(user_input)
+    )
+
+    unavailable_messages = [
+        message
+        for message in model_client.calls[0]["messages"]
+        if isinstance(message.get("content"), str) and "<skill-unavailable>" in message["content"]
+    ]
+    assert len(unavailable_messages) == 1
 
 
 def test_run_turn_invokes_compaction_orchestrator_once_per_model_sample(tmp_path: Path) -> None:

@@ -34,6 +34,8 @@ from pycodex.core.rollout_schema import (
     UsageSnapshot as RolloutUsageSnapshot,
 )
 from pycodex.core.session import PromptItem, Session, UsageSnapshot
+from pycodex.core.skills.injector import build_skill_injection_plan
+from pycodex.core.skills.manager import SkillRegistry, SkillsManager
 from pycodex.tools.orchestrator import ToolAborted
 
 _log = logging.getLogger(__name__)
@@ -176,6 +178,7 @@ class Agent:
     cwd: Path
     on_event: EventCallback | None = None
     compaction_orchestrator: SupportsCompactionOrchestrator | None = None
+    skills_manager: SkillsManager | None = None
 
     async def run_turn(self, user_input: str) -> str:
         """Run one user turn until the model emits no tool calls."""
@@ -186,6 +189,7 @@ class Agent:
         _log.debug("turn started: %r", user_input[:80])
         self.session.append_user_message(user_input)
         await self._persist_latest_history_item()
+        await self._inject_turn_skill_messages(user_input)
         await self._emit(TurnStarted(user_input=user_input))
         pending_tool_calls: dict[str, str] = {}
         pressure_emitted = False
@@ -344,6 +348,105 @@ class Agent:
                 usage = event.usage
 
         return tool_calls, "".join(text_parts), usage
+
+    async def _inject_turn_skill_messages(self, user_input: str) -> None:
+        if "$" not in user_input:
+            return
+
+        registry = self._load_skill_registry()
+        if registry is None or not registry.skills:
+            return
+
+        existing_keys = self._existing_injected_keys_for_same_turn(user_input)
+        plan = build_skill_injection_plan(user_input=user_input, registry=registry)
+        for injected in plan.messages:
+            key = (
+                injected.name,
+                str(injected.path) if injected.path is not None else None,
+                injected.reason,
+            )
+            if key in existing_keys:
+                _log.debug(
+                    "skill.replay_skip name=%s path=%s",
+                    injected.name,
+                    str(injected.path) if injected.path is not None else "",
+                )
+                continue
+            self.session.append_user_message(
+                injected.content,
+                skill_injected=True,
+                skill_name=injected.name,
+                skill_path=str(injected.path) if injected.path is not None else None,
+                skill_reason=injected.reason,
+            )
+            await self._persist_latest_history_item()
+            existing_keys.add(key)
+
+    def _load_skill_registry(self) -> SkillRegistry | None:
+        manager = self.skills_manager
+        if manager is None:
+            config = self.session.config
+            manager = getattr(config, "skills_manager", None) if config is not None else None
+        if manager is None:
+            manager = SkillsManager()
+
+        config = self.session.config
+        skill_dirs = getattr(config, "skill_dirs", ()) if config is not None else ()
+        fingerprint = getattr(config, "skills_config_fingerprint", "") if config is not None else ""
+        user_root = getattr(config, "skills_user_root", None) if config is not None else None
+        system_root = getattr(config, "skills_system_root", None) if config is not None else None
+
+        try:
+            return manager.get_registry(
+                cwd=self.cwd,
+                config_fingerprint=fingerprint,
+                project_skill_dirs=skill_dirs,
+                user_root=user_root,
+                system_root=system_root,
+            )
+        except Exception:
+            return None
+
+    def _existing_injected_keys_for_same_turn(
+        self,
+        user_input: str,
+    ) -> set[tuple[str, str | None, str | None]]:
+        history = self.session.to_prompt()
+        if not history:
+            return set()
+
+        current_index = len(history) - 1
+        current_item = history[current_index]
+        if current_item.get("role") != "user" or current_item.get("content") != user_input:
+            return set()
+
+        prior_index: int | None = None
+        for index in range(current_index - 1, -1, -1):
+            item = history[index]
+            if item.get("role") != "user" or item.get("content") != user_input:
+                continue
+            prior_index = index
+            break
+        if prior_index is None:
+            return set()
+
+        intervening = history[prior_index + 1 : current_index]
+        if not intervening:
+            return set()
+
+        existing: set[tuple[str, str | None, str | None]] = set()
+        for item in intervening:
+            if item.get("role") != "user" or item.get("skill_injected") is not True:
+                return set()
+            name = item.get("skill_name")
+            if not isinstance(name, str):
+                return set()
+            raw_path = item.get("skill_path")
+            path = raw_path if isinstance(raw_path, str) else None
+            raw_reason = item.get("skill_reason")
+            reason = raw_reason if isinstance(raw_reason, str) else None
+            existing.add((name, path, reason))
+        return existing
 
     async def _emit(self, event: AgentEvent) -> None:
         if self.on_event is None:

@@ -9,7 +9,7 @@ from collections.abc import Sequence
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from pathlib import Path
-from typing import Any, Literal, TypedDict
+from typing import Any, Literal, NotRequired, TypedDict
 from uuid import uuid4
 
 from pycodex.core.config import Config
@@ -28,6 +28,10 @@ class UserMessageItem(TypedDict):
 
     role: Literal["user"]
     content: str
+    skill_injected: NotRequired[bool]
+    skill_name: NotRequired[str]
+    skill_path: NotRequired[str]
+    skill_reason: NotRequired[str]
 
 
 class AssistantMessageItem(TypedDict):
@@ -104,10 +108,27 @@ class Session:
     _rollout_closed: bool = False
     _resumed: bool = False
 
-    def append_user_message(self, text: str) -> None:
+    def append_user_message(
+        self,
+        text: str,
+        *,
+        skill_injected: bool = False,
+        skill_name: str | None = None,
+        skill_path: str | None = None,
+        skill_reason: str | None = None,
+    ) -> None:
         """Append a user message to the conversation history."""
         self._last_user_message = text
-        self._history.append({"role": "user", "content": text})
+        item: UserMessageItem = {"role": "user", "content": text}
+        if skill_injected:
+            item["skill_injected"] = True
+        if skill_name is not None:
+            item["skill_name"] = skill_name
+        if skill_path is not None:
+            item["skill_path"] = skill_path
+        if skill_reason is not None:
+            item["skill_reason"] = skill_reason
+        self._history.append(item)
 
     def append_system_message(self, text: str) -> None:
         """Append a system context message to the conversation history."""
