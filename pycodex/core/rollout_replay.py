@@ -11,6 +11,7 @@ from typing import Any, Literal, cast
 
 from pydantic import ValidationError
 
+from pycodex.core.config import Config
 from pycodex.core.rollout_recorder import (
     RolloutRecorder,
     build_rollout_path,
@@ -26,7 +27,7 @@ from pycodex.core.rollout_schema import (
     SessionMeta,
     validate_rollout_item,
 )
-from pycodex.core.session import PromptItem
+from pycodex.core.session import PromptItem, Session
 
 _KNOWN_TYPES = {
     "session.meta",
@@ -57,6 +58,7 @@ class ReplayState:
     history: list[PromptItem]
     cumulative_usage: dict[str, int]
     turn_count: int
+    compaction_count: int
     status: Literal["closed", "incomplete"]
     warnings: list[str]
     # All history items in JSONL order, without any compaction transforms applied.
@@ -86,6 +88,7 @@ def replay_rollout(path: Path, *, expected_major: int = 1) -> ReplayState:
     cumulative_usage = {"input_tokens": 0, "output_tokens": 0}
     last_turn_input_tokens = 0
     turn_count = 0
+    compaction_count = 0
     initial_context_injected = False
 
     lines = path.read_text(encoding="utf-8").splitlines()
@@ -155,6 +158,8 @@ def replay_rollout(path: Path, *, expected_major: int = 1) -> ReplayState:
             turn_count += 1
             turn_completed = cast(Any, item)
             last_turn_input_tokens = int(turn_completed.usage.turn.input_tokens)
+        if isinstance(item, CompactionApplied):
+            compaction_count += 1
         if isinstance(item, InitialContextApplied):
             initial_context_injected = True
         elif isinstance(item, SessionMeta):
@@ -172,12 +177,30 @@ def replay_rollout(path: Path, *, expected_major: int = 1) -> ReplayState:
         cumulative_usage=cumulative_usage,
         last_turn_input_tokens=last_turn_input_tokens,
         turn_count=turn_count,
+        compaction_count=compaction_count,
         status=status,
         warnings=warnings,
         initial_context_injected=initial_context_injected,
         session_meta=session_meta,
         session_closed=session_closed,
     )
+
+
+def restore_session_from_rollout(rollout_path: Path, *, config: Config) -> Session:
+    """Replay a rollout file and return a fully restored Session ready for use."""
+    replay_state = replay_rollout(rollout_path)
+    session = Session(config=config, thread_id=replay_state.thread_id)
+    session.restore_from_rollout(
+        history=replay_state.history,
+        cumulative_usage=replay_state.cumulative_usage,
+        turn_count=replay_state.turn_count,
+        compaction_count=replay_state.compaction_count,
+    )
+    session.configure_rollout_recorder(
+        recorder=RolloutRecorder(path=rollout_path),
+        path=rollout_path,
+    )
+    return session
 
 
 async def import_legacy_session_json(

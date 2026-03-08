@@ -44,14 +44,12 @@ function isHydratedTurn(value: unknown): boolean {
   if (!isRecord(value)) {
     return false;
   }
-  const compactionSummary = value["compaction_summary"];
+  const wasCompacted = value["was_compacted"];
   return (
     isString(value["turn_id"]) &&
     isString(value["user_text"]) &&
     isString(value["assistant_text"]) &&
-    (compactionSummary === undefined ||
-      compactionSummary === null ||
-      isString(compactionSummary))
+    (wasCompacted === undefined || typeof wasCompacted === "boolean")
   );
 }
 

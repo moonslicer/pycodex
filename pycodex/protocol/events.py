@@ -169,7 +169,7 @@ class HydratedTurn(_FrozenModel):
     turn_id: str
     user_text: str
     assistant_text: str
-    compaction_summary: str | None = None
+    was_compacted: bool = False
 
 
 class SessionHydrated(_FrozenModel):

@@ -24,7 +24,7 @@ function baseTurn(overrides: Partial<TurnState> = {}): TurnState {
     compaction: {
       status: "idle",
       detail: null,
-      summary: null,
+      hydrated: false,
     },
     pressureWarning: false,
     ...overrides,
@@ -243,7 +243,7 @@ describe("summarizeCompactionDebugLinesForTurn", () => {
           compaction: {
             status: "pending",
             detail: null,
-            summary: null,
+            hydrated: false,
           },
         }),
       ),
@@ -268,7 +268,7 @@ describe("summarizeCompactionDebugLinesForTurn", () => {
               remaining_ratio: 0.09,
               threshold_ratio: 0.2,
             },
-            summary: null,
+            hydrated: false,
           },
         }),
       ),
@@ -298,7 +298,7 @@ describe("summarizeCompactionNoticeForTurn", () => {
               remaining_ratio: 0.09,
               threshold_ratio: 0.2,
             },
-            summary: null,
+            hydrated: false,
           },
         }),
       ),
@@ -308,14 +308,14 @@ describe("summarizeCompactionNoticeForTurn", () => {
     });
   });
 
-  test("shows resumed muted notice when hydrated compaction summary exists", () => {
+  test("shows resumed muted notice when hydrated compaction flag is set", () => {
     expect(
       summarizeCompactionNoticeForTurn(
         baseTurn({
           compaction: {
             status: "triggered",
             detail: null,
-            summary: "[compaction.summary.v1]\nConversation summary:\n- old",
+            hydrated: true,
           },
         }),
       ),

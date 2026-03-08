@@ -573,6 +573,7 @@ def test_session_resume_method_replays_and_emits_hydrated_history(
         ],
         cumulative_usage={"input_tokens": 5, "output_tokens": 8},
         turn_count=3,
+        compaction_count=0,
         status="closed",
         warnings=[],
         session_meta=None,
@@ -588,12 +589,23 @@ def test_session_resume_method_replays_and_emits_hydrated_history(
         _ = config, resume, sessions_root
         return replay_path
 
+    def fake_restore_session(path: Path, *, config: Config) -> Session:
+        s = Session(config=config, thread_id=replay_state.thread_id)
+        s.restore_from_rollout(
+            history=replay_state.history,
+            cumulative_usage=replay_state.cumulative_usage,
+            turn_count=replay_state.turn_count,
+            compaction_count=replay_state.compaction_count,
+        )
+        return s
+
     monkeypatch.setattr(
         tui_bridge_module,
         "resolve_resume_rollout_path",
         fake_resolve_resume_rollout_path,
     )
     monkeypatch.setattr(tui_bridge_module, "replay_rollout", lambda path: replay_state)
+    monkeypatch.setattr(tui_bridge_module, "restore_session_from_rollout", fake_restore_session)
 
     asyncio.run(
         bridge._handle_line(
@@ -613,7 +625,7 @@ def test_session_resume_method_replays_and_emits_hydrated_history(
     assert len(events[-1].turns) == 1
     assert events[-1].turns[0].user_text == "hello"
     assert events[-1].turns[0].assistant_text == "hi there"
-    assert events[-1].turns[0].compaction_summary is None
+    assert events[-1].turns[0].was_compacted is False
     assert bridge.session.thread_id == "replayed-thread"
     assert bridge.session.completed_turn_count() == 3
 
@@ -652,6 +664,7 @@ def test_session_resume_hydrates_full_conversation_from_display_history(
         ],
         cumulative_usage={"input_tokens": 5, "output_tokens": 8},
         turn_count=2,
+        compaction_count=1,
         status="closed",
         warnings=[],
         session_meta=None,
@@ -667,12 +680,23 @@ def test_session_resume_hydrates_full_conversation_from_display_history(
         _ = config, resume, sessions_root
         return replay_path
 
+    def fake_restore_session2(path: Path, *, config: Config) -> Session:
+        s = Session(config=config, thread_id=replay_state.thread_id)
+        s.restore_from_rollout(
+            history=replay_state.history,
+            cumulative_usage=replay_state.cumulative_usage,
+            turn_count=replay_state.turn_count,
+            compaction_count=replay_state.compaction_count,
+        )
+        return s
+
     monkeypatch.setattr(
         tui_bridge_module,
         "resolve_resume_rollout_path",
         fake_resolve_resume_rollout_path,
     )
     monkeypatch.setattr(tui_bridge_module, "replay_rollout", lambda path: replay_state)
+    monkeypatch.setattr(tui_bridge_module, "restore_session_from_rollout", fake_restore_session2)
 
     asyncio.run(
         bridge._handle_line(
@@ -708,6 +732,7 @@ def test_session_resume_method_activate_session_error_emits_session_error(
         history=[{"role": "user", "content": "hello"}],
         cumulative_usage={"input_tokens": 5, "output_tokens": 8},
         turn_count=3,
+        compaction_count=0,
         status="closed",
         warnings=[],
         session_meta=None,
@@ -727,12 +752,23 @@ def test_session_resume_method_activate_session_error_emits_session_error(
         _ = self, new_session
         raise RuntimeError("activate failed")
 
+    def fake_restore_session3(path: Path, *, config: Config) -> Session:
+        s = Session(config=config, thread_id=replay_state.thread_id)
+        s.restore_from_rollout(
+            history=replay_state.history,
+            cumulative_usage=replay_state.cumulative_usage,
+            turn_count=replay_state.turn_count,
+            compaction_count=replay_state.compaction_count,
+        )
+        return s
+
     monkeypatch.setattr(
         tui_bridge_module,
         "resolve_resume_rollout_path",
         fake_resolve_resume_rollout_path,
     )
     monkeypatch.setattr(tui_bridge_module, "replay_rollout", lambda path: replay_state)
+    monkeypatch.setattr(tui_bridge_module, "restore_session_from_rollout", fake_restore_session3)
     monkeypatch.setattr(TuiBridge, "_activate_session", fail_activate_session)
 
     asyncio.run(

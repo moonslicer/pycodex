@@ -122,7 +122,7 @@ export type HydratedTurnItem = {
   turn_id: string;
   user_text: string;
   assistant_text: string;
-  compaction_summary?: string | null;
+  was_compacted?: boolean;
 };
 
 export type SessionHydratedEvent = {

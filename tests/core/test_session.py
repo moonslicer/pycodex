@@ -201,15 +201,9 @@ def test_append_tool_result_truncates_oversized_content() -> None:
     assert tool_item["content"].endswith("\n...[truncated by session history cap]")
 
 
-def test_restore_from_rollout_does_not_mark_initial_context_injected() -> None:
+def test_restore_from_rollout_always_marks_initial_context_injected() -> None:
     session = Session()
     session.restore_from_rollout(history=[], cumulative_usage={}, turn_count=0)
-    assert not session.has_initial_context()
-
-
-def test_restore_from_rollout_marks_initial_context_injected_when_flag_set() -> None:
-    session = Session()
-    session.restore_from_rollout(history=[], cumulative_usage={}, turn_count=0, initial_context_injected=True)
     assert session.has_initial_context()
 
 
@@ -268,43 +262,17 @@ def test_restore_from_rollout_marks_session_as_resumed() -> None:
     assert session.is_resumed()
 
 
-def test_resume_context_not_injected_on_fresh_session() -> None:
-    session = Session()
-    assert not session.has_resume_context()
-
-
-def test_mark_resume_context_injected_sets_flag() -> None:
-    session = Session()
-    session.restore_from_rollout(history=[], cumulative_usage={}, turn_count=0)
-    assert not session.has_resume_context()
-    session.mark_resume_context_injected()
-    assert session.has_resume_context()
-
-
-def test_restore_from_rollout_resets_resume_context_flag() -> None:
-    session = Session()
-    session.restore_from_rollout(history=[], cumulative_usage={}, turn_count=0)
-    session.mark_resume_context_injected()
-    # A second restore (e.g. re-import) should reset the flag
-    session.restore_from_rollout(history=[], cumulative_usage={}, turn_count=0)
-    assert not session.has_resume_context()
-    assert session.is_resumed()
-
-
-def test_restore_from_rollout_recomputes_compaction_count_from_summary_blocks() -> None:
+def test_restore_from_rollout_uses_explicit_compaction_count() -> None:
     session = Session()
     session.restore_from_rollout(
         history=[
             {"role": "system", "content": "[compaction.summary.v1]\nConversation summary:\n- old"},
             {"role": "user", "content": "hello"},
             {"role": "assistant", "content": "done"},
-            {
-                "role": "system",
-                "content": "[compaction.summary.v1]\nConversation summary:\n- newer",
-            },
         ],
         cumulative_usage={"input_tokens": 9, "output_tokens": 3},
         turn_count=2,
+        compaction_count=2,
     )
 
     assert session.compaction_count() == 2

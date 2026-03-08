@@ -29,7 +29,7 @@ describe("reduceTurns", () => {
           compaction: {
             status: "idle",
             detail: null,
-            summary: null,
+            hydrated: false,
           },
           pressureWarning: false,
         },
@@ -61,7 +61,7 @@ describe("reduceTurns", () => {
           compaction: {
             status: "idle",
             detail: null,
-            summary: null,
+            hydrated: false,
           },
           pressureWarning: false,
         },
@@ -119,12 +119,12 @@ describe("reduceTurns", () => {
     expect(next.turns[0]?.compaction).toEqual({
       status: "idle",
       detail: null,
-      summary: null,
+      hydrated: false,
     });
     expect(next.turns[0]?.pressureWarning).toBe(false);
   });
 
-  test("session.hydrated compaction summary marks turn as compacted", () => {
+  test("session.hydrated with was_compacted=true marks turn as compacted", () => {
     const next = reduceTurnsSequence(INITIAL_TURNS_STATE, [
       {
         type: "thread.started",
@@ -138,7 +138,7 @@ describe("reduceTurns", () => {
             turn_id: "hydrated_1",
             user_text: "hello",
             assistant_text: "hi",
-            compaction_summary: "[compaction.summary.v1]\nConversation summary:\n- old",
+            was_compacted: true,
           },
         ],
       },
@@ -147,7 +147,7 @@ describe("reduceTurns", () => {
     expect(next.turns[0]?.compaction).toEqual({
       status: "triggered",
       detail: null,
-      summary: "[compaction.summary.v1]\nConversation summary:\n- old",
+      hydrated: true,
     });
   });
 
@@ -179,7 +179,7 @@ describe("reduceTurns", () => {
     expect(next.turns[0]?.compaction).toEqual({
       status: "pending",
       detail: null,
-      summary: null,
+      hydrated: false,
     });
     expect(next.turns[0]?.pressureWarning).toBe(false);
   });
@@ -207,7 +207,7 @@ describe("reduceTurns", () => {
 
     expect(next.turns[0]?.compaction.status).toBe("triggered");
     expect(next.turns[0]?.compaction.detail?.replaced_items).toBe(5);
-    expect(next.turns[0]?.compaction.summary).toBeNull();
+    expect(next.turns[0]?.compaction.hydrated).toBe(false);
   });
 
   test("context.pressure marks turn pressure warning as active", () => {
@@ -257,7 +257,7 @@ describe("reduceTurns", () => {
     expect(completed.turns[0]?.compaction).toEqual({
       status: "idle",
       detail: null,
-      summary: null,
+      hydrated: false,
     });
     expect(completed.turns[0]?.pressureWarning).toBe(false);
   });

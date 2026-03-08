@@ -31,7 +31,7 @@ export type TurnState = {
   compaction: {
     status: "pending" | "triggered" | "idle";
     detail: ContextCompactedEvent | null;
-    summary: string | null;
+    hydrated: boolean;
   };
   pressureWarning: boolean;
 };
@@ -110,10 +110,7 @@ function toFinalLines(finalText: string): string[] {
 function toHydratedTurnState(
   turn: Extract<ProtocolEvent, { type: "session.hydrated" }>["turns"][number],
 ): TurnState {
-  const compactionSummary = typeof turn.compaction_summary === "string" &&
-      turn.compaction_summary.length > 0
-    ? turn.compaction_summary
-    : null;
+  const wasCompacted = turn.was_compacted === true;
 
   return {
     turn_id: turn.turn_id,
@@ -126,9 +123,9 @@ function toHydratedTurnState(
     error: null,
     usage: null,
     compaction: {
-      status: compactionSummary === null ? "idle" : "triggered",
+      status: wasCompacted ? "triggered" : "idle",
       detail: null,
-      summary: compactionSummary,
+      hydrated: wasCompacted,
     },
     pressureWarning: false,
   };
@@ -283,7 +280,7 @@ export function reduceTurns(
             compaction: {
               status: "pending",
               detail: null,
-              summary: null,
+              hydrated: false,
             },
             pressureWarning: false,
           },
@@ -296,7 +293,7 @@ export function reduceTurns(
         compaction: {
           status: "triggered",
           detail: event,
-          summary: null,
+          hydrated: false,
         },
       }));
 
@@ -343,7 +340,7 @@ export function reduceTurns(
         usage: event.usage,
         compaction:
           turn.compaction.status === "pending"
-            ? { status: "idle", detail: null, summary: null }
+            ? { status: "idle", detail: null, hydrated: false }
             : turn.compaction,
         pressureWarning: false,
       }));
@@ -375,7 +372,7 @@ export function reduceTurns(
           error: event.error,
           compaction:
             turn.compaction.status === "pending"
-              ? { status: "idle", detail: null, summary: null }
+              ? { status: "idle", detail: null, hydrated: false }
               : turn.compaction,
           pressureWarning: false,
         };

@@ -16,10 +16,11 @@ from uuid import uuid4
 
 from pycodex.approval.policy import ReviewDecision
 from pycodex.core.agent import AgentEvent, SupportsModelClient, SupportsToolRouter, run_turn
+from pycodex.core.compaction import is_summary_block_item
 from pycodex.core.config import Config
 from pycodex.core.event_adapter import EventAdapter
 from pycodex.core.rollout_recorder import RolloutRecorder, build_rollout_path
-from pycodex.core.rollout_replay import replay_rollout
+from pycodex.core.rollout_replay import replay_rollout, restore_session_from_rollout
 from pycodex.core.session import PromptItem, Session
 from pycodex.core.session_store import (
     list_sessions,
@@ -41,7 +42,6 @@ from pycodex.protocol.events import (
 
 _MAX_PENDING_APPROVALS = 100
 _MAX_SHELL_COMMAND_PREVIEW_CHARS = 240
-_SUMMARY_BLOCK_MARKER = "[compaction.summary.v1]"
 logger = logging.getLogger(__name__)
 
 _SENSITIVE_ENV_KEY_PATTERN = re.compile(
@@ -258,17 +258,7 @@ class TuiBridge:
             )
             replay_state = replay_rollout(rollout_path)
             hydrated_turns = _build_hydrated_turns(replay_state.display_history)
-            resumed_session = Session(config=config, thread_id=replay_state.thread_id)
-            resumed_session.restore_from_rollout(
-                history=replay_state.history,
-                cumulative_usage=replay_state.cumulative_usage,
-                turn_count=replay_state.turn_count,
-                initial_context_injected=replay_state.initial_context_injected,
-            )
-            resumed_session.configure_rollout_recorder(
-                recorder=RolloutRecorder(path=rollout_path),
-                path=rollout_path,
-            )
+            resumed_session = restore_session_from_rollout(rollout_path, config=config)
             await self._activate_session(resumed_session)
             self._emit_protocol_event(
                 SessionHydrated(
@@ -434,11 +424,11 @@ def _build_hydrated_turns(history: list[PromptItem]) -> list[HydratedTurn]:
     turns: list[HydratedTurn] = []
     current_user: str | None = None
     assistant_messages: list[str] = []
-    current_compaction_summary: str | None = None
-    pending_compaction_summary: str | None = None
+    current_was_compacted: bool = False
+    pending_was_compacted: bool = False
 
     def append_current_turn() -> None:
-        nonlocal current_compaction_summary, current_user, assistant_messages
+        nonlocal current_was_compacted, current_user, assistant_messages
         if current_user is None:
             return
         turns.append(
@@ -446,25 +436,25 @@ def _build_hydrated_turns(history: list[PromptItem]) -> list[HydratedTurn]:
                 turn_id=f"hydrated_{len(turns) + 1}",
                 user_text=current_user,
                 assistant_text="\n\n".join(assistant_messages),
-                compaction_summary=current_compaction_summary,
+                was_compacted=current_was_compacted,
             )
         )
         current_user = None
         assistant_messages = []
-        current_compaction_summary = None
+        current_was_compacted = False
 
     for item in history:
         role = item.get("role")
         content = item.get("content")
         text = content if isinstance(content, str) else ""
-        if role == "system" and _SUMMARY_BLOCK_MARKER in text:
-            pending_compaction_summary = text
+        if is_summary_block_item(item):
+            pending_was_compacted = True
             continue
         if role == "user":
             append_current_turn()
             current_user = text
-            current_compaction_summary = pending_compaction_summary
-            pending_compaction_summary = None
+            current_was_compacted = pending_was_compacted
+            pending_was_compacted = False
             continue
         if role == "assistant" and current_user is not None:
             assistant_messages.append(text)

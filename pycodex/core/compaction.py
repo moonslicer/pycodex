@@ -23,7 +23,7 @@ DEFAULT_CONTEXT_WINDOW_TOKENS = 128_000
 DEFAULT_SUMMARY_MAX_CHARS = 1_200
 _CHARS_PER_TOKEN_ESTIMATE = 4
 
-_SUMMARY_BLOCK_MARKER = "[compaction.summary.v1]"
+SUMMARY_BLOCK_MARKER = "[compaction.summary.v1]"
 _SUMMARY_TOOL_RESULT_MAX_CHARS = 2_000
 _SUMMARY_TOOL_ARGS_MAX_CHARS = 500
 
@@ -144,7 +144,7 @@ class ThresholdV1Strategy:
         for index, item in enumerate(context.history):
             if index >= replace_end:
                 break
-            if _is_summary_block_item(item):
+            if is_summary_block_item(item):
                 replace_start = index + 1
 
         compactable_count = replace_end - replace_start
@@ -453,7 +453,7 @@ def _extract_summary_block(raw: str) -> str | None:
 def _format_transcript_for_summary(items: list[PromptItem]) -> str:
     lines: list[str] = []
     for item in items:
-        if _is_summary_block_item(item):
+        if is_summary_block_item(item):
             content = str(item.get("content", ""))
             lines.append(f"[Prior compaction summary]\n{content}")
             continue
@@ -504,20 +504,21 @@ def _sanitize_tool_output(text: str) -> str:
 
 def _render_summary_block(*, summary: str) -> str:
     body = summary.strip() or "No summary content."
-    return f"{_SUMMARY_BLOCK_MARKER}\n{body}"
+    return f"{SUMMARY_BLOCK_MARKER}\n{body}"
 
 
 def _summary_source_items(items: list[PromptItem]) -> list[PromptItem]:
-    return [item for item in items if not _is_summary_block_item(item)]
+    return [item for item in items if not is_summary_block_item(item)]
 
 
-def _is_summary_block_item(item: PromptItem) -> bool:
+def is_summary_block_item(item: PromptItem) -> bool:
+    """Return True if ``item`` is a compaction summary system message."""
     if item.get("role") != "system":
         return False
     content = item.get("content")
     if not isinstance(content, str):
         return False
-    return content.lstrip().startswith(_SUMMARY_BLOCK_MARKER)
+    return content.lstrip().startswith(SUMMARY_BLOCK_MARKER)
 
 
 def _estimate_prompt_tokens(history: list[PromptItem]) -> int:

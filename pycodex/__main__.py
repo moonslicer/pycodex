@@ -34,6 +34,7 @@ from pycodex.core.rollout_recorder import (
 from pycodex.core.rollout_replay import (
     RolloutReplayError,
     replay_rollout,
+    restore_session_from_rollout,
 )
 from pycodex.core.rollout_schema import SessionClosed
 from pycodex.core.session import Session
@@ -251,19 +252,7 @@ async def _build_session(*, config: Config, resume: str | None) -> Session:
         return session
 
     rollout_path = await _resolve_resume_rollout_path(config=config, resume=resume)
-    replay_state = replay_rollout(rollout_path)
-    session = Session(config=config, thread_id=replay_state.thread_id)
-    session.restore_from_rollout(
-        history=replay_state.history,
-        cumulative_usage=replay_state.cumulative_usage,
-        turn_count=replay_state.turn_count,
-        initial_context_injected=replay_state.initial_context_injected,
-    )
-    session.configure_rollout_recorder(
-        recorder=RolloutRecorder(path=rollout_path),
-        path=rollout_path,
-    )
-    return session
+    return restore_session_from_rollout(rollout_path, config=config)
 
 
 def _build_model_client(config: Config, *, dump_llm_request: bool = False) -> SupportsModelClient:

@@ -151,7 +151,6 @@ from pydantic import TypeAdapter, ValidationError
                         turn_id="hydrated_1",
                         user_text="hello",
                         assistant_text="hi",
-                        compaction_summary=None,
                     )
                 ],
             ),
@@ -302,7 +301,7 @@ def test_event_model_round_trip_json(event: Any, event_cls: type[Any]) -> None:
                         "turn_id": "hydrated_1",
                         "user_text": "hello",
                         "assistant_text": "hi",
-                        "compaction_summary": None,
+                        "was_compacted": False,
                     }
                 ],
             },

@@ -90,8 +90,8 @@ class CompactionApplied(_FrozenModel):
     replaced_items: StrictInt
     strategy: str
     implementation: str
-    strategy_options: dict[str, Any]
-    implementation_options: dict[str, Any]
+    strategy_options: dict[str, Any] = Field(default_factory=dict)
+    implementation_options: dict[str, Any] = Field(default_factory=dict)
 
 
 class InitialContextApplied(_FrozenModel):

@@ -20,7 +20,6 @@ _log = logging.getLogger(__name__)
 
 MAX_TOOL_RESULT_CHARS = 200_000
 _MISSING_TOOL_OUTPUT_PLACEHOLDER = "aborted"
-_SUMMARY_BLOCK_MARKER = "[compaction.summary.v1]"
 
 
 class UserMessageItem(TypedDict):
@@ -103,7 +102,6 @@ class Session:
     _rollout_meta_written: bool = False
     _rollout_closed: bool = False
     _resumed: bool = False
-    _resume_context_injected: bool = False
 
     def append_user_message(self, text: str) -> None:
         """Append a user message to the conversation history."""
@@ -166,7 +164,7 @@ class Session:
         history: list[PromptItem],
         cumulative_usage: dict[str, int],
         turn_count: int,
-        initial_context_injected: bool = False,
+        compaction_count: int = 0,
         last_turn_input_tokens: int = 0,
     ) -> None:
         """Restore session state from replayed rollout records."""
@@ -175,10 +173,11 @@ class Session:
         self._total_output_tokens = max(0, int(cumulative_usage.get("output_tokens", 0)))
         self._last_turn_input_tokens = max(0, last_turn_input_tokens)
         self._turn_count = max(0, turn_count)
-        self._compaction_count = _count_compaction_summaries(self._history)
-        self._initial_context_injected = initial_context_injected
+        self._compaction_count = max(0, compaction_count)
+        # Any restored session had at least one completed turn, so initial context
+        # was already applied (or the config has no initial context items).
+        self._initial_context_injected = True
         self._resumed = True
-        self._resume_context_injected = False
 
     def replace_range_with_system_summary(
         self,
@@ -220,14 +219,6 @@ class Session:
     def is_resumed(self) -> bool:
         """Return whether this session was restored from a prior rollout."""
         return self._resumed
-
-    def has_resume_context(self) -> bool:
-        """Return whether a resume context message has been injected."""
-        return self._resume_context_injected
-
-    def mark_resume_context_injected(self) -> None:
-        """Mark the resume context message as injected."""
-        self._resume_context_injected = True
 
     def record_turn_usage(self, usage: dict[str, int] | None) -> UsageSnapshot | None:
         """Record one turn's usage and return an updated snapshot."""
@@ -396,17 +387,6 @@ def _normalize_prompt_history(history: list[PromptItem]) -> list[PromptItem]:
         )
 
     return history
-
-
-def _count_compaction_summaries(history: list[PromptItem]) -> int:
-    count = 0
-    for item in history:
-        if item.get("role") != "system":
-            continue
-        content = item.get("content")
-        if isinstance(content, str) and _SUMMARY_BLOCK_MARKER in content:
-            count += 1
-    return count
 
 
 def _normalize_usage_counts(usage: dict[str, int] | None) -> TokenUsageCounts | None:

@@ -198,7 +198,7 @@ export function summarizeCompactionNoticeForTurn(
     };
   }
 
-  if (turn.compaction.summary !== null) {
+  if (turn.compaction.hydrated) {
     return {
       text: "~ [Resumed: prior context was compacted]",
       tone: "muted",

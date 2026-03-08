@@ -56,8 +56,6 @@ def _build_rollout_records() -> list[dict[str, object]]:
             replaced_items=1,
             strategy="threshold_v1",
             implementation="local_summary_v1",
-            strategy_options={"threshold_ratio": 0.2},
-            implementation_options={"max_lines": 8},
         ).model_dump(mode="json"),
         SessionClosed(
             schema_version=SCHEMA_VERSION,
@@ -231,8 +229,6 @@ def test_replay_rollout_applies_partial_compaction_and_preserves_prefix(tmp_path
             replaced_items=2,
             strategy="threshold_v1",
             implementation="local_summary_v1",
-            strategy_options={},
-            implementation_options={},
         ).model_dump(mode="json"),
         HistoryItem(
             schema_version=SCHEMA_VERSION,
@@ -283,8 +279,6 @@ def test_replay_rollout_clamps_replace_end_and_emits_warning(tmp_path: Path) -> 
             replaced_items=98,
             strategy="threshold_v1",
             implementation="local_summary_v1",
-            strategy_options={},
-            implementation_options={},
         ).model_dump(mode="json"),
     ]
     _write_jsonl(path, records)
@@ -392,8 +386,6 @@ def test_replay_rollout_compaction_indices_correct_with_initial_context(tmp_path
             replaced_items=3,
             strategy="threshold_v1",
             implementation="local_summary_v1",
-            strategy_options={},
-            implementation_options={},
         ).model_dump(mode="json"),
         HistoryItem(
             schema_version=SCHEMA_VERSION,
@@ -454,8 +446,6 @@ def test_replay_rollout_applies_consecutive_compactions(tmp_path: Path) -> None:
             replaced_items=2,
             strategy="threshold_v1",
             implementation="local_summary_v1",
-            strategy_options={},
-            implementation_options={},
         ).model_dump(mode="json"),
         CompactionApplied(
             schema_version=SCHEMA_VERSION,
@@ -466,8 +456,6 @@ def test_replay_rollout_applies_consecutive_compactions(tmp_path: Path) -> None:
             replaced_items=2,
             strategy="threshold_v1",
             implementation="local_summary_v1",
-            strategy_options={},
-            implementation_options={},
         ).model_dump(mode="json"),
     ]
     _write_jsonl(path, records)
@@ -478,3 +466,14 @@ def test_replay_rollout_applies_consecutive_compactions(tmp_path: Path) -> None:
         {"role": "system", "content": "[compaction.summary.v1]\nfirst"},
         {"role": "system", "content": "[compaction.summary.v1]\nsecond"},
     ]
+    assert state.compaction_count == 2
+
+
+def test_replay_rollout_compaction_count_reflects_applied_records(tmp_path: Path) -> None:
+    """compaction_count is derived from compaction.applied records, not history scanning."""
+    path = tmp_path / "rollout.jsonl"
+    _write_jsonl(path, _build_rollout_records())
+
+    state = replay_rollout(path)
+
+    assert state.compaction_count == 1
