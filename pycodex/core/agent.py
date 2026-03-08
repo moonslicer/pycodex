@@ -34,8 +34,9 @@ from pycodex.core.rollout_schema import (
     UsageSnapshot as RolloutUsageSnapshot,
 )
 from pycodex.core.session import PromptItem, Session, UsageSnapshot
-from pycodex.core.skills.injector import build_skill_injection_plan
+from pycodex.core.skills.injector import SkillInjectedMessage, build_skill_injection_plan
 from pycodex.core.skills.manager import SkillRegistry, SkillsManager
+from pycodex.core.skills.resolver import SkillMention, extract_skill_mentions
 from pycodex.tools.orchestrator import ToolAborted
 
 _log = logging.getLogger(__name__)
@@ -179,6 +180,7 @@ class Agent:
     on_event: EventCallback | None = None
     compaction_orchestrator: SupportsCompactionOrchestrator | None = None
     skills_manager: SkillsManager | None = None
+    model_signal_budget: int = 3
 
     async def run_turn(self, user_input: str) -> str:
         """Run one user turn until the model emits no tool calls."""
@@ -189,7 +191,15 @@ class Agent:
         _log.debug("turn started: %r", user_input[:80])
         self.session.append_user_message(user_input)
         await self._persist_latest_history_item()
-        await self._inject_turn_skill_messages(user_input)
+        registry = self._load_skill_registry()
+        injected_this_turn: set[str] = set()
+        signal_budget = max(self.model_signal_budget, 0)
+        signal_iteration = 0
+        await self._inject_turn_skill_messages(
+            user_input,
+            registry=registry,
+            injected_out=injected_this_turn,
+        )
         await self._emit(TurnStarted(user_input=user_input))
         pending_tool_calls: dict[str, str] = {}
         pressure_emitted = False
@@ -223,6 +233,26 @@ class Agent:
                     if text:
                         self.session.append_assistant_message(text)
                         await self._persist_latest_history_item()
+                    signals = self._find_new_skill_signals(
+                        text=text,
+                        registry=registry,
+                        already_injected=injected_this_turn,
+                    )
+                    if signal_budget > 0 and signals:
+                        signal_budget -= 1
+                        signal_iteration += 1
+                        for mention in signals:
+                            _log.info(
+                                "skill.model_signal name=%s iteration=%d",
+                                mention.name,
+                                signal_iteration,
+                            )
+                        await self._inject_signaled_skills(
+                            mentions=signals,
+                            registry=registry,
+                            injected_out=injected_this_turn,
+                        )
+                        continue
                     usage_snapshot = self.session.record_turn_usage(usage)
                     self.session.mark_turn_completed()
                     await self._persist_turn_completed(usage_snapshot=usage_snapshot)
@@ -349,23 +379,40 @@ class Agent:
 
         return tool_calls, "".join(text_parts), usage
 
-    async def _inject_turn_skill_messages(self, user_input: str) -> None:
-        if "$" not in user_input:
-            return
-
-        registry = self._load_skill_registry()
-        if registry is None:
-            return
-
+    async def _inject_turn_skill_messages(
+        self,
+        user_input: str,
+        *,
+        registry: SkillRegistry | None,
+        injected_out: set[str],
+    ) -> None:
         existing_keys = self._existing_injected_keys_for_same_turn()
+        injected_out.update(name for name, _, _ in existing_keys)
+        if "$" not in user_input or registry is None:
+            return
+
         plan = build_skill_injection_plan(user_input=user_input, registry=registry)
-        for injected in plan.messages:
+        await self._append_injected_messages(
+            injected_messages=plan.messages,
+            existing_keys=existing_keys,
+            injected_out=injected_out,
+        )
+
+    async def _append_injected_messages(
+        self,
+        *,
+        injected_messages: tuple[SkillInjectedMessage, ...],
+        existing_keys: set[tuple[str, str | None, str | None]],
+        injected_out: set[str],
+    ) -> None:
+        for injected in injected_messages:
             key = (
                 injected.name,
                 str(injected.path) if injected.path is not None else None,
                 injected.reason,
             )
             if key in existing_keys:
+                injected_out.add(injected.name)
                 _log.debug(
                     "skill.replay_skip name=%s path=%s",
                     injected.name,
@@ -381,6 +428,44 @@ class Agent:
             )
             await self._persist_latest_history_item()
             existing_keys.add(key)
+            injected_out.add(injected.name)
+
+    async def _inject_signaled_skills(
+        self,
+        *,
+        mentions: list[SkillMention],
+        registry: SkillRegistry | None,
+        injected_out: set[str],
+    ) -> None:
+        if registry is None or not mentions:
+            return
+
+        existing_keys = self._existing_injected_keys_for_same_turn()
+        injected_out.update(name for name, _, _ in existing_keys)
+        mention_text = " ".join(f"${mention.name}" for mention in mentions)
+        plan = build_skill_injection_plan(user_input=mention_text, registry=registry)
+        await self._append_injected_messages(
+            injected_messages=plan.messages,
+            existing_keys=existing_keys,
+            injected_out=injected_out,
+        )
+
+    def _find_new_skill_signals(
+        self,
+        *,
+        text: str,
+        registry: SkillRegistry | None,
+        already_injected: set[str],
+    ) -> list[SkillMention]:
+        if registry is None or "$" not in text:
+            return []
+        mentions = extract_skill_mentions(text)
+        return [
+            mention
+            for mention in mentions
+            if mention.name not in already_injected
+            and not registry.is_model_invocation_disabled(mention.name)
+        ]
 
     def _load_skill_registry(self) -> SkillRegistry | None:
         config = self.session.config
