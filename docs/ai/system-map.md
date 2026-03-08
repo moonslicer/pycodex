@@ -23,6 +23,8 @@ This document maps current architecture ownership and behavior contracts for pyc
 - Agent loop and turn orchestration: `pycodex/core/agent.py`
 - Session state and history normalization: `pycodex/core/session.py`
 - Initial context and project instruction loading: `pycodex/core/{initial_context,project_doc}.py`
+- Skills parsing/discovery/catalog rendering/turn injection:
+  - `pycodex/core/skills/{models,parser,discovery,manager,resolver,render,injector}.py`
 - Model transport and streaming/complete APIs: `pycodex/core/model_client.py`
 - Deterministic offline model path: `pycodex/core/fake_model_client.py`
 - Compaction strategies and orchestration: `pycodex/core/compaction.py`
@@ -50,10 +52,30 @@ This document maps current architecture ownership and behavior contracts for pyc
 - Approval state is persisted only through `ApprovalStore` (`APPROVED_FOR_SESSION` cache entries).
 - `shell` approval keys use canonicalized command + timeout; `write_file` uses resolved absolute path.
 - `Session.to_prompt()` normalizes missing tool outputs and returns detached copies.
+- Skill discovery precedence is deterministic: repo ancestry + configured repo dirs > user > system.
+- Skill loading is fail-open: invalid `SKILL.md` skips only that skill; sidecar parse errors become warnings.
+- Initial context appends a compact `## Skills` section only when enabled skills exist.
+- Skill invocation is explicit-only in v1 (`$skill-name` or path-linked mention), not tool-primary.
+- Skill mention parsing skips fenced and inline code and dedupes resolved skills by canonical path.
+- Skill injection order is deterministic: all `<skill-unavailable>` messages first, then `<skill>` payloads.
+- Injected skill messages are user-role items tagged with `skill_injected` metadata for replay idempotence.
+- Resume/replay does not duplicate prior skill injections for the same user-turn replay pattern.
+- Missing required env-var dependencies emit `<skill-unavailable>` with exact reason; no hard turn failure.
+- Approval previews include `skill_context` only when shell commands target `<skill_root>/scripts`.
 - Compaction uses stable marker `[compaction.summary.v1]` and applies boundary-aware range replacement.
 - Rollout replay applies `compaction.applied` range mutations and preserves `display_history` for hydration.
 - `--json` and `--tui-mode` payloads are emitted from typed models in `pycodex/protocol/events.py`.
 - `TuiBridge` handles `user.input`, `approval.response`, `session.resume`, `session.new`, and `interrupt`.
+
+## Skills Deferred Scope (V2/V3)
+
+Deferred by design for v1:
+- Model-primary `Skill` tool invocation path.
+- Forked sub-agent execution for skill workflows.
+- Marketplace install/update mechanics.
+- File-watcher based dynamic activation/reload.
+- Rich dependency prompts and auth/install flows beyond env-var gating.
+- Protocol event expansion for skill lifecycle beyond existing logs/history markers.
 
 ## Update Criteria
 

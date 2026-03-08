@@ -18,7 +18,7 @@ Each task below is independently scoped and verifiable. A task is complete only 
 ---
 
 ## T1. Skills Domain Models + Parser Contract
-- [ ] Status: Pending
+- [x] Status: Completed (2026-03-07)
 - Goal: Define strict v1 skill metadata types and parse `SKILL.md` frontmatter deterministically.
 - Non-goals: Discovery, runtime injection, approval integration.
 - Scope:
@@ -31,12 +31,15 @@ Each task below is independently scoped and verifiable. A task is complete only 
   3. Optional sidecar parse shape with fail-open warnings.
 - Verification:
   - `.venv/bin/pytest tests/core/skills/test_parser.py -v`
+  - `.venv/bin/ruff check pycodex/core/skills tests/core/skills/test_parser.py`
+  - `.venv/bin/ruff format --check pycodex/core/skills tests/core/skills/test_parser.py`
+  - `.venv/bin/mypy --strict pycodex/core/skills`
 - Acceptance checks:
   1. Malformed `SKILL.md` excludes only that skill.
   2. Optional sidecar parse errors do not crash loading.
 
 ## T2. Discovery Pipeline + Deterministic Registry
-- [ ] Status: Pending
+- [x] Status: Completed (2026-03-07)
 - Goal: Discover skills across repo/user/system roots with canonical dedupe and deterministic precedence.
 - Non-goals: Prompt rendering, turn-time injection.
 - Scope:
@@ -51,12 +54,15 @@ Each task below is independently scoped and verifiable. A task is complete only 
   4. Cache keyed by cwd/config fingerprint.
 - Verification:
   - `.venv/bin/pytest tests/core/skills/test_discovery.py tests/core/skills/test_manager.py -v`
+  - `.venv/bin/ruff check pycodex/core/skills tests/core/skills`
+  - `.venv/bin/ruff format --check pycodex/core/skills tests/core/skills`
+  - `.venv/bin/mypy --strict pycodex/core/skills`
 - Acceptance checks:
   1. Same name across scopes resolves by precedence.
   2. Same name within same scope is marked ambiguous.
 
 ## T3. Mention Extraction + Resolution Engine
-- [ ] Status: Pending
+- [x] Status: Completed (2026-03-07)
 - Goal: Resolve explicit skill mentions from user text and path-linked references deterministically.
 - Non-goals: Session mutation and model sampling changes.
 - Scope:
@@ -68,12 +74,16 @@ Each task below is independently scoped and verifiable. A task is complete only 
   3. Ordered deduped resolution result (path-linked first, then plain names).
 - Verification:
   - `.venv/bin/pytest tests/core/skills/test_resolver.py -v`
+  - `.venv/bin/pytest tests/core/skills -v`
+  - `.venv/bin/ruff check pycodex/core/skills tests/core/skills`
+  - `.venv/bin/ruff format --check pycodex/core/skills tests/core/skills`
+  - `.venv/bin/mypy --strict pycodex/core/skills`
 - Acceptance checks:
   1. Duplicate mentions inject only once.
   2. Ambiguous names return deterministic unresolved status.
 
 ## T4. Initial Context Skills Catalog Rendering
-- [ ] Status: Pending
+- [x] Status: Completed (2026-03-07)
 - Goal: Append compact `## Skills` metadata section to initial context when enabled skills exist.
 - Non-goals: Full skill-body injection and dependency prompts.
 - Scope:
@@ -87,12 +97,15 @@ Each task below is independently scoped and verifiable. A task is complete only 
   3. Section omitted entirely for zero enabled skills.
 - Verification:
   - `.venv/bin/pytest tests/core/skills/test_render.py tests/core/test_initial_context.py -v`
+  - `.venv/bin/ruff check pycodex/core/skills pycodex/core/initial_context.py tests/core/skills tests/core/test_initial_context.py`
+  - `.venv/bin/ruff format --check pycodex/core/skills pycodex/core/initial_context.py tests/core/skills tests/core/test_initial_context.py`
+  - `.venv/bin/mypy --strict pycodex/core/skills pycodex/core/initial_context.py`
 - Acceptance checks:
   1. Bullet order matches registry order.
   2. No path/arguments/when-to-use leakage in listing.
 
 ## T5. Turn-Time Skill Injection (Explicit Path)
-- [ ] Status: Pending
+- [x] Status: Completed (2026-03-07)
 - Goal: Inject selected skill bodies as synthetic user messages before model sampling.
 - Non-goals: New tools, tool routing changes, parallel dispatch changes.
 - Scope:
@@ -105,14 +118,18 @@ Each task below is independently scoped and verifiable. A task is complete only 
   2. Injection metadata marker (`skill_injected: true`) persisted in history envelope.
   3. Missing skill file handled via `<skill-unavailable>` message.
 - Verification:
+  - `.venv/bin/pytest tests/core/skills/test_injector.py -v`
   - `.venv/bin/pytest tests/core/test_agent.py -v`
   - `.venv/bin/pytest tests/agent_harness/test_smoke.py -v`
+  - `.venv/bin/ruff check pycodex/core/agent.py pycodex/core/session.py pycodex/core/skills tests/core/skills/test_injector.py tests/core/test_agent.py`
+  - `.venv/bin/ruff format --check pycodex/core/agent.py pycodex/core/session.py pycodex/core/skills tests/core/skills/test_injector.py tests/core/test_agent.py`
+  - `.venv/bin/mypy --strict pycodex/core/agent.py pycodex/core/session.py pycodex/core/skills`
 - Acceptance checks:
   1. Existing tool list and sampling pipeline remain unchanged.
   2. Injected items survive replay as normal history entries.
 
 ## T6. Dependency Gate + Unavailable Messaging
-- [ ] Status: Pending
+- [x] Status: Completed (2026-03-07)
 - Goal: Enforce env-var dependencies for selected skills and fail open with deterministic model-visible warnings.
 - Non-goals: Interactive dependency prompts, MCP install/login flow.
 - Scope:
@@ -124,12 +141,16 @@ Each task below is independently scoped and verifiable. A task is complete only 
   3. Required ordering: all unavailable messages before any `<skill>` messages.
 - Verification:
   - `.venv/bin/pytest tests/core/skills -v`
+  - `.venv/bin/pytest tests/core/test_agent.py -k "inject" -v`
+  - `.venv/bin/ruff check pycodex/core/agent.py pycodex/core/session.py pycodex/core/skills tests/core/skills tests/core/test_agent.py`
+  - `.venv/bin/ruff format --check pycodex/core/agent.py pycodex/core/session.py pycodex/core/skills tests/core/skills tests/core/test_agent.py`
+  - `.venv/bin/mypy --strict pycodex/core/agent.py pycodex/core/session.py pycodex/core/skills`
 - Acceptance checks:
   1. Dependency failure never crashes turn.
   2. Dependency failure reason is deterministic and specific.
 
 ## T7. Replay/Resume Idempotence for Skill Injection
-- [ ] Status: Pending
+- [x] Status: Completed (2026-03-07)
 - Goal: Prevent duplicate skill injection after session replay/resume.
 - Non-goals: Rollout schema changes, session format migrations.
 - Scope:
@@ -140,13 +161,18 @@ Each task below is independently scoped and verifiable. A task is complete only 
   1. Turn-position check for existing `skill_injected: true` entries.
   2. Skip behavior with deterministic replay-skip logging.
 - Verification:
-  - `.venv/bin/pytest tests/agent_harness -k "skill and replay" -v`
+  - `.venv/bin/pytest tests/core/test_agent.py -k "reinject or reemit" -v`
+  - `.venv/bin/pytest tests/core/test_agent.py -v`
+  - `.venv/bin/pytest tests/agent_harness/test_smoke.py -v`
+  - `.venv/bin/ruff check pycodex/core/agent.py pycodex/core/session.py pycodex/core/skills tests/core/test_agent.py tests/core/skills`
+  - `.venv/bin/ruff format --check pycodex/core/agent.py pycodex/core/session.py pycodex/core/skills tests/core/test_agent.py tests/core/skills`
+  - `.venv/bin/mypy --strict pycodex/core/agent.py pycodex/core/session.py pycodex/core/skills`
 - Acceptance checks:
   1. Resume does not re-inject prior `<skill>` messages.
   2. Resume does not re-emit prior `<skill-unavailable>` messages.
 
 ## T8. Approval Preview Context for Skill Scripts
-- [ ] Status: Pending
+- [x] Status: Completed (2026-03-07)
 - Goal: Add skill-aware context to approval preview when commands execute under `skill_root/scripts`.
 - Non-goals: New approval policies, changed approval key semantics.
 - Scope:
@@ -157,12 +183,15 @@ Each task below is independently scoped and verifiable. A task is complete only 
   2. Approval preview enrichment with skill identity metadata.
 - Verification:
   - `.venv/bin/pytest tests/tools/test_orchestrator.py -v`
+  - `.venv/bin/ruff check pycodex/tools/orchestrator.py tests/tools/test_orchestrator.py`
+  - `.venv/bin/ruff format --check pycodex/tools/orchestrator.py tests/tools/test_orchestrator.py`
+  - `.venv/bin/mypy --strict pycodex/tools/orchestrator.py`
 - Acceptance checks:
   1. Existing approval behavior remains intact.
   2. Skill context appears only for skill-script paths.
 
 ## T9. Skills Observability + Safety Hardening
-- [ ] Status: Pending
+- [x] Status: Completed (2026-03-07)
 - Goal: Emit structured skill lifecycle logs and enforce path/safety constraints.
 - Non-goals: Analytics dashboards, protocol-level skills events.
 - Scope:
@@ -174,12 +203,17 @@ Each task below is independently scoped and verifiable. A task is complete only 
   3. Log redaction guarantee for secret-adjacent values.
 - Verification:
   - `.venv/bin/pytest tests/core/skills -v`
+  - `.venv/bin/pytest tests/core/test_agent.py -v`
+  - `.venv/bin/pytest tests/tools/test_orchestrator.py -v`
+  - `.venv/bin/ruff check pycodex/core/agent.py pycodex/core/skills pycodex/tools/orchestrator.py tests/core/skills tests/core/test_agent.py tests/tools/test_orchestrator.py`
+  - `.venv/bin/ruff format --check pycodex/core/agent.py pycodex/core/skills pycodex/tools/orchestrator.py tests/core/skills tests/core/test_agent.py tests/tools/test_orchestrator.py`
+  - `.venv/bin/mypy --strict pycodex/core/agent.py pycodex/core/skills pycodex/tools/orchestrator.py`
 - Acceptance checks:
   1. No skill body or env-var values appear in logs.
   2. Invalid paths are rejected deterministically.
 
 ## T10. Docs + Final Integration Gates
-- [ ] Status: Pending
+- [x] Status: Completed (2026-03-07)
 - Goal: Finalize architecture/test docs and pass required quality gates for the delivered scope.
 - Non-goals: V2/V3 roadmap implementation.
 - Scope:
