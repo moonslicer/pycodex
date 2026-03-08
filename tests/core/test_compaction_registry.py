@@ -63,8 +63,12 @@ def test_create_compaction_orchestrator_applies_component_options() -> None:
     assert orchestrator.implementation.max_lines == 3
 
 
-def test_create_compaction_orchestrator_model_summary_falls_back_to_local_without_model_client() -> None:
-    orchestrator = create_compaction_orchestrator(implementation_name=MODEL_SUMMARY_V1_IMPLEMENTATION)
+def test_create_compaction_orchestrator_model_summary_falls_back_to_local_without_model_client() -> (
+    None
+):
+    orchestrator = create_compaction_orchestrator(
+        implementation_name=MODEL_SUMMARY_V1_IMPLEMENTATION
+    )
 
     assert orchestrator.implementation.name == LOCAL_SUMMARY_V1_IMPLEMENTATION
 

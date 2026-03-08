@@ -22,7 +22,6 @@ from pycodex.core.model_client import OutputItemDone, OutputTextDelta
 from pycodex.core.rollout_schema import (
     SCHEMA_VERSION,
     HistoryItem,
-    InitialContextApplied,
     SessionMeta,
 )
 from pycodex.core.rollout_schema import (
@@ -185,7 +184,6 @@ class Agent:
         await self._persist_session_meta_if_needed()
         if new_initial_items:
             await self._persist_initial_context(new_initial_items)
-        await self._ensure_resume_context()
         _log.debug("turn started: %r", user_input[:80])
         self.session.append_user_message(user_input)
         await self._persist_latest_history_item()
@@ -365,22 +363,6 @@ class Agent:
         self.session.mark_initial_context_injected()
         return list(initial_items)
 
-    async def _ensure_resume_context(self) -> None:
-        """Inject a one-time system message after session restore with current state."""
-        if not self.session.is_resumed() or self.session.has_resume_context():
-            return
-        usage = self.session.cumulative_usage()
-        msg = (
-            f"Session resumed. Current state: "
-            f"turns={self.session.completed_turn_count()}, "
-            f"compactions={self.session.compaction_count()}, "
-            f"cumulative_input_tokens={usage['input_tokens']}, "
-            f"last_turn_input_tokens={self.session.last_turn_input_tokens()}."
-        )
-        self.session.append_system_message(msg)
-        self.session.mark_resume_context_injected()
-        await self._persist_latest_history_item()
-
     def _profile_instructions(self) -> str:
         if self.session.config is None:
             return ""
@@ -462,15 +444,6 @@ class Agent:
                 for item in items
             ]
         )
-        await self.session.record_rollout_items(
-            [
-                InitialContextApplied(
-                    schema_version=SCHEMA_VERSION,
-                    thread_id=self.session.thread_id,
-                    item_count=len(items),
-                )
-            ]
-        )
 
     async def _persist_session_meta_if_needed(self) -> None:
         recorder = self.session.rollout_recorder()
@@ -528,19 +501,6 @@ class Agent:
         )
 
     async def _persist_compaction(self, compaction: CompactionApplied) -> None:
-        config = self.session.config
-        if config is None:
-            strategy_options: dict[str, object] = {}
-            implementation_options: dict[str, object] = {}
-        else:
-            strategy_options = _compaction_component_options(
-                config.compaction_options, key="strategy"
-            )
-            if "threshold_ratio" not in strategy_options:
-                strategy_options["threshold_ratio"] = config.compaction_threshold_ratio
-            implementation_options = _compaction_component_options(
-                config.compaction_options, key="implementation"
-            )
         await self.session.record_rollout_items(
             [
                 RolloutCompactionApplied(
@@ -552,8 +512,6 @@ class Agent:
                     replaced_items=compaction.replaced_items,
                     strategy=compaction.strategy,
                     implementation=compaction.implementation,
-                    strategy_options=strategy_options,
-                    implementation_options=implementation_options,
                 )
             ]
         )
@@ -585,17 +543,31 @@ def _compaction_component_options(
 
 
 def _estimate_prompt_tokens_for_session(session: Session) -> int:
-    cumulative_usage = session.cumulative_usage()
-    api_input_tokens = int(cumulative_usage.get("input_tokens", 0))
-    if api_input_tokens > 0:
-        return api_input_tokens
+    # Use the maximum of two estimates to avoid under-counting:
+    #
+    # 1. last_turn_input_tokens: the actual token count reported by the API for
+    #    the most recently completed model call.  This is the most accurate but
+    #    can be stale within a multi-tool turn — if tool results have been
+    #    appended since the last model call, the prompt is now larger than this
+    #    value and compaction would fire too late.
+    #
+    # 2. Char-based estimate of the current prompt: always reflects the live
+    #    prompt size, but is only approximate (chars / chars_per_token).
+    #
+    # Taking the max ensures that a sudden growth from many tool results
+    # (which updates the prompt but not last_turn_input_tokens) is caught
+    # before the next model call, while still benefiting from the accuracy of
+    # the API-reported count when it dominates.
+    last_turn_tokens = session.last_turn_input_tokens()
 
     char_total = 0
     for item in session.to_prompt():
         for value in item.values():
             if isinstance(value, str):
                 char_total += len(value)
-    return max(1, char_total // _CHARS_PER_TOKEN_ESTIMATE)
+    char_estimate = max(1, char_total // _CHARS_PER_TOKEN_ESTIMATE)
+
+    return max(last_turn_tokens, char_estimate)
 
 
 def _compaction_threshold_ratio(orchestrator: SupportsCompactionOrchestrator) -> float | None:
