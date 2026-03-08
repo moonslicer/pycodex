@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import asyncio
+import shlex
 from collections.abc import Awaitable, Callable
 from dataclasses import dataclass
 from pathlib import Path
@@ -11,6 +12,7 @@ from typing import TYPE_CHECKING, Any, Protocol, TypeGuard, cast, runtime_checka
 from pycodex.approval.exec_policy import ExecDecision
 from pycodex.approval.policy import ApprovalPolicy, ApprovalStore, ReviewDecision
 from pycodex.approval.sandbox import SandboxPolicy, SandboxUnavailable
+from pycodex.core.skills.discovery import discover_skills
 from pycodex.tools.outcome import ToolError, ToolOutcome
 
 if TYPE_CHECKING:
@@ -131,7 +133,10 @@ async def execute_with_approval(
         if not _is_sandbox_denial(sandbox_outcome):
             return sandbox_outcome
 
-        retry_decision = await ask_user_fn(tool, args)
+        retry_decision = await ask_user_fn(
+            tool,
+            _approval_preview_args(tool=tool, args=args, cwd=cwd),
+        )
         if retry_decision == ReviewDecision.ABORT:
             raise ToolAborted(tool.name)
         if retry_decision == ReviewDecision.DENIED:
@@ -233,7 +238,10 @@ async def _execute_with_standard_approval(
             # Important: this runs outside prompt_lock. The callback may perform work that
             # itself needs the lock (directly or indirectly), and holding the lock here could
             # deadlock re-entrant paths.
-            decision = await ask_user_fn(tool, args)
+            decision = await ask_user_fn(
+                tool,
+                _approval_preview_args(tool=tool, args=args, cwd=cwd),
+            )
         finally:
             # Always clear and publish pending state, even when the owner task is cancelled.
             await asyncio.shield(_finalize_pending_prompt(store=store, key=key, decision=decision))
@@ -352,6 +360,87 @@ def _approval_key(*, tool: ToolHandler, args: dict[str, Any], cwd: Path) -> obje
             )
 
     return {"tool": tool.name, "args": args}
+
+
+def _approval_preview_args(*, tool: ToolHandler, args: dict[str, Any], cwd: Path) -> dict[str, Any]:
+    preview_args = dict(args)
+    skill_context = _skill_script_context(tool=tool, args=args, cwd=cwd)
+    if skill_context is None:
+        return preview_args
+    preview_args["skill_context"] = skill_context
+    return preview_args
+
+
+def _skill_script_context(
+    *,
+    tool: ToolHandler,
+    args: dict[str, Any],
+    cwd: Path,
+) -> dict[str, str] | None:
+    if tool.name != "shell":
+        return None
+
+    command = args.get("command")
+    if not isinstance(command, str) or not command.strip():
+        return None
+
+    command_paths = _command_path_tokens(command, cwd=cwd)
+    if not command_paths:
+        return None
+
+    discovery = discover_skills(cwd=cwd)
+    if not discovery.skills:
+        return None
+
+    for command_path in command_paths:
+        for skill in discovery.skills:
+            scripts_dir = (skill.skill_root / "scripts").resolve()
+            if not _is_path_within(command_path, scripts_dir):
+                continue
+            return {
+                "name": skill.name,
+                "path": str(skill.path_to_skill_md),
+                "script_path": str(command_path),
+            }
+    return None
+
+
+def _command_path_tokens(command: str, *, cwd: Path) -> tuple[Path, ...]:
+    try:
+        tokens = shlex.split(command)
+    except ValueError:
+        return ()
+
+    candidates: list[Path] = []
+    for token in tokens:
+        candidate = _resolve_command_path_token(token, cwd=cwd)
+        if candidate is None:
+            continue
+        candidates.append(candidate)
+    return tuple(candidates)
+
+
+def _resolve_command_path_token(token: str, *, cwd: Path) -> Path | None:
+    if not token or token.startswith("-"):
+        return None
+    if "://" in token:
+        return None
+
+    if token.startswith("~"):
+        return Path(token).expanduser().resolve()
+    if token.startswith("/"):
+        return Path(token).resolve()
+    if token.startswith("./") or token.startswith("../") or "/" in token:
+        return (cwd / token).resolve()
+    return None
+
+
+def _is_path_within(candidate: Path, parent: Path) -> bool:
+    try:
+        candidate.relative_to(parent)
+        return True
+    except ValueError:
+        return False
 
 
 async def _finalize_pending_prompt(

@@ -3,7 +3,7 @@ from __future__ import annotations
 import asyncio
 from collections.abc import Awaitable, Callable
 from pathlib import Path
-from typing import Any
+from typing import Any, cast
 
 import pycodex.tools.orchestrator as orchestrator_module
 import pytest
@@ -1150,3 +1150,72 @@ async def test_sandbox_nonzero_exit_treated_as_denial_under_on_failure(
     assert ask_count == 1
     assert tool.sandbox_calls == 1
     assert tool.calls == 0
+
+
+async def test_shell_approval_prompt_includes_skill_context_for_skill_scripts(
+    tmp_path: Path,
+) -> None:
+    repo_root = tmp_path / "repo"
+    repo_root.mkdir()
+    (repo_root / ".git").mkdir()
+    skill_root = repo_root / ".agents" / "skills" / "demo"
+    skill_root.mkdir(parents=True)
+    skill_md = skill_root / "SKILL.md"
+    skill_md.write_text(
+        "---\nname: demo\ndescription: Demo skill\n---\nUse demo workflow.\n",
+        encoding="utf-8",
+    )
+    script_path = skill_root / "scripts" / "run.sh"
+    script_path.parent.mkdir(parents=True)
+    script_path.write_text("#!/bin/sh\necho demo\n", encoding="utf-8")
+
+    captured_args: dict[str, Any] | None = None
+
+    async def ask_user_fn(_tool: Any, args: dict[str, Any]) -> ReviewDecision:
+        nonlocal captured_args
+        captured_args = dict(args)
+        return ReviewDecision.DENIED
+
+    outcome = await _execute_tool(
+        tool=ShellTool(),
+        args={"command": "./.agents/skills/demo/scripts/run.sh"},
+        cwd=repo_root,
+        policy=ApprovalPolicy.ON_REQUEST,
+        store=ApprovalStore(),
+        ask_user_fn=ask_user_fn,
+    )
+
+    assert isinstance(outcome, ToolError)
+    assert outcome.code == "denied"
+    assert captured_args is not None
+    assert captured_args["command"] == "./.agents/skills/demo/scripts/run.sh"
+    assert isinstance(captured_args.get("skill_context"), dict)
+    skill_context = cast(dict[str, str], captured_args["skill_context"])
+    assert skill_context["name"] == "demo"
+    assert skill_context["path"] == str(skill_md.resolve())
+    assert skill_context["script_path"] == str(script_path.resolve())
+
+
+async def test_shell_approval_prompt_omits_skill_context_for_non_skill_commands(
+    tmp_path: Path,
+) -> None:
+    captured_args: dict[str, Any] | None = None
+
+    async def ask_user_fn(_tool: Any, args: dict[str, Any]) -> ReviewDecision:
+        nonlocal captured_args
+        captured_args = dict(args)
+        return ReviewDecision.DENIED
+
+    outcome = await _execute_tool(
+        tool=ShellTool(),
+        args={"command": "echo hello"},
+        cwd=tmp_path,
+        policy=ApprovalPolicy.ON_REQUEST,
+        store=ApprovalStore(),
+        ask_user_fn=ask_user_fn,
+    )
+
+    assert isinstance(outcome, ToolError)
+    assert outcome.code == "denied"
+    assert captured_args is not None
+    assert "skill_context" not in captured_args
