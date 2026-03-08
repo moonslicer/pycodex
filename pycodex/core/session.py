@@ -94,6 +94,7 @@ class Session:
     _initial_context_injected: bool = False
     _total_input_tokens: int = 0
     _total_output_tokens: int = 0
+    _last_turn_input_tokens: int = 0
     _turn_count: int = 0
     _compaction_count: int = 0
     _last_user_message: str | None = None
@@ -101,6 +102,8 @@ class Session:
     _rollout_path: Path | None = None
     _rollout_meta_written: bool = False
     _rollout_closed: bool = False
+    _resumed: bool = False
+    _resume_context_injected: bool = False
 
     def append_user_message(self, text: str) -> None:
         """Append a user message to the conversation history."""
@@ -164,14 +167,18 @@ class Session:
         cumulative_usage: dict[str, int],
         turn_count: int,
         initial_context_injected: bool = False,
+        last_turn_input_tokens: int = 0,
     ) -> None:
         """Restore session state from replayed rollout records."""
         self._history = [item.copy() for item in history]
         self._total_input_tokens = max(0, int(cumulative_usage.get("input_tokens", 0)))
         self._total_output_tokens = max(0, int(cumulative_usage.get("output_tokens", 0)))
+        self._last_turn_input_tokens = max(0, last_turn_input_tokens)
         self._turn_count = max(0, turn_count)
         self._compaction_count = _count_compaction_summaries(self._history)
         self._initial_context_injected = initial_context_injected
+        self._resumed = True
+        self._resume_context_injected = False
 
     def replace_range_with_system_summary(
         self,
@@ -210,12 +217,25 @@ class Session:
         """Mark initial context as injected for this session."""
         self._initial_context_injected = True
 
+    def is_resumed(self) -> bool:
+        """Return whether this session was restored from a prior rollout."""
+        return self._resumed
+
+    def has_resume_context(self) -> bool:
+        """Return whether a resume context message has been injected."""
+        return self._resume_context_injected
+
+    def mark_resume_context_injected(self) -> None:
+        """Mark the resume context message as injected."""
+        self._resume_context_injected = True
+
     def record_turn_usage(self, usage: dict[str, int] | None) -> UsageSnapshot | None:
         """Record one turn's usage and return an updated snapshot."""
         turn_usage = _normalize_usage_counts(usage)
         if turn_usage is None:
             return None
 
+        self._last_turn_input_tokens = turn_usage["input_tokens"]
         self._total_input_tokens += turn_usage["input_tokens"]
         self._total_output_tokens += turn_usage["output_tokens"]
         cumulative_usage: TokenUsageCounts = {
@@ -317,6 +337,10 @@ class Session:
             if exc_type is None:
                 raise
             _log.warning("close_rollout() failed during context manager exit: %s", cleanup_exc)
+
+    def last_turn_input_tokens(self) -> int:
+        """Return the input token count reported by the API for the most recent turn."""
+        return self._last_turn_input_tokens
 
     def cumulative_usage(self) -> TokenUsageCounts:
         """Return cumulative usage totals for the session."""

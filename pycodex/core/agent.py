@@ -185,6 +185,7 @@ class Agent:
         await self._persist_session_meta_if_needed()
         if new_initial_items:
             await self._persist_initial_context(new_initial_items)
+        await self._ensure_resume_context()
         _log.debug("turn started: %r", user_input[:80])
         self.session.append_user_message(user_input)
         await self._persist_latest_history_item()
@@ -363,6 +364,22 @@ class Agent:
             self.session.prepend_items(initial_items)
         self.session.mark_initial_context_injected()
         return list(initial_items)
+
+    async def _ensure_resume_context(self) -> None:
+        """Inject a one-time system message after session restore with current state."""
+        if not self.session.is_resumed() or self.session.has_resume_context():
+            return
+        usage = self.session.cumulative_usage()
+        msg = (
+            f"Session resumed. Current state: "
+            f"turns={self.session.completed_turn_count()}, "
+            f"compactions={self.session.compaction_count()}, "
+            f"cumulative_input_tokens={usage['input_tokens']}, "
+            f"last_turn_input_tokens={self.session.last_turn_input_tokens()}."
+        )
+        self.session.append_system_message(msg)
+        self.session.mark_resume_context_injected()
+        await self._persist_latest_history_item()
 
     def _profile_instructions(self) -> str:
         if self.session.config is None:

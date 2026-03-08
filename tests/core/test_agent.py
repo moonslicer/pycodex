@@ -1070,7 +1070,8 @@ def test_agent_does_not_repersist_initial_context_on_resumed_session(tmp_path: P
     sys_count_after_second = sum(
         1 for item in state_after_second.history if item.get("role") == "system"
     )
-    assert sys_count_after_second == sys_count_after_first
+    # +1 because the resume context system message is injected on the first post-resume turn
+    assert sys_count_after_second == sys_count_after_first + 1
 
 
 @pytest.mark.asyncio
@@ -1233,3 +1234,226 @@ def test_run_turn_threads_profile_instructions_to_model_client(tmp_path: Path) -
 
     assert result == "ok"
     assert model_client.calls[0]["instructions"] == "You are a support specialist."
+
+
+def test_run_turn_no_resume_context_for_fresh_session(tmp_path: Path) -> None:
+    session = Session()
+    model_client = _FakeModelClient(
+        turns=[[OutputTextDelta(delta="hi"), Completed(response_id="resp_1")]]
+    )
+    router = _FakeToolRouter(specs=[], results=[])
+
+    asyncio.run(
+        run_turn(
+            session=session,
+            model_client=model_client,
+            tool_router=router,
+            cwd=tmp_path,
+            user_input="hello",
+        )
+    )
+
+    prompt = session.to_prompt()
+    resume_items = [
+        item for item in prompt
+        if item.get("role") == "system" and "Session resumed" in str(item.get("content", ""))
+    ]
+    assert resume_items == []
+
+
+def test_run_turn_injects_resume_context_on_first_post_resume_turn(tmp_path: Path) -> None:
+    session = Session()
+    session.restore_from_rollout(
+        history=[
+            {"role": "user", "content": "earlier msg"},
+            {"role": "assistant", "content": "earlier reply"},
+        ],
+        cumulative_usage={"input_tokens": 5000, "output_tokens": 300},
+        turn_count=3,
+    )
+    model_client = _FakeModelClient(
+        turns=[[OutputTextDelta(delta="resumed reply"), Completed(response_id="resp_1")]]
+    )
+    router = _FakeToolRouter(specs=[], results=[])
+
+    asyncio.run(
+        run_turn(
+            session=session,
+            model_client=model_client,
+            tool_router=router,
+            cwd=tmp_path,
+            user_input="continue",
+        )
+    )
+
+    prompt = session.to_prompt()
+    resume_items = [
+        item for item in prompt
+        if item.get("role") == "system" and "Session resumed" in str(item.get("content", ""))
+    ]
+    assert len(resume_items) == 1
+    content = resume_items[0]["content"]
+    assert "turns=3" in content
+    assert "cumulative_input_tokens=5000" in content
+    assert "last_turn_input_tokens=" in content
+
+
+def test_run_turn_resume_context_injected_only_once_across_turns(tmp_path: Path) -> None:
+    session = Session()
+    session.restore_from_rollout(
+        history=[{"role": "user", "content": "old"}],
+        cumulative_usage={"input_tokens": 1000, "output_tokens": 50},
+        turn_count=1,
+    )
+    model_client = _FakeModelClient(
+        turns=[
+            [OutputTextDelta(delta="turn1"), Completed(response_id="resp_1")],
+            [OutputTextDelta(delta="turn2"), Completed(response_id="resp_2")],
+        ]
+    )
+    router = _FakeToolRouter(specs=[], results=[])
+    agent = Agent(session=session, model_client=model_client, tool_router=router, cwd=tmp_path)
+
+    asyncio.run(agent.run_turn("first post-resume"))
+    asyncio.run(agent.run_turn("second post-resume"))
+
+    prompt = session.to_prompt()
+    resume_items = [
+        item for item in prompt
+        if item.get("role") == "system" and "Session resumed" in str(item.get("content", ""))
+    ]
+    assert len(resume_items) == 1
+
+
+def test_run_turn_resume_context_includes_estimated_prompt_tokens(tmp_path: Path) -> None:
+    history = [
+        {"role": "user", "content": "x" * 400},
+        {"role": "assistant", "content": "y" * 400},
+    ]
+    session = Session()
+    session.restore_from_rollout(
+        history=history,
+        cumulative_usage={"input_tokens": 9000, "output_tokens": 500},
+        turn_count=5,
+        initial_context_injected=True,
+    )
+    model_client = _FakeModelClient(
+        turns=[[OutputTextDelta(delta="ok"), Completed(response_id="resp_1")]]
+    )
+    router = _FakeToolRouter(specs=[], results=[])
+
+    asyncio.run(
+        run_turn(
+            session=session,
+            model_client=model_client,
+            tool_router=router,
+            cwd=tmp_path,
+            user_input="go",
+        )
+    )
+
+    sent_messages = model_client.calls[0]["messages"]
+    resume_msg = next(
+        (m for m in sent_messages if "Session resumed" in str(m.get("content", ""))), None
+    )
+    assert resume_msg is not None
+    content = resume_msg["content"]
+    assert "last_turn_input_tokens=" in content
+    assert "compactions=0" in content
+    assert "turns=5" in content
+    assert "cumulative_input_tokens=9000" in content
+
+
+@pytest.mark.asyncio
+async def test_run_turn_resume_context_uses_last_turn_input_tokens_not_cumulative(
+    tmp_path: Path,
+) -> None:
+    """last_turn_input_tokens in the resume message must reflect the last turn's API token count,
+    not the cumulative lifetime total."""
+    rollout_path = tmp_path / "rollout.jsonl"
+    config = Config(cwd=tmp_path)
+
+    # Session 1: run two turns so cumulative diverges significantly from last-turn
+    session1 = Session(config=config)
+    session1.configure_rollout_recorder(
+        recorder=RolloutRecorder(path=rollout_path), path=rollout_path
+    )
+    model_client1 = _FakeModelClient(
+        turns=[
+            [OutputTextDelta(delta="r1"), Completed(response_id="resp_1", usage={"input_tokens": 100, "output_tokens": 10})],
+            [OutputTextDelta(delta="r2"), Completed(response_id="resp_2", usage={"input_tokens": 200, "output_tokens": 20})],
+        ]
+    )
+    agent1 = Agent(
+        session=session1,
+        model_client=model_client1,
+        tool_router=_FakeToolRouter(specs=[], results=[]),
+        cwd=tmp_path,
+    )
+    await agent1.run_turn("msg1")
+    await agent1.run_turn("msg2")
+    await session1.flush_rollout()
+
+    # Replay: cumulative=300, last_turn=200
+    state = replay_rollout(rollout_path)
+    assert state.cumulative_usage["input_tokens"] == 300
+    assert state.last_turn_input_tokens == 200
+
+    # Session 2: resume and run one turn
+    session2 = Session(config=config, thread_id=state.thread_id)
+    session2.restore_from_rollout(
+        history=state.history,
+        cumulative_usage=state.cumulative_usage,
+        turn_count=state.turn_count,
+        initial_context_injected=state.initial_context_injected,
+        last_turn_input_tokens=state.last_turn_input_tokens,
+    )
+    session2.configure_rollout_recorder(
+        recorder=RolloutRecorder(path=rollout_path), path=rollout_path
+    )
+    model_client2 = _FakeModelClient(
+        turns=[[OutputTextDelta(delta="r3"), Completed(response_id="resp_3")]]
+    )
+    await Agent(
+        session=session2,
+        model_client=model_client2,
+        tool_router=_FakeToolRouter(specs=[], results=[]),
+        cwd=tmp_path,
+    ).run_turn("msg3")
+
+    sent_messages = model_client2.calls[0]["messages"]
+    resume_msg = next(
+        (m for m in sent_messages if "Session resumed" in str(m.get("content", ""))), None
+    )
+    assert resume_msg is not None
+    content = resume_msg["content"]
+    # Must show last-turn (200), not cumulative (300)
+    assert "last_turn_input_tokens=200" in content
+    assert "cumulative_input_tokens=300" in content
+
+
+def test_run_turn_resume_context_is_persisted_to_rollout(tmp_path: Path) -> None:
+    rollout_path = tmp_path / "rollout.jsonl"
+    session = Session()
+    session.restore_from_rollout(
+        history=[{"role": "user", "content": "prior"}],
+        cumulative_usage={"input_tokens": 2000, "output_tokens": 100},
+        turn_count=2,
+    )
+    session.configure_rollout_recorder(
+        recorder=RolloutRecorder(path=rollout_path), path=rollout_path
+    )
+    model_client = _FakeModelClient(
+        turns=[[OutputTextDelta(delta="done"), Completed(response_id="resp_1")]]
+    )
+    router = _FakeToolRouter(specs=[], results=[])
+    agent = Agent(session=session, model_client=model_client, tool_router=router, cwd=tmp_path)
+
+    asyncio.run(agent.run_turn("new turn"))
+
+    state = replay_rollout(rollout_path)
+    resume_items = [
+        item for item in state.history
+        if item.get("role") == "system" and "Session resumed" in str(item.get("content", ""))
+    ]
+    assert len(resume_items) == 1

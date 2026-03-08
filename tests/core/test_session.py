@@ -257,6 +257,40 @@ def test_replace_range_with_system_summary_rejects_invalid_bounds() -> None:
     )
 
 
+def test_fresh_session_is_not_resumed() -> None:
+    session = Session()
+    assert not session.is_resumed()
+
+
+def test_restore_from_rollout_marks_session_as_resumed() -> None:
+    session = Session()
+    session.restore_from_rollout(history=[], cumulative_usage={}, turn_count=0)
+    assert session.is_resumed()
+
+
+def test_resume_context_not_injected_on_fresh_session() -> None:
+    session = Session()
+    assert not session.has_resume_context()
+
+
+def test_mark_resume_context_injected_sets_flag() -> None:
+    session = Session()
+    session.restore_from_rollout(history=[], cumulative_usage={}, turn_count=0)
+    assert not session.has_resume_context()
+    session.mark_resume_context_injected()
+    assert session.has_resume_context()
+
+
+def test_restore_from_rollout_resets_resume_context_flag() -> None:
+    session = Session()
+    session.restore_from_rollout(history=[], cumulative_usage={}, turn_count=0)
+    session.mark_resume_context_injected()
+    # A second restore (e.g. re-import) should reset the flag
+    session.restore_from_rollout(history=[], cumulative_usage={}, turn_count=0)
+    assert not session.has_resume_context()
+    assert session.is_resumed()
+
+
 def test_restore_from_rollout_recomputes_compaction_count_from_summary_blocks() -> None:
     session = Session()
     session.restore_from_rollout(

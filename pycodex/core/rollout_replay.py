@@ -63,6 +63,7 @@ class ReplayState:
     # Used to display the full conversation to the user on resume.
     display_history: list[PromptItem] = field(default_factory=list)
     initial_context_injected: bool = False
+    last_turn_input_tokens: int = 0
     session_meta: SessionMeta | None = None
     session_closed: SessionClosed | None = None
 
@@ -83,6 +84,7 @@ def replay_rollout(path: Path, *, expected_major: int = 1) -> ReplayState:
     session_meta: SessionMeta | None = None
     session_closed: SessionClosed | None = None
     cumulative_usage = {"input_tokens": 0, "output_tokens": 0}
+    last_turn_input_tokens = 0
     turn_count = 0
     initial_context_injected = False
 
@@ -151,6 +153,8 @@ def replay_rollout(path: Path, *, expected_major: int = 1) -> ReplayState:
         )
         if item.type == "turn.completed":
             turn_count += 1
+            turn_completed = cast(Any, item)
+            last_turn_input_tokens = int(turn_completed.usage.turn.input_tokens)
         if isinstance(item, InitialContextApplied):
             initial_context_injected = True
         elif isinstance(item, SessionMeta):
@@ -166,6 +170,7 @@ def replay_rollout(path: Path, *, expected_major: int = 1) -> ReplayState:
         history=history,
         display_history=display_history,
         cumulative_usage=cumulative_usage,
+        last_turn_input_tokens=last_turn_input_tokens,
         turn_count=turn_count,
         status=status,
         warnings=warnings,
