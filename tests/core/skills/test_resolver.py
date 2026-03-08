@@ -8,19 +8,15 @@ from pycodex.core.skills.models import SkillMetadata
 from pycodex.core.skills.resolver import extract_skill_mentions, resolve_skill_mentions
 
 
-def test_extract_skill_mentions_path_first_and_skips_code_spans() -> None:
+def test_extract_skill_mentions_skips_fenced_and_inline_code() -> None:
     text = (
-        "Use $alpha and [$beta](/tmp/beta/SKILL.md).\n"
+        "Use $alpha and $beta.\n"
         "Ignore `$inline` and ```\n$blocked\n``` plus $gamma."
     )
 
     mentions = extract_skill_mentions(text)
 
-    assert [(mention.source, mention.name) for mention in mentions] == [
-        ("path", "beta"),
-        ("name", "alpha"),
-        ("name", "gamma"),
-    ]
+    assert [mention.name for mention in mentions] == ["alpha", "beta", "gamma"]
 
 
 def test_resolve_skill_mentions_dedupes_duplicate_plain_mentions(tmp_path: Path) -> None:
@@ -30,18 +26,6 @@ def test_resolve_skill_mentions_dedupes_duplicate_plain_mentions(tmp_path: Path)
     result = resolve_skill_mentions("run $alpha then $alpha again", registry)
 
     assert [skill.name for skill in result.resolved] == ["alpha"]
-    assert result.unresolved == ()
-
-
-def test_resolve_skill_mentions_path_link_wins_and_dedupes_by_skill_path(tmp_path: Path) -> None:
-    skill_path = tmp_path / "beta" / "SKILL.md"
-    beta = _skill(skill_path, name="beta")
-    registry = _registry(skills=(beta,))
-
-    text = f"[$wrong]({skill_path.resolve()}) then $beta"
-    result = resolve_skill_mentions(text, registry)
-
-    assert [skill.name for skill in result.resolved] == ["beta"]
     assert result.unresolved == ()
 
 
@@ -57,22 +41,16 @@ def test_resolve_skill_mentions_marks_ambiguous_names(tmp_path: Path) -> None:
     assert result.unresolved[0].mention.name == "duplicate"
 
 
-def test_resolve_skill_mentions_reports_not_found_for_unknown_mentions(tmp_path: Path) -> None:
+def test_resolve_skill_mentions_reports_not_found_for_unknown_name(tmp_path: Path) -> None:
     known = _skill(tmp_path / "known" / "SKILL.md", name="known")
-    missing_path = tmp_path / "missing" / "SKILL.md"
     registry = _registry(skills=(known,))
 
-    result = resolve_skill_mentions(f"[$known]({missing_path}) and $unknown", registry)
+    result = resolve_skill_mentions("$unknown and $known", registry)
 
-    assert result.resolved == ()
-    assert [item.reason for item in result.unresolved] == ["not_found", "not_found"]
-    assert [item.mention.source for item in result.unresolved] == ["path", "name"]
-
-
-def test_extract_skill_mentions_ignores_invalid_path_link_name() -> None:
-    mentions = extract_skill_mentions("use [not valid](/tmp/x/SKILL.md) and $ok")
-
-    assert [(mention.source, mention.name) for mention in mentions] == [("name", "ok")]
+    assert [skill.name for skill in result.resolved] == ["known"]
+    assert len(result.unresolved) == 1
+    assert result.unresolved[0].reason == "not_found"
+    assert result.unresolved[0].mention.name == "unknown"
 
 
 def _registry(

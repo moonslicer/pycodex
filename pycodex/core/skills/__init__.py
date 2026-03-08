@@ -20,10 +20,8 @@ from pycodex.core.skills.models import (
     SkillScope,
 )
 from pycodex.core.skills.parser import (
-    ParsedSidecarMetadata,
     ParsedSkillDocument,
     SkillParseError,
-    parse_sidecar_metadata,
     parse_skill_markdown,
 )
 from pycodex.core.skills.render import render_skills_section
@@ -36,7 +34,6 @@ from pycodex.core.skills.resolver import (
 )
 
 __all__ = [
-    "ParsedSidecarMetadata",
     "ParsedSkillDocument",
     "SkillDependencies",
     "SkillDiscoveryResult",
@@ -57,7 +54,6 @@ __all__ = [
     "collect_skill_roots",
     "discover_skills",
     "extract_skill_mentions",
-    "parse_sidecar_metadata",
     "parse_skill_markdown",
     "render_skills_section",
     "resolve_skill_mentions",

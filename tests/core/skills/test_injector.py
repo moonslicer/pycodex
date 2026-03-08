@@ -16,15 +16,14 @@ def test_build_skill_injection_plan_includes_unavailable_before_skill(tmp_path: 
 
     alpha = _skill("alpha", skill_path)
     registry = _registry((alpha,))
-    missing = tmp_path / "missing" / "SKILL.md"
 
     plan = build_skill_injection_plan(
-        user_input=f"[$missing]({missing}) and $alpha",
+        user_input="$missing and $alpha",
         registry=registry,
     )
 
     assert [message.kind for message in plan.messages] == ["unavailable", "skill"]
-    assert plan.messages[0].reason == "file not found"
+    assert plan.messages[0].reason == "skill not found"
     assert "<skill-unavailable>" in plan.messages[0].content
     assert "<skill>" in plan.messages[1].content
     assert "<name>alpha</name>" in plan.messages[1].content

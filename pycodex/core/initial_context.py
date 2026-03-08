@@ -6,21 +6,17 @@ import os
 import platform
 import sys
 from pathlib import Path
-from typing import TYPE_CHECKING, Protocol, cast
+from typing import TYPE_CHECKING
 
 from pycodex.approval.policy import ApprovalPolicy
 from pycodex.approval.sandbox import SandboxPolicy
 from pycodex.core.project_doc import load_project_instructions
 from pycodex.core.session import PromptItem
-from pycodex.core.skills.manager import SkillRegistry, SkillsManager
+from pycodex.core.skills.manager import SkillsManager
 from pycodex.core.skills.render import render_skills_section
 
 if TYPE_CHECKING:
     from pycodex.core.config import Config
-
-
-class _SupportsCwd(Protocol):
-    cwd: Path | str
 
 
 def build_initial_context(config: Config) -> list[PromptItem]:
@@ -96,38 +92,15 @@ def _normalize_policy_value(value: object) -> str | None:
     return None
 
 
-def _skills_context(config: object) -> str | None:
-    manager = getattr(config, "skills_manager", None)
-    if manager is None:
-        manager = SkillsManager()
-    if not hasattr(manager, "get_registry"):
-        return None
-
-    if not hasattr(config, "cwd"):
-        return None
-    cwd = Path(cast(_SupportsCwd, config).cwd)
-    project_skill_dirs = getattr(config, "skill_dirs", ())
-    config_fingerprint = getattr(config, "skills_config_fingerprint", "")
-    user_root = getattr(config, "skills_user_root", None)
-    system_root = getattr(config, "skills_system_root", None)
-
+def _skills_context(config: Config) -> str | None:
+    manager = config.skills_manager or SkillsManager()
     try:
-        registry_obj = manager.get_registry(
-            cwd=cwd,
-            config_fingerprint=config_fingerprint,
-            project_skill_dirs=project_skill_dirs,
-            user_root=user_root,
-            system_root=system_root,
+        registry = manager.get_registry(
+            cwd=Path(config.cwd),
+            project_skill_dirs=config.skill_dirs,
+            user_root=config.skills_user_root,
+            system_root=config.skills_system_root,
         )
-    except TypeError:
-        # Compatibility path for test doubles that only accept cwd.
-        try:
-            registry_obj = manager.get_registry(cwd=cwd)
-        except Exception:
-            return None
     except Exception:
         return None
-
-    if not isinstance(registry_obj, SkillRegistry):
-        return None
-    return render_skills_section(registry_obj.skills)
+    return render_skills_section(registry.skills)

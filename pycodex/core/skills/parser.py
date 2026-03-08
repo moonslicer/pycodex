@@ -35,14 +35,7 @@ class ParsedSkillDocument:
     description: str
     short_description: str | None
     body: str
-
-
-@dataclass(frozen=True, slots=True)
-class ParsedSidecarMetadata:
-    """Optional sidecar metadata with fail-open warnings."""
-
-    dependencies: SkillDependencies | None
-    allow_implicit_invocation: bool
+    dependencies: SkillDependencies | None = None
     warnings: tuple[str, ...] = ()
 
 
@@ -70,59 +63,17 @@ def parse_skill_markdown(skill_path: Path) -> ParsedSkillDocument:
                 path=skill_path,
             )
 
+    dep_warnings: list[str] = []
+    dependencies = _extract_dependencies(parsed.get("dependencies"), warnings=dep_warnings)
     return ParsedSkillDocument(
         name=name,
         description=description,
         short_description=short_description,
         body=body,
-    )
-
-
-def parse_sidecar_metadata(sidecar_path: Path) -> ParsedSidecarMetadata:
-    """Parse optional `agents/openai.yaml` with fail-open semantics."""
-    if not sidecar_path.exists():
-        return ParsedSidecarMetadata(
-            dependencies=None,
-            allow_implicit_invocation=False,
-            warnings=(),
-        )
-
-    warnings: list[str] = []
-    try:
-        text = sidecar_path.read_text(encoding="utf-8")
-    except OSError as exc:
-        warnings.append(f"failed to read sidecar metadata: {exc}")
-        return ParsedSidecarMetadata(
-            dependencies=None,
-            allow_implicit_invocation=False,
-            warnings=tuple(warnings),
-        )
-
-    try:
-        parsed = _parse_yaml(text, path=sidecar_path)
-    except SkillParseError as exc:
-        warnings.append(f"failed to parse sidecar metadata: {exc.message}")
-        return ParsedSidecarMetadata(
-            dependencies=None,
-            allow_implicit_invocation=False,
-            warnings=tuple(warnings),
-        )
-
-    if not isinstance(parsed, dict):
-        warnings.append("sidecar metadata must be a mapping")
-        return ParsedSidecarMetadata(
-            dependencies=None,
-            allow_implicit_invocation=False,
-            warnings=tuple(warnings),
-        )
-
-    dependencies = _extract_dependencies(parsed.get("dependencies"), warnings=warnings)
-    allow_implicit_invocation = _extract_allow_implicit_invocation(parsed, warnings=warnings)
-    return ParsedSidecarMetadata(
         dependencies=dependencies,
-        allow_implicit_invocation=allow_implicit_invocation,
-        warnings=tuple(warnings),
+        warnings=tuple(dep_warnings),
     )
+
 
 
 def _read_text(path: Path) -> str:
@@ -229,26 +180,6 @@ def _extract_dependencies(
         env_vars=tuple(SkillEnvVarDependency(name=name) for name in deduped_names),
     )
 
-
-def _extract_allow_implicit_invocation(
-    parsed: dict[str, YamlValue],
-    *,
-    warnings: list[str],
-) -> bool:
-    raw_policy = parsed.get("policy")
-    if raw_policy is None:
-        return False
-    if not isinstance(raw_policy, dict):
-        warnings.append("ignored policy because it is not a mapping")
-        return False
-
-    raw_allow = raw_policy.get("allow_implicit_invocation")
-    if raw_allow is None:
-        return False
-    if not isinstance(raw_allow, bool):
-        warnings.append("ignored policy.allow_implicit_invocation because it is not a boolean")
-        return False
-    return raw_allow
 
 
 def _parse_yaml(text: str, *, path: Path) -> YamlValue:

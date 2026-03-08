@@ -354,10 +354,10 @@ class Agent:
             return
 
         registry = self._load_skill_registry()
-        if registry is None or not registry.skills:
+        if registry is None:
             return
 
-        existing_keys = self._existing_injected_keys_for_same_turn(user_input)
+        existing_keys = self._existing_injected_keys_for_same_turn()
         plan = build_skill_injection_plan(user_input=user_input, registry=registry)
         for injected in plan.messages:
             key = (
@@ -383,23 +383,18 @@ class Agent:
             existing_keys.add(key)
 
     def _load_skill_registry(self) -> SkillRegistry | None:
-        manager = self.skills_manager
-        if manager is None:
-            config = self.session.config
-            manager = getattr(config, "skills_manager", None) if config is not None else None
+        config = self.session.config
+        manager = self.skills_manager or (config.skills_manager if config is not None else None)
         if manager is None:
             manager = SkillsManager()
 
-        config = self.session.config
-        skill_dirs = getattr(config, "skill_dirs", ()) if config is not None else ()
-        fingerprint = getattr(config, "skills_config_fingerprint", "") if config is not None else ""
-        user_root = getattr(config, "skills_user_root", None) if config is not None else None
-        system_root = getattr(config, "skills_system_root", None) if config is not None else None
+        skill_dirs = config.skill_dirs if config is not None else ()
+        user_root = config.skills_user_root if config is not None else None
+        system_root = config.skills_system_root if config is not None else None
 
         try:
             return manager.get_registry(
                 cwd=self.cwd,
-                config_fingerprint=fingerprint,
                 project_skill_dirs=skill_dirs,
                 user_root=user_root,
                 system_root=system_root,
@@ -409,38 +404,22 @@ class Agent:
 
     def _existing_injected_keys_for_same_turn(
         self,
-        user_input: str,
     ) -> set[tuple[str, str | None, str | None]]:
         history = self.session.to_prompt()
-        if not history:
+        # Need the user message we just appended plus at least one item before it.
+        if len(history) < 2:
             return set()
 
-        current_index = len(history) - 1
-        current_item = history[current_index]
-        if current_item.get("role") != "user" or current_item.get("content") != user_input:
-            return set()
-
-        prior_index: int | None = None
-        for index in range(current_index - 1, -1, -1):
-            item = history[index]
-            if item.get("role") != "user" or item.get("content") != user_input:
-                continue
-            prior_index = index
-            break
-        if prior_index is None:
-            return set()
-
-        intervening = history[prior_index + 1 : current_index]
-        if not intervening:
-            return set()
-
+        # Scan backward from second-to-last, collecting consecutive skill_injected
+        # items. These represent skills already injected for this turn on a prior
+        # attempt (resume case). Stop at the first non-skill-injected item.
         existing: set[tuple[str, str | None, str | None]] = set()
-        for item in intervening:
-            if item.get("role") != "user" or item.get("skill_injected") is not True:
-                return set()
+        for item in reversed(history[:-1]):
+            if item.get("skill_injected") is not True:
+                break
             name = item.get("skill_name")
             if not isinstance(name, str):
-                return set()
+                break
             raw_path = item.get("skill_path")
             path = raw_path if isinstance(raw_path, str) else None
             raw_reason = item.get("skill_reason")

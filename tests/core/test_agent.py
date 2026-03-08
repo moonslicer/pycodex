@@ -289,11 +289,10 @@ def test_run_turn_injects_unavailable_before_skill_message(tmp_path: Path) -> No
         "---\nname: alpha\ndescription: Alpha\n---\nUse alpha steps.\n",
         encoding="utf-8",
     )
-    missing_path = tmp_path / "missing" / "SKILL.md"
     registry = _registry_with_skills((_skill_metadata("alpha", skill_path),))
     skills_manager = _SkillsManagerStub(registry=registry)
 
-    user_input = f"[$missing]({missing_path}) and $alpha"
+    user_input = "$missing and $alpha"
     asyncio.run(
         Agent(
             session=session,
@@ -313,8 +312,8 @@ def test_run_turn_injects_unavailable_before_skill_message(tmp_path: Path) -> No
     unavailable = messages[user_index + 1]
     injected_skill = messages[user_index + 2]
     assert "<skill-unavailable>" in unavailable["content"]
-    assert "<reason>file not found</reason>" in unavailable["content"]
-    assert unavailable["skill_reason"] == "file not found"
+    assert "<reason>skill not found</reason>" in unavailable["content"]
+    assert unavailable["skill_reason"] == "skill not found"
     assert "<skill>" in injected_skill["content"]
     assert "<name>alpha</name>" in injected_skill["content"]
 

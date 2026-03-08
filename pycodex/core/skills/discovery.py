@@ -11,7 +11,7 @@ from pathlib import Path
 
 from pycodex.core.project_doc import find_git_root
 from pycodex.core.skills.models import SkillMetadata, SkillScope
-from pycodex.core.skills.parser import SkillParseError, parse_sidecar_metadata, parse_skill_markdown
+from pycodex.core.skills.parser import SkillParseError, parse_skill_markdown
 
 _DEFAULT_MAX_DEPTH = 8
 _DEFAULT_MAX_DIRECTORIES = 2_000
@@ -132,8 +132,7 @@ def discover_skills(
                 )
                 continue
 
-            sidecar = parse_sidecar_metadata(canonical_skill_path.parent / "agents" / "openai.yaml")
-            for warning in sidecar.warnings:
+            for warning in parsed_skill.warnings:
                 errors.append(f"{canonical_skill_path}: {warning}")
                 _log.warning("skill.load_warning path=%s reason=%s", canonical_skill_path, warning)
 
@@ -144,8 +143,7 @@ def discover_skills(
                 path_to_skill_md=canonical_skill_path,
                 skill_root=canonical_skill_path.parent,
                 scope=root.scope,
-                dependencies=sidecar.dependencies,
-                allow_implicit_invocation=sidecar.allow_implicit_invocation,
+                dependencies=parsed_skill.dependencies,
             )
 
             existing = kept_by_name.get(metadata.name)

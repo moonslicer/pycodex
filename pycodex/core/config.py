@@ -13,6 +13,7 @@ from pydantic import BaseModel, ConfigDict, Field
 from pycodex.approval.policy import ApprovalPolicy
 from pycodex.approval.sandbox import SandboxPolicy
 from pycodex.core.agent_profile import CODEX_PROFILE, AgentProfile, load_profile_from_mapping
+from pycodex.core.skills.manager import SkillsManager
 
 
 class Config(BaseModel):
@@ -34,6 +35,10 @@ class Config(BaseModel):
     compaction_options: dict[str, dict[str, Any]] = Field(default_factory=dict)
     default_approval_policy: ApprovalPolicy = ApprovalPolicy.NEVER
     default_sandbox_policy: SandboxPolicy = SandboxPolicy.DANGER_FULL_ACCESS
+    skill_dirs: tuple[Path | str, ...] = ()
+    skills_user_root: Path | None = None
+    skills_system_root: Path | None = None
+    skills_manager: SkillsManager = Field(default_factory=SkillsManager)
 
 
 def _load_toml_config(path: Path) -> dict[str, Any]:

@@ -11,7 +11,6 @@ from pycodex.core.skills.manager import SkillRegistry
 from pycodex.core.skills.models import SkillMetadata
 
 _PLAIN_MENTION_RE = re.compile(r"\$([a-zA-Z0-9][a-zA-Z0-9_-]*)")
-_PATH_LINK_RE = re.compile(r"\[([^\]]+)\]\((/[^)]+)\)")
 _FENCE_MARKERS = ("```", "~~~")
 
 
@@ -20,10 +19,6 @@ class SkillMention:
     """Candidate mention parsed from user text."""
 
     name: str
-    source: Literal["path", "name"]
-    start: int
-    end: int
-    path: Path | None = None
 
 
 @dataclass(frozen=True, slots=True)
@@ -43,56 +38,21 @@ class SkillResolutionResult:
 
 
 def extract_skill_mentions(text: str) -> tuple[SkillMention, ...]:
-    """Extract mention candidates with path-linked mentions before plain mentions."""
+    """Extract $name mention candidates, skipping code blocks and inline code."""
     masked_ranges = _masked_code_ranges(text)
+    mentions: list[SkillMention] = []
+    seen_names: set[str] = set()
 
-    path_mentions: list[SkillMention] = []
-    path_link_ranges: list[tuple[int, int]] = []
-    seen_path_mentions: set[tuple[str, str]] = set()
-    for match in _PATH_LINK_RE.finditer(text):
-        if _overlaps_masked_range(match.start(), match.end(), masked_ranges):
-            continue
-        path_link_ranges.append((match.start(), match.end()))
-        normalized_name = _normalize_link_name(match.group(1))
-        if normalized_name is None:
-            continue
-        path_value = match.group(2)
-        dedupe_key = (normalized_name, path_value)
-        if dedupe_key in seen_path_mentions:
-            continue
-        seen_path_mentions.add(dedupe_key)
-        path_mentions.append(
-            SkillMention(
-                name=normalized_name,
-                source="path",
-                start=match.start(),
-                end=match.end(),
-                path=Path(path_value),
-            )
-        )
-
-    plain_mentions: list[SkillMention] = []
-    seen_plain_names: set[str] = set()
     for match in _PLAIN_MENTION_RE.finditer(text):
         if _overlaps_masked_range(match.start(), match.end(), masked_ranges):
             continue
-        if _overlaps_masked_range(match.start(), match.end(), path_link_ranges):
-            continue
         name = match.group(1)
-        if name in seen_plain_names:
+        if name in seen_names:
             continue
-        seen_plain_names.add(name)
-        plain_mentions.append(
-            SkillMention(
-                name=name,
-                source="name",
-                start=match.start(),
-                end=match.end(),
-                path=None,
-            )
-        )
+        seen_names.add(name)
+        mentions.append(SkillMention(name=name))
 
-    return tuple(path_mentions + plain_mentions)
+    return tuple(mentions)
 
 
 def resolve_skill_mentions(text: str, registry: SkillRegistry) -> SkillResolutionResult:
@@ -103,19 +63,6 @@ def resolve_skill_mentions(text: str, registry: SkillRegistry) -> SkillResolutio
     seen_skill_paths: set[Path] = set()
 
     for mention in mentions:
-        if mention.source == "path":
-            assert mention.path is not None
-            resolved_path = mention.path.resolve()
-            skill = registry.by_path.get(resolved_path)
-            if skill is None:
-                unresolved.append(UnresolvedSkillMention(mention=mention, reason="not_found"))
-                continue
-            if skill.path_to_skill_md in seen_skill_paths:
-                continue
-            seen_skill_paths.add(skill.path_to_skill_md)
-            resolved.append(skill)
-            continue
-
         if mention.name in registry.ambiguous_names:
             unresolved.append(UnresolvedSkillMention(mention=mention, reason="ambiguous"))
             continue
@@ -133,17 +80,6 @@ def resolve_skill_mentions(text: str, registry: SkillRegistry) -> SkillResolutio
         resolved=tuple(resolved),
         unresolved=tuple(unresolved),
     )
-
-
-def _normalize_link_name(raw_name: str) -> str | None:
-    candidate = raw_name.strip()
-    if candidate.startswith("$"):
-        candidate = candidate[1:]
-    if not candidate:
-        return None
-    if not re.fullmatch(r"[a-zA-Z0-9][a-zA-Z0-9_-]*", candidate):
-        return None
-    return candidate
 
 
 def _masked_code_ranges(text: str) -> list[tuple[int, int]]:

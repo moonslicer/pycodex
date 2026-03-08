@@ -25,15 +25,18 @@ def test_discovery_logs_skill_loaded_event(
     assert any("skill.loaded" in record.getMessage() for record in caplog.records)
 
 
-def test_discovery_logs_sidecar_warnings(tmp_path: Path, caplog: pytest.LogCaptureFixture) -> None:
+def test_discovery_logs_dependency_warnings(
+    tmp_path: Path, caplog: pytest.LogCaptureFixture
+) -> None:
     repo = tmp_path / "repo"
     repo.mkdir()
     (repo / ".git").mkdir()
     skill_dir = repo / ".agents" / "skills" / "alpha"
-    _write_skill(skill_dir, name="alpha", description="Alpha")
-    sidecar = skill_dir / "agents" / "openai.yaml"
-    sidecar.parent.mkdir(parents=True)
-    sidecar.write_text("dependencies:\n\t- type: env_var\n", encoding="utf-8")
+    skill_dir.mkdir(parents=True)
+    (skill_dir / "SKILL.md").write_text(
+        "---\nname: alpha\ndescription: Alpha\ndependencies: invalid\n---\nbody\n",
+        encoding="utf-8",
+    )
 
     caplog.set_level(logging.WARNING, logger="pycodex.skills.discovery")
     discover_skills(cwd=repo, user_root=tmp_path / "none", system_root=tmp_path / "none")
@@ -66,10 +69,9 @@ def test_injector_logs_unavailable_and_injected_events(
     skill_path.parent.mkdir(parents=True)
     skill_path.write_text("---\nname: alpha\ndescription: Alpha\n---\nbody\n", encoding="utf-8")
     registry = _registry((_skill("alpha", skill_path),))
-    missing = tmp_path / "missing" / "SKILL.md"
 
     caplog.set_level(logging.INFO, logger="pycodex.skills.injector")
-    build_skill_injection_plan(user_input=f"[$missing]({missing}) and $alpha", registry=registry)
+    build_skill_injection_plan(user_input="$missing and $alpha", registry=registry)
 
     messages = [record.getMessage() for record in caplog.records]
     assert any("skill.unavailable" in message for message in messages)

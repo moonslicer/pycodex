@@ -30,6 +30,9 @@ class _ConfigStub:
     skills_manager: _SkillsManagerStub = field(
         default_factory=lambda: _SkillsManagerStub(registry=_registry(()))
     )
+    skill_dirs: tuple[()] = ()
+    skills_user_root: Path | None = None
+    skills_system_root: Path | None = None
 
 
 def test_build_initial_context_default_no_docs_returns_env_context_only(tmp_path: Path) -> None:

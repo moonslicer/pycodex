@@ -39,12 +39,12 @@ def build_skill_injection_plan(*, user_input: str, registry: SkillRegistry) -> S
 
     unavailable_messages: list[SkillInjectedMessage] = []
     for unresolved in resolution.unresolved:
-        reason = _unavailable_reason(unresolved.reason, path=unresolved.mention.path)
+        reason = _unavailable_reason(unresolved.reason)
         unavailable_messages.append(
             SkillInjectedMessage(
                 kind="unavailable",
                 name=unresolved.mention.name,
-                path=unresolved.mention.path,
+                path=None,
                 content=_render_unavailable_message(
                     name=unresolved.mention.name,
                     reason=reason,
@@ -127,11 +127,9 @@ def _render_unavailable_message(*, name: str, reason: str) -> str:
     )
 
 
-def _unavailable_reason(reason: str, *, path: Path | None) -> str:
+def _unavailable_reason(reason: str) -> str:
     if reason == "ambiguous":
         return "ambiguous name"
-    if reason == "not_found" and path is not None:
-        return "file not found"
     return "skill not found"
 
 
