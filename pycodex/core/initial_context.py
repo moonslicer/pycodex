@@ -32,22 +32,20 @@ def build_initial_context(config: Config) -> list[PromptItem]:
         filenames=config.profile.instruction_filenames,
         max_bytes=config.project_doc_max_bytes,
     )
-    skills_section = _skills_context(config)
-
     if project_docs is not None:
-        content = f"# Project instructions\n{project_docs}"
-        if skills_section is not None:
-            content = f"{content}\n\n{skills_section}"
         items.append(
             {
                 "role": "system",
-                "content": content,
+                "content": f"# Project instructions\n{project_docs}",
             }
         )
-    elif skills_section is not None:
-        items.append({"role": "system", "content": skills_section})
 
     items.append({"role": "system", "content": _env_context(config.cwd)})
+
+    skills_section = _skills_context(config)
+    if skills_section is not None:
+        items.append({"role": "system", "content": skills_section})
+
     return items
 
 

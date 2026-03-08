@@ -119,7 +119,7 @@ def test_build_initial_context_orders_policy_docs_env(tmp_path: Path) -> None:
     assert "# Environment context" in items[2]["content"]
 
 
-def test_build_initial_context_appends_skills_to_project_instructions(tmp_path: Path) -> None:
+def test_build_initial_context_skills_not_merged_into_project_docs(tmp_path: Path) -> None:
     root = tmp_path / "repo"
     cwd = root / "pkg"
     cwd.mkdir(parents=True)
@@ -133,12 +133,14 @@ def test_build_initial_context_appends_skills_to_project_instructions(tmp_path: 
 
     items = build_initial_context(config)  # type: ignore[arg-type]
 
-    assert len(items) == 2
-    content = items[0]["content"]
-    assert content.startswith("# Project instructions\n")
-    assert "root instructions" in content
-    assert "## Skills" in content
-    assert "- alpha: Alpha description — Alpha short" in content
+    assert len(items) == 3
+    project_content = items[0]["content"]
+    assert project_content.startswith("# Project instructions\n")
+    assert "root instructions" in project_content
+    assert "## Skills" not in project_content
+    skills_content = items[2]["content"]
+    assert skills_content.startswith("## Skills\n")
+    assert "- alpha: Alpha description — Alpha short" in skills_content
 
 
 def test_build_initial_context_adds_skills_section_when_no_project_docs(tmp_path: Path) -> None:
@@ -150,9 +152,47 @@ def test_build_initial_context_adds_skills_section_when_no_project_docs(tmp_path
     items = build_initial_context(config)  # type: ignore[arg-type]
 
     assert len(items) == 2
-    assert items[0]["content"].startswith("## Skills\n")
-    assert "- beta: Beta description" in items[0]["content"]
-    assert "# Environment context" in items[1]["content"]
+    assert "# Environment context" in items[0]["content"]
+    assert items[1]["content"].startswith("## Skills\n")
+    assert "- beta: Beta description" in items[1]["content"]
+
+
+def test_build_initial_context_skills_are_last_system_message(tmp_path: Path) -> None:
+    root = tmp_path / "repo"
+    cwd = root / "pkg"
+    cwd.mkdir(parents=True)
+    (root / ".git").mkdir()
+    (root / "AGENTS.md").write_text("root instructions", encoding="utf-8")
+
+    config = _ConfigStub(
+        cwd=cwd,
+        approval_policy=ApprovalPolicy.ON_FAILURE,
+        sandbox_policy=SandboxPolicy.WORKSPACE_WRITE,
+        skills_manager=_SkillsManagerStub(registry=_registry((_skill("alpha", "Alpha", None),))),
+    )
+
+    items = build_initial_context(config)  # type: ignore[arg-type]
+
+    assert len(items) == 4
+    assert "# Policy context" in items[0]["content"]
+    assert "# Project instructions" in items[1]["content"]
+    assert "# Environment context" in items[2]["content"]
+    assert items[3]["content"].startswith("## Skills\n")
+
+
+def test_build_initial_context_skills_section_includes_signal_instruction(tmp_path: Path) -> None:
+    config = _ConfigStub(
+        cwd=tmp_path,
+        skills_manager=_SkillsManagerStub(registry=_registry((_skill("alpha", "Alpha", None),))),
+    )
+
+    items = build_initial_context(config)  # type: ignore[arg-type]
+
+    assert len(items) == 2
+    assert (
+        "To invoke a skill, emit `$skillname` in your response and the full skill will be provided."
+        in items[1]["content"]
+    )
 
 
 def test_build_initial_context_omits_skills_when_registry_empty(tmp_path: Path) -> None:

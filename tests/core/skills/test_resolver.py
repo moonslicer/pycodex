@@ -9,10 +9,7 @@ from pycodex.core.skills.resolver import extract_skill_mentions, resolve_skill_m
 
 
 def test_extract_skill_mentions_skips_fenced_and_inline_code() -> None:
-    text = (
-        "Use $alpha and $beta.\n"
-        "Ignore `$inline` and ```\n$blocked\n``` plus $gamma."
-    )
+    text = "Use $alpha and $beta.\nIgnore `$inline` and ```\n$blocked\n``` plus $gamma."
 
     mentions = extract_skill_mentions(text)
 
