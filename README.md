@@ -1,6 +1,28 @@
 # pycodex
 
-Agentic Python runtime plus terminal UI, built around explicit contracts and verifiable behavior.
+`pycodex` is an AI agent runtime for the terminal that focuses on one thing: reliable orchestration.
+It combines tool use, approval policy, typed events, and reproducible tests so agent behavior is inspectable and maintainable.
+It is inspired by Codex and rewritten in Python as a simplified agent runtime that preserves the core features.
+
+## Why This Project Is Different
+
+Most agent demos optimize for a flashy output. `pycodex` optimizes for production engineering concerns:
+
+- Explicit tool contracts and deterministic execution paths.
+- Approval and sandbox controls for mutating actions.
+- Typed protocol events for machine-readable observability.
+- Replayable scenarios and harness tests for behavior regressions.
+
+If you want to study how modern agent systems are actually wired end-to-end, this repo is designed to make that visible.
+
+## Capability Snapshot
+
+- Agent execution loop with structured tool calling (`shell`, `read_file`, `write_file`, `list_dir`, `grep_files`).
+- Approval-aware orchestration with session-scoped decision caching.
+- Multi-surface operation: CLI, JSON event stream, and interactive TUI.
+- Skill discovery/injection with deterministic precedence and replay-safe behavior.
+- Offline fake-model mode for deterministic local development.
+- Session rollout recording/replay and compaction support.
 
 ## Quickstart
 
@@ -67,7 +89,7 @@ PYCODEX_TUI_DUMP_LLM_REQUEST=1 node tui/dist/src/index.js \
 Note: dumps are emitted only for real model calls. If `PYCODEX_FAKE_MODEL=1` is set,
 no OpenAI request is made, so there is nothing to dump.
 
-## Development Checks
+## Engineering Quality Gates
 
 Standard local review:
 
@@ -104,7 +126,7 @@ pytest tests/ -m e2e -v
 - `tui/`: React + Ink terminal UI.
 - `docs/`: architecture, harness workflow, memory log, milestone trackers.
 - `engineering-plan.md`: milestone roadmap and architecture details.
-- `todo-m6.md`: current active milestone tracker.
+- `todo.md`: active milestone tracker and decomposition.
 
 ## Documentation Index
 
