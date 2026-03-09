@@ -4,17 +4,6 @@
 It combines tool use, approval policy, typed events, and reproducible tests so agent behavior is inspectable and maintainable.
 It is inspired by Codex and rewritten in Python as a simplified agent runtime that preserves the core features.
 
-## Why This Project Is Different
-
-Most agent demos optimize for a flashy output. `pycodex` optimizes for production engineering concerns:
-
-- Explicit tool contracts and deterministic execution paths.
-- Approval and sandbox controls for mutating actions.
-- Typed protocol events for machine-readable observability.
-- Replayable scenarios and harness tests for behavior regressions.
-
-If you want to study how modern agent systems are actually wired end-to-end, this repo is designed to make that visible.
-
 ## Capability Snapshot
 
 - Agent execution loop with structured tool calling (`shell`, `read_file`, `write_file`, `list_dir`, `grep_files`).
