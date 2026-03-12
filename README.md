@@ -4,6 +4,13 @@
 It combines tool use, approval policy, typed events, and reproducible tests so agent behavior is inspectable and maintainable.
 It is inspired by Codex and rewritten in Python as a simplified agent runtime that preserves the core features.
 
+## TUI Demo
+
+<video src="docs/assets/pycodex-tui-demo.mp4" controls muted playsinline width="960"></video>
+
+If the embedded player does not render, download the demo directly:
+[`docs/assets/pycodex-tui-demo.mp4`](docs/assets/pycodex-tui-demo.mp4)
+
 ## Capability Snapshot
 
 - Agent execution loop with structured tool calling (`shell`, `read_file`, `write_file`, `list_dir`, `grep_files`).
@@ -53,6 +60,21 @@ TUI mode:
 
 ```bash
 python -m pycodex --tui-mode
+```
+
+Build and start the TUI (from repo root):
+
+```bash
+npm --prefix tui run build
+npm --prefix tui run start
+```
+
+Or run from the `tui/` directory:
+
+```bash
+cd tui
+npm run build
+npm run start
 ```
 
 Local fake model (no network call):
